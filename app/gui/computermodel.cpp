@@ -10,10 +10,12 @@ void ComputerModel::initialize(ComputerManager* computerManager)
     m_ComputerManager = computerManager;
     connect(m_ComputerManager, &ComputerManager::computerStateChanged,
             this, &ComputerModel::handleComputerStateChanged);
+    connect(m_ComputerManager, &ComputerManager::computerAboutToBeDeleted,
+            this, &ComputerModel::handleComputerAboutToBeDeleted);
     connect(m_ComputerManager, &ComputerManager::pairingCompleted,
             this, &ComputerModel::handlePairingCompleted);
 
-    m_Computers = m_ComputerManager->getComputers();
+    m_Computers = m_ComputerManager->getComputerRefs();
 }
 
 QVariant ComputerModel::data(const QModelIndex& index, int role) const
@@ -24,7 +26,7 @@ QVariant ComputerModel::data(const QModelIndex& index, int role) const
 
     Q_ASSERT(index.row() < m_Computers.count());
 
-    NvComputer* computer = m_Computers[index.row()];
+    NvComputer* computer = m_Computers[index.row()].data();
     QReadLocker lock(&computer->lock);
 
     switch (role) {
@@ -118,13 +120,20 @@ Session* ComputerModel::createSessionForCurrentGame(int computerIndex)
 {
     Q_ASSERT(computerIndex < m_Computers.count());
 
-    NvComputer* computer = m_Computers[computerIndex];
+    NvComputer* computer = m_Computers[computerIndex].data();
+    int currentGameId;
+    QVector<NvApp> appList;
+    {
+        QReadLocker lock(&computer->lock);
+        currentGameId = computer->currentGameId;
+        appList = computer->appList;
+    }
 
     // We must currently be streaming a game to use this function
-    Q_ASSERT(computer->currentGameId != 0);
+    Q_ASSERT(currentGameId != 0);
 
-    for (NvApp& app : computer->appList) {
-        if (app.id == computer->currentGameId) {
+    for (NvApp& app : appList) {
+        if (app.id == currentGameId) {
             return new Session(computer, app);
         }
     }
@@ -137,22 +146,13 @@ Session* ComputerModel::createSessionForCurrentGame(int computerIndex)
 void ComputerModel::deleteComputer(int computerIndex)
 {
     Q_ASSERT(computerIndex < m_Computers.count());
-
-    beginRemoveRows(QModelIndex(), computerIndex, computerIndex);
-
-    // m_Computer[computerIndex] will be deleted by this call
-    m_ComputerManager->deleteHost(m_Computers[computerIndex]);
-
-    // Remove the now invalid item
-    m_Computers.removeAt(computerIndex);
-
-    endRemoveRows();
+    m_ComputerManager->deleteHost(m_Computers[computerIndex].data());
 }
 
 class DeferredWakeHostTask : public QRunnable
 {
 public:
-    DeferredWakeHostTask(NvComputer* computer)
+    DeferredWakeHostTask(const QSharedPointer<NvComputer>& computer)
         : m_Computer(computer) {}
 
     void run()
@@ -161,7 +161,7 @@ public:
     }
 
 private:
-    NvComputer* m_Computer;
+    QSharedPointer<NvComputer> m_Computer;
 };
 
 void ComputerModel::wakeComputer(int computerIndex)
@@ -176,7 +176,7 @@ void ComputerModel::renameComputer(int computerIndex, QString name)
 {
     Q_ASSERT(computerIndex < m_Computers.count());
 
-    m_ComputerManager->renameHost(m_Computers[computerIndex], name);
+    m_ComputerManager->renameHost(m_Computers[computerIndex].data(), name);
 }
 
 QString ComputerModel::generatePinString()
@@ -217,7 +217,7 @@ void ComputerModel::pairComputer(int computerIndex, QString pin)
 {
     Q_ASSERT(computerIndex < m_Computers.count());
 
-    m_ComputerManager->pairHost(m_Computers[computerIndex], pin);
+    m_ComputerManager->pairHost(m_Computers[computerIndex].data(), pin);
 }
 
 void ComputerModel::handlePairingCompleted(NvComputer*, QString error)
@@ -227,7 +227,7 @@ void ComputerModel::handlePairingCompleted(NvComputer*, QString error)
 
 void ComputerModel::handleComputerStateChanged(NvComputer* computer)
 {
-    QVector<NvComputer*> newComputerList = m_ComputerManager->getComputers();
+    QVector<QSharedPointer<NvComputer>> newComputerList = m_ComputerManager->getComputerRefs();
 
     // Reset the model if the structural layout of the list has changed
     if (m_Computers != newComputerList) {
@@ -237,8 +237,24 @@ void ComputerModel::handleComputerStateChanged(NvComputer* computer)
     }
     else {
         // Let the view know that this specific computer changed
-        int index = m_Computers.indexOf(computer);
-        emit dataChanged(createIndex(index, 0), createIndex(index, 0));
+        for (int index = 0; index < m_Computers.count(); index++) {
+            if (m_Computers[index].data() == computer) {
+                emit dataChanged(createIndex(index, 0), createIndex(index, 0));
+                break;
+            }
+        }
+    }
+}
+
+void ComputerModel::handleComputerAboutToBeDeleted(NvComputer* computer)
+{
+    for (int index = 0; index < m_Computers.count(); index++) {
+        if (m_Computers[index].data() == computer) {
+            beginRemoveRows(QModelIndex(), index, index);
+            m_Computers.removeAt(index);
+            endRemoveRows();
+            break;
+        }
     }
 }
 

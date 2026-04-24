@@ -41,7 +41,7 @@ class NetworkBoxArtLoadTask : public QObject, public QRunnable
     Q_OBJECT
 
 public:
-    NetworkBoxArtLoadTask(BoxArtManager* boxArtManager, NvComputer* computer, NvApp& app)
+    NetworkBoxArtLoadTask(BoxArtManager* boxArtManager, const QSharedPointer<NvComputer>& computer, NvApp& app)
         : m_Bam(boxArtManager),
           m_Computer(computer),
           m_App(app)
@@ -56,23 +56,36 @@ signals:
 private:
     void run()
     {
-        QUrl image = m_Bam->loadBoxArtFromNetwork(m_Computer, m_App.id);
+        QUrl image = m_Bam->loadBoxArtFromNetwork(m_Computer.data(), m_App.id);
         if (image.isEmpty()) {
             // Give it another shot if it fails once
-            image = m_Bam->loadBoxArtFromNetwork(m_Computer, m_App.id);
+            image = m_Bam->loadBoxArtFromNetwork(m_Computer.data(), m_App.id);
         }
-        emit boxArtFetchCompleted(m_Computer, m_App, image);
+        emit boxArtFetchCompleted(m_Computer.data(), m_App, image);
     }
 
     BoxArtManager* m_Bam;
-    NvComputer* m_Computer;
+    QSharedPointer<NvComputer> m_Computer;
     NvApp m_App;
 };
 
 QUrl BoxArtManager::loadBoxArt(NvComputer* computer, NvApp& app)
 {
+    if (computer == nullptr) {
+        return QUrl();
+    }
+
+    return loadBoxArt(QSharedPointer<NvComputer>(computer, [](NvComputer*) {}), app);
+}
+
+QUrl BoxArtManager::loadBoxArt(const QSharedPointer<NvComputer>& computer, NvApp& app)
+{
+    if (computer.isNull()) {
+        return QUrl();
+    }
+
     // Try to open the cached file if it exists and contains data
-    QFile cacheFile(getFilePathForBoxArt(computer, app.id));
+    QFile cacheFile(getFilePathForBoxArt(computer.data(), app.id));
     if (cacheFile.exists() && cacheFile.size() > 0) {
         return QUrl::fromLocalFile(cacheFile.fileName());
     }
@@ -89,6 +102,10 @@ QUrl BoxArtManager::loadBoxArt(NvComputer* computer, NvApp& app)
 
 void BoxArtManager::deleteBoxArt(NvComputer* computer)
 {
+    if (computer == nullptr) {
+        return;
+    }
+
     QDir dir(Path::getBoxArtCacheDir());
 
     // Delete everything in this computer's box art directory
@@ -112,7 +129,9 @@ QUrl BoxArtManager::loadBoxArtFromNetwork(NvComputer* computer, int appId)
     QImage image;
     try {
         image = http.getBoxArt(appId);
-    } catch (...) {}
+    } catch (const GfeHttpResponseException&) {
+    } catch (const QtNetworkReplyException&) {
+    }
 
     // Cache the box art on disk if it loaded
     if (!image.isNull()) {

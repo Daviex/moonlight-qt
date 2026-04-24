@@ -5,6 +5,7 @@
 #include "streaming/session.h"
 
 #include <QAbstractListModel>
+#include <QSharedPointer>
 
 class AppModel : public QAbstractListModel
 {
@@ -49,6 +50,7 @@ public:
 
 private slots:
     void handleComputerStateChanged(NvComputer* computer);
+    void handleComputerAboutToBeDeleted(NvComputer* computer);
 
     void handleBoxArtLoaded(NvComputer* computer, NvApp app, QUrl image);
 
@@ -62,7 +64,9 @@ private:
 
     bool isAppCurrentlyVisible(const NvApp& app);
 
-    NvComputer* m_Computer;
+    void clearComputer();
+
+    QSharedPointer<NvComputer> m_Computer;
     BoxArtManager m_BoxArtManager;
     ComputerManager* m_ComputerManager;
     QVector<NvApp> m_VisibleApps, m_AllApps;

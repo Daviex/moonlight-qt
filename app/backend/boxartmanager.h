@@ -5,6 +5,7 @@
 #include <QImage>
 #include <QThreadPool>
 #include <QRunnable>
+#include <QSharedPointer>
 
 class BoxArtManager : public QObject
 {
@@ -17,6 +18,9 @@ public:
 
     QUrl
     loadBoxArt(NvComputer* computer, NvApp& app);
+
+    QUrl
+    loadBoxArt(const QSharedPointer<NvComputer>& computer, NvApp& app);
 
     static
     void

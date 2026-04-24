@@ -2,6 +2,7 @@
 #include "streaming/session.h"
 
 #include <QAbstractListModel>
+#include <QSharedPointer>
 
 class ComputerModel : public QAbstractListModel
 {
@@ -51,10 +52,11 @@ signals:
 
 private slots:
     void handleComputerStateChanged(NvComputer* computer);
+    void handleComputerAboutToBeDeleted(NvComputer* computer);
 
     void handlePairingCompleted(NvComputer* computer, QString error);
 
 private:
-    QVector<NvComputer*> m_Computers;
+    QVector<QSharedPointer<NvComputer>> m_Computers;
     ComputerManager* m_ComputerManager;
 };

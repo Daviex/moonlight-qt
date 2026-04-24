@@ -11,6 +11,9 @@
 #include <QCoreApplication>
 #include <QRandomGenerator>
 
+#include <algorithm>
+#include <stdexcept>
+
 #define SER_HOSTS "hosts"
 #define SER_HOSTS_BACKUP "hostsbackup"
 
@@ -36,7 +39,9 @@ private:
         QString serverInfo;
         try {
             serverInfo = http.getServerInfo(NvHTTP::NvLogLevel::NVLL_NONE, true);
-        } catch (...) {
+        } catch (const GfeHttpResponseException&) {
+            return false;
+        } catch (const QtNetworkReplyException&) {
             return false;
         }
 
@@ -63,7 +68,11 @@ private:
             if (appList.isEmpty()) {
                 return false;
             }
-        } catch (...) {
+        } catch (const GfeHttpResponseException&) {
+            return false;
+        } catch (const QtNetworkReplyException&) {
+            return false;
+        } catch (const std::runtime_error&) {
             return false;
         }
 
@@ -179,7 +188,7 @@ ComputerManager::ComputerManager(StreamingPreferences* prefs)
     // Inflate our hosts from QSettings
     for (int i = 0; i < hosts; i++) {
         settings.setArrayIndex(i);
-        NvComputer* computer = new NvComputer(settings);
+        QSharedPointer<NvComputer> computer(new NvComputer(settings));
         m_KnownHosts[computer->uuid] = computer;
         m_LastSerializedHosts[computer->uuid] = *computer;
     }
@@ -240,10 +249,7 @@ ComputerManager::~ComputerManager()
         delete entry;
     }
 
-    // Destroy all NvComputer objects now that polling is halted
-    for (NvComputer* computer : std::as_const(m_KnownHosts)) {
-        delete computer;
-    }
+    m_KnownHosts.clear();
 }
 
 void DelayedFlushThread::run() {
@@ -268,7 +274,7 @@ void DelayedFlushThread::run() {
 
             // Update the last serialized hosts map under the delayed flush mutex
             m_ComputerManager->m_LastSerializedHosts.clear();
-            for (const NvComputer* computer : std::as_const(m_ComputerManager->m_KnownHosts)) {
+            for (const QSharedPointer<NvComputer>& computer : std::as_const(m_ComputerManager->m_KnownHosts)) {
                 // Copy the current state of the NvComputer to allow us to check later if we need
                 // to serialize it again when attribute updates occur.
                 QReadLocker computerLock(&computer->lock);
@@ -285,7 +291,7 @@ void DelayedFlushThread::run() {
             {
                 QReadLocker lock(&m_ComputerManager->m_Lock);
                 int i = 0;
-                for (const NvComputer* computer : std::as_const(m_ComputerManager->m_KnownHosts)) {
+                for (const QSharedPointer<NvComputer>& computer : std::as_const(m_ComputerManager->m_KnownHosts)) {
                     settings.setArrayIndex(i++);
                     computer->serialize(settings, false);
                 }
@@ -298,7 +304,7 @@ void DelayedFlushThread::run() {
             {
                 QReadLocker lock(&m_ComputerManager->m_Lock);
                 int i = 0;
-                for (const NvComputer* computer : std::as_const(m_ComputerManager->m_KnownHosts)) {
+                for (const QSharedPointer<NvComputer>& computer : std::as_const(m_ComputerManager->m_KnownHosts)) {
                     settings.setArrayIndex(i++);
                     computer->serialize(settings, true);
                 }
@@ -385,10 +391,10 @@ void ComputerManager::startPolling()
     }
 
     // Start polling threads for each known host
-    QMapIterator<QString, NvComputer*> i(m_KnownHosts);
+    QMapIterator<QString, QSharedPointer<NvComputer>> i(m_KnownHosts);
     while (i.hasNext()) {
         i.next();
-        startPollingComputer(i.value());
+        startPollingComputer(i.value().data());
     }
 }
 
@@ -461,6 +467,10 @@ void ComputerManager::handleMdnsServiceResolved(MdnsPendingComputer* computer,
 
 void ComputerManager::saveHost(NvComputer *computer)
 {
+    if (findComputer(computer).isNull()) {
+        return;
+    }
+
     // If no serializable properties changed, don't bother saving hosts
     QMutexLocker lock(&m_DelayedFlushMutex);
     QReadLocker computerLock(&computer->lock);
@@ -474,10 +484,23 @@ void ComputerManager::saveHost(NvComputer *computer)
 
 void ComputerManager::handleComputerStateChanged(NvComputer* computer)
 {
+    QSharedPointer<NvComputer> retainedComputer = findComputer(computer);
+    if (retainedComputer.isNull()) {
+        return;
+    }
+
+    computer = retainedComputer.data();
     emit computerStateChanged(computer);
 
-    if (computer->pendingQuit && computer->currentGameId == 0) {
-        computer->pendingQuit = false;
+    bool quitCompleted = false;
+    {
+        QWriteLocker lock(&computer->lock);
+        if (computer->pendingQuit && computer->currentGameId == 0) {
+            computer->pendingQuit = false;
+            quitCompleted = true;
+        }
+    }
+    if (quitCompleted) {
         emit quitAppCompleted(QVariant());
     }
 
@@ -487,78 +510,118 @@ void ComputerManager::handleComputerStateChanged(NvComputer* computer)
 
 QVector<NvComputer*> ComputerManager::getComputers()
 {
+    QVector<NvComputer*> hosts;
+    for (const QSharedPointer<NvComputer>& computer : getComputerRefs()) {
+        hosts.append(computer.data());
+    }
+
+    return hosts;
+}
+
+QVector<QSharedPointer<NvComputer>> ComputerManager::getComputerRefs()
+{
     QReadLocker lock(&m_Lock);
 
-    // Return a sorted host list
-    auto hosts = QVector<NvComputer*>::fromList(m_KnownHosts.values());
-    std::stable_sort(hosts.begin(), hosts.end(), [](const NvComputer* host1, const NvComputer* host2) {
+    auto hosts = QVector<QSharedPointer<NvComputer>>::fromList(m_KnownHosts.values());
+    std::stable_sort(hosts.begin(), hosts.end(), [](const QSharedPointer<NvComputer>& host1,
+                                                    const QSharedPointer<NvComputer>& host2) {
         return host1->name.toLower() < host2->name.toLower();
     });
     return hosts;
 }
 
+QSharedPointer<NvComputer> ComputerManager::findComputer(NvComputer* computer)
+{
+    if (computer == nullptr) {
+        return QSharedPointer<NvComputer>();
+    }
+
+    QReadLocker lock(&m_Lock);
+    for (const QSharedPointer<NvComputer>& knownComputer : std::as_const(m_KnownHosts)) {
+        if (knownComputer.data() == computer) {
+            return knownComputer;
+        }
+    }
+
+    return QSharedPointer<NvComputer>();
+}
+
 class DeferredHostDeletionTask : public QRunnable
 {
 public:
-    DeferredHostDeletionTask(ComputerManager* cm, NvComputer* computer)
+    DeferredHostDeletionTask(const QSharedPointer<NvComputer>& computer,
+                             ComputerPollingEntry* pollingEntry)
         : m_Computer(computer),
-          m_ComputerManager(cm) {}
+          m_PollingEntry(pollingEntry) {}
 
     void run()
     {
-        ComputerPollingEntry* pollingEntry;
-
-        // Only do the minimum amount of work while holding the writer lock.
-        // We must release it before calling saveHosts().
-        {
-            QWriteLocker lock(&m_ComputerManager->m_Lock);
-
-            pollingEntry = m_ComputerManager->m_PollEntries.take(m_Computer->uuid);
-
-            m_ComputerManager->m_KnownHosts.remove(m_Computer->uuid);
-        }
-
-        // Persist the new host list with this computer deleted
-        m_ComputerManager->saveHosts();
-
         // Delete the polling entry first. This will stop all polling threads too.
-        delete pollingEntry;
+        delete m_PollingEntry;
 
         // Delete cached box art
-        BoxArtManager::deleteBoxArt(m_Computer);
-
-        // Finally, delete the computer itself. This must be done
-        // last because the polling thread might be using it.
-        delete m_Computer;
+        BoxArtManager::deleteBoxArt(m_Computer.data());
     }
 
 private:
-    NvComputer* m_Computer;
-    ComputerManager* m_ComputerManager;
+    QSharedPointer<NvComputer> m_Computer;
+    ComputerPollingEntry* m_PollingEntry;
 };
 
 void ComputerManager::deleteHost(NvComputer* computer)
 {
-    // Punt to a worker thread to avoid stalling the
-    // UI while waiting for the polling thread to die
-    QThreadPool::globalInstance()->start(new DeferredHostDeletionTask(this, computer));
+    QSharedPointer<NvComputer> retainedComputer;
+    ComputerPollingEntry* pollingEntry = nullptr;
+
+    {
+        QWriteLocker lock(&m_Lock);
+
+        auto host = std::find_if(m_KnownHosts.begin(), m_KnownHosts.end(),
+                                 [computer](const QSharedPointer<NvComputer>& knownComputer) {
+            return knownComputer.data() == computer;
+        });
+        if (host == m_KnownHosts.end()) {
+            return;
+        }
+
+        const QString uuid = host.key();
+        retainedComputer = host.value();
+        m_KnownHosts.erase(host);
+        pollingEntry = m_PollEntries.take(uuid);
+    }
+
+    emit computerAboutToBeDeleted(retainedComputer.data());
+
+    // Persist the new host list with this computer deleted
+    saveHosts();
+
+    QThreadPool::globalInstance()->start(new DeferredHostDeletionTask(retainedComputer, pollingEntry));
 }
 
 void ComputerManager::renameHost(NvComputer* computer, QString name)
 {
-    {
-        QWriteLocker lock(&computer->lock);
+    QSharedPointer<NvComputer> retainedComputer = findComputer(computer);
+    if (retainedComputer.isNull()) {
+        return;
+    }
 
-        computer->name = name;
-        computer->hasCustomName = true;
+    {
+        QWriteLocker lock(&retainedComputer->lock);
+
+        retainedComputer->name = name;
+        retainedComputer->hasCustomName = true;
     }
 
     // Notify the UI of the state change
-    handleComputerStateChanged(computer);
+    handleComputerStateChanged(retainedComputer.data());
 }
 
 void ComputerManager::clientSideAttributeUpdated(NvComputer* computer)
 {
+    if (findComputer(computer).isNull()) {
+        return;
+    }
+
     // Notify the UI of the state change
     handleComputerStateChanged(computer);
 }
@@ -579,7 +642,7 @@ class PendingPairingTask : public QObject, public QRunnable
     Q_OBJECT
 
 public:
-    PendingPairingTask(ComputerManager* computerManager, NvComputer* computer, QString pin)
+    PendingPairingTask(ComputerManager* computerManager, const QSharedPointer<NvComputer>& computer, QString pin)
         : m_ComputerManager(computerManager),
           m_Computer(computer),
           m_Pin(pin)
@@ -594,50 +657,55 @@ signals:
 private:
     void run()
     {
-        NvPairingManager pairingManager(m_Computer);
+        NvPairingManager pairingManager(m_Computer.data());
 
         try {
            NvPairingManager::PairState result = pairingManager.pair(m_Computer->appVersion, m_Pin, m_Computer->serverCert);
            switch (result)
            {
            case NvPairingManager::PairState::PIN_WRONG:
-               emit pairingCompleted(m_Computer, tr("The PIN from the PC didn't match. Please try again."));
+               emit pairingCompleted(m_Computer.data(), tr("The PIN from the PC didn't match. Please try again."));
                break;
            case NvPairingManager::PairState::FAILED:
-               if (m_Computer->currentGameId != 0) {
-                   emit pairingCompleted(m_Computer, tr("You cannot pair while a previous session is still running on the host PC. Quit any running games or reboot the host PC, then try pairing again."));
-               }
-               else {
-                   emit pairingCompleted(m_Computer, tr("Pairing failed. Please try again."));
-               }
-               break;
+                if (m_Computer->currentGameId != 0) {
+                    emit pairingCompleted(m_Computer.data(), tr("You cannot pair while a previous session is still running on the host PC. Quit any running games or reboot the host PC, then try pairing again."));
+                }
+                else {
+                    emit pairingCompleted(m_Computer.data(), tr("Pairing failed. Please try again."));
+                }
+                break;
            case NvPairingManager::PairState::ALREADY_IN_PROGRESS:
-               emit pairingCompleted(m_Computer, tr("Another pairing attempt is already in progress."));
+               emit pairingCompleted(m_Computer.data(), tr("Another pairing attempt is already in progress."));
                break;
            case NvPairingManager::PairState::PAIRED:
-               // Persist the newly pinned server certificate for this host
-               m_ComputerManager->saveHost(m_Computer);
+                // Persist the newly pinned server certificate for this host
+                m_ComputerManager->saveHost(m_Computer.data());
 
-               emit pairingCompleted(m_Computer, nullptr);
-               break;
+                emit pairingCompleted(m_Computer.data(), nullptr);
+                break;
            }
         } catch (const GfeHttpResponseException& e) {
-            emit pairingCompleted(m_Computer, tr("GeForce Experience returned error: %1").arg(e.toQString()));
+            emit pairingCompleted(m_Computer.data(), tr("GeForce Experience returned error: %1").arg(e.toQString()));
         } catch (const QtNetworkReplyException& e) {
-            emit pairingCompleted(m_Computer, e.toQString());
+            emit pairingCompleted(m_Computer.data(), e.toQString());
         }
     }
 
     ComputerManager* m_ComputerManager;
-    NvComputer* m_Computer;
+    QSharedPointer<NvComputer> m_Computer;
     QString m_Pin;
 };
 
 void ComputerManager::pairHost(NvComputer* computer, QString pin)
 {
+    QSharedPointer<NvComputer> retainedComputer = findComputer(computer);
+    if (retainedComputer.isNull()) {
+        return;
+    }
+
     // Punt to a worker thread to avoid stalling the
     // UI while waiting for pairing to complete
-    PendingPairingTask* pairing = new PendingPairingTask(this, computer, pin);
+    PendingPairingTask* pairing = new PendingPairingTask(this, retainedComputer, pin);
     QThreadPool::globalInstance()->start(pairing);
 }
 
@@ -646,7 +714,7 @@ class PendingQuitTask : public QObject, public QRunnable
     Q_OBJECT
 
 public:
-    PendingQuitTask(ComputerManager* computerManager, NvComputer* computer)
+    PendingQuitTask(ComputerManager* computerManager, const QSharedPointer<NvComputer>& computer)
         : m_Computer(computer)
     {
         connect(this, &PendingQuitTask::quitAppFailed,
@@ -659,7 +727,7 @@ signals:
 private:
     void run()
     {
-        NvHTTP http(m_Computer);
+        NvHTTP http(m_Computer.data());
 
         try {
             if (m_Computer->currentGameId != 0) {
@@ -687,15 +755,22 @@ private:
         }
     }
 
-    NvComputer* m_Computer;
+    QSharedPointer<NvComputer> m_Computer;
 };
 
 void ComputerManager::quitRunningApp(NvComputer* computer)
 {
-    QWriteLocker lock(&computer->lock);
-    computer->pendingQuit = true;
+    QSharedPointer<NvComputer> retainedComputer = findComputer(computer);
+    if (retainedComputer.isNull()) {
+        return;
+    }
 
-    PendingQuitTask* quit = new PendingQuitTask(this, computer);
+    {
+        QWriteLocker lock(&retainedComputer->lock);
+        retainedComputer->pendingQuit = true;
+    }
+
+    PendingQuitTask* quit = new PendingQuitTask(this, retainedComputer);
     QThreadPool::globalInstance()->start(quit);
 }
 
@@ -776,6 +851,24 @@ private:
 
     QString fetchServerInfo(NvHTTP& http)
     {
+        auto handleFetchFailure = [this]() {
+            if (!m_Mdns) {
+                unsigned int portTestResult;
+
+                if (m_ComputerManager->m_Prefs->detectNetworkBlocking) {
+                    // We failed to connect to the specified PC. Let's test to make sure this network
+                    // isn't blocking Moonlight, so we can tell the user about it.
+                    portTestResult = LiTestClientConnectivity("qt.conntest.moonlight-stream.org", 443,
+                                                              ML_PORT_FLAG_TCP_47984 | ML_PORT_FLAG_TCP_47989);
+                }
+                else {
+                    portTestResult = 0;
+                }
+
+                emit computerAddCompleted(false, portTestResult != 0 && portTestResult != ML_TEST_RESULT_INCONCLUSIVE);
+            }
+        };
+
         QString serverInfo;
 
         // Do nothing if we're quitting
@@ -803,22 +896,11 @@ private:
                 }
             }
             return serverInfo;
-        } catch (...) {
-            if (!m_Mdns) {
-                unsigned int portTestResult;
-
-                if (m_ComputerManager->m_Prefs->detectNetworkBlocking) {
-                    // We failed to connect to the specified PC. Let's test to make sure this network
-                    // isn't blocking Moonlight, so we can tell the user about it.
-                    portTestResult = LiTestClientConnectivity("qt.conntest.moonlight-stream.org", 443,
-                                                              ML_PORT_FLAG_TCP_47984 | ML_PORT_FLAG_TCP_47989);
-                }
-                else {
-                    portTestResult = 0;
-                }
-
-                emit computerAddCompleted(false, portTestResult != 0 && portTestResult != ML_TEST_RESULT_INCONCLUSIVE);
-            }
+        } catch (const GfeHttpResponseException&) {
+            handleFetchFailure();
+            return QString();
+        } catch (const QtNetworkReplyException&) {
+            handleFetchFailure();
             return QString();
         }
     }
@@ -852,10 +934,10 @@ private:
         }
 
         // Create initial newComputer using HTTP serverinfo with no pinned cert
-        NvComputer* newComputer = new NvComputer(http, serverInfo);
+        QSharedPointer<NvComputer> newComputer(new NvComputer(http, serverInfo));
 
         // Check if we have a record of this host UUID to pull the pinned cert
-        NvComputer* existingComputer;
+        QSharedPointer<NvComputer> existingComputer;
         {
             QReadLocker lock(&m_ComputerManager->m_Lock);
             existingComputer = m_ComputerManager->m_KnownHosts.value(newComputer->uuid);
@@ -916,7 +998,7 @@ private:
         {
             // Check if this PC already exists using opportunistic read lock
             m_ComputerManager->m_Lock.lockForRead();
-            NvComputer* existingComputer = m_ComputerManager->m_KnownHosts.value(newComputer->uuid);
+            QSharedPointer<NvComputer> existingComputer = m_ComputerManager->m_KnownHosts.value(newComputer->uuid);
 
             // If it doesn't already exist, convert to a write lock in preparation for updating.
             //
@@ -935,7 +1017,6 @@ private:
             if (existingComputer != nullptr) {
                 // Fold it into the existing PC
                 bool changed = existingComputer->update(*newComputer);
-                delete newComputer;
 
                 // Drop the lock before notifying
                 m_ComputerManager->m_Lock.unlock();
@@ -948,7 +1029,7 @@ private:
                 // Tell our client if something changed
                 if (changed) {
                     qInfo() << existingComputer->name << "is now at" << existingComputer->activeAddress.toString();
-                    emit computerStateChanged(existingComputer);
+                    emit computerStateChanged(existingComputer.data());
                 }
             }
             else {
@@ -956,7 +1037,7 @@ private:
                 m_ComputerManager->m_KnownHosts[newComputer->uuid] = newComputer;
 
                 // Start polling if enabled (write lock required)
-                m_ComputerManager->startPollingComputer(newComputer);
+                m_ComputerManager->startPollingComputer(newComputer.data());
 
                 // Drop the lock before notifying
                 m_ComputerManager->m_Lock.unlock();
@@ -980,7 +1061,7 @@ private:
                 }
 
                 // Tell our client about this new PC
-                emit computerStateChanged(newComputer);
+                emit computerStateChanged(newComputer.data());
             }
         }
     }

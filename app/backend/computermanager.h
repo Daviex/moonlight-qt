@@ -17,6 +17,7 @@
 #include <QTimer>
 #include <QMutex>
 #include <QWaitCondition>
+#include <QSharedPointer>
 
 class ComputerManager;
 
@@ -236,8 +237,9 @@ public:
     void quitRunningApp(NvComputer* computer);
 
     QVector<NvComputer*> getComputers();
+    QVector<QSharedPointer<NvComputer>> getComputerRefs();
 
-    // computer is deleted inside this call
+    // Removes the computer from the active host list and schedules final cleanup
     void deleteHost(NvComputer* computer);
 
     void renameHost(NvComputer* computer, QString name);
@@ -246,6 +248,7 @@ public:
 
 signals:
     void computerStateChanged(NvComputer* computer);
+    void computerAboutToBeDeleted(NvComputer* computer);
 
     void pairingCompleted(NvComputer* computer, QString error);
 
@@ -264,6 +267,7 @@ private:
     void saveHosts();
 
     void saveHost(NvComputer* computer);
+    QSharedPointer<NvComputer> findComputer(NvComputer* computer);
 
     QHostAddress getBestGlobalAddressV6(QVector<QHostAddress>& addresses);
 
@@ -272,7 +276,7 @@ private:
     StreamingPreferences* m_Prefs;
     int m_PollingRef;
     QReadWriteLock m_Lock;
-    QMap<QString, NvComputer*> m_KnownHosts;
+    QMap<QString, QSharedPointer<NvComputer>> m_KnownHosts;
     QMap<QString, ComputerPollingEntry*> m_PollEntries;
     QHash<QString, NvComputer> m_LastSerializedHosts; // Protected by m_DelayedFlushMutex
     QSharedPointer<QMdnsEngine::Server> m_MdnsServer;
