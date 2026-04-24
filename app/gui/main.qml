@@ -106,6 +106,49 @@ ApplicationWindow {
         }
     }
 
+    function setPollingEnabled(enabled) {
+        if (pollingActive === enabled) {
+            return
+        }
+
+        if (enabled) {
+            ComputerManager.startPolling()
+        }
+        else {
+            ComputerManager.stopPollingAsync()
+        }
+
+        pollingActive = enabled
+    }
+
+    function updatePollingState() {
+        if (!visible) {
+            inactivityTimer.stop()
+            setPollingEnabled(false)
+        }
+        else if (active) {
+            inactivityTimer.stop()
+            setPollingEnabled(true)
+        }
+        else {
+            // Keep polling briefly after focus loss in case the user is
+            // interacting with Moonlight on another display.
+            inactivityTimer.restart()
+        }
+
+        // Poll for gamepad input only when the window is in focus
+        SdlGamepadKeyNavigation.notifyWindowFocus(visible && active)
+    }
+
+    function restartPolling() {
+        if (!pollingActive) {
+            return
+        }
+
+        setPollingEnabled(false)
+        setPollingEnabled(true)
+    }
+
     StackView {
         id: stackView
         anchors.fill: parent
@@ -163,59 +206,15 @@ ApplicationWindow {
         id: inactivityTimer
         interval: 5 * 60000
         onTriggered: {
-            if (!active && pollingActive) {
-                ComputerManager.stopPollingAsync()
-                pollingActive = false
+            if (!active) {
+                setPollingEnabled(false)
             }
         }
     }
 
-    onVisibleChanged: {
-        // When we become invisible while streaming is going on,
-        // stop polling immediately.
-        if (!visible) {
-            inactivityTimer.stop()
+    onVisibleChanged: updatePollingState()
 
-            if (pollingActive) {
-                ComputerManager.stopPollingAsync()
-                pollingActive = false
-            }
-        }
-        else if (active) {
-            // When we become visible and active again, start polling
-            inactivityTimer.stop()
-
-            // Restart polling if it was stopped
-            if (!pollingActive) {
-                ComputerManager.startPolling()
-                pollingActive = true
-            }
-        }
-
-        // Poll for gamepad input only when the window is in focus
-        SdlGamepadKeyNavigation.notifyWindowFocus(visible && active)
-    }
-
-    onActiveChanged: {
-        if (active) {
-            // Stop the inactivity timer
-            inactivityTimer.stop()
-
-            // Restart polling if it was stopped
-            if (!pollingActive) {
-                ComputerManager.startPolling()
-                pollingActive = true
-            }
-        }
-        else {
-            // Start the inactivity timer to stop polling
-            // if focus does not return within a few minutes.
-            inactivityTimer.restart()
-        }
-
-        // Poll for gamepad input only when the window is in focus
-        SdlGamepadKeyNavigation.notifyWindowFocus(visible && active)
-    }
+    onActiveChanged: updatePollingState()
 
     function navigateTo(url, objectType)
     {

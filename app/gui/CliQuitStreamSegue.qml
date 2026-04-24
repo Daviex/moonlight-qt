@@ -5,6 +5,8 @@ import ComputerManager 1.0
 import Session 1.0
 
 Item {
+    property bool launcherSignalsConnected : false
+
     function onSearchingComputer() {
         stageLabel.text = qsTr("Establishing connection to PC...")
     }
@@ -14,18 +16,44 @@ Item {
     }
 
     function onFailure(message) {
+        disconnectLauncherSignals()
+
         errorDialog.text = message
         errorDialog.open()
+    }
+
+    function connectLauncherSignals() {
+        if (launcherSignalsConnected) {
+            return
+        }
+
+        launcher.searchingComputer.connect(onSearchingComputer)
+        launcher.quittingApp.connect(onQuittingApp)
+        launcher.failed.connect(onFailure)
+        launcherSignalsConnected = true
+    }
+
+    function disconnectLauncherSignals() {
+        if (!launcherSignalsConnected) {
+            return
+        }
+
+        launcher.searchingComputer.disconnect(onSearchingComputer)
+        launcher.quittingApp.disconnect(onQuittingApp)
+        launcher.failed.disconnect(onFailure)
+        launcherSignalsConnected = false
     }
 
     StackView.onActivated: {
         if (!launcher.isExecuted()) {
             toolBar.visible = false
-            launcher.searchingComputer.connect(onSearchingComputer)
-            launcher.quittingApp.connect(onQuittingApp)
-            launcher.failed.connect(onFailure)
+            connectLauncherSignals()
             launcher.execute(ComputerManager)
         }
+    }
+
+    Component.onDestruction: {
+        disconnectLauncherSignals()
     }
 
     Row {

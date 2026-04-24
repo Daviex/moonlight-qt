@@ -13,6 +13,7 @@ Item {
                                            qsTr("Starting %1...").arg(appName)
     property bool isResume : false
     property bool quitAfter : false
+    property bool sessionSignalsConnected : false
 
     function stageStarting(stage)
     {
@@ -94,10 +95,48 @@ Item {
 
     function sessionReadyForDeletion()
     {
+        disconnectSessionSignals()
+
         // Garbage collect the Session object since it's pretty heavyweight
         // and keeps other libraries (like SDL_TTF) around until it is deleted.
         session = null
         gc()
+    }
+
+    function connectSessionSignals()
+    {
+        if (sessionSignalsConnected || !session) {
+            return
+        }
+
+        session.stageStarting.connect(stageStarting)
+        session.stageFailed.connect(stageFailed)
+        session.connectionStarted.connect(connectionStarted)
+        session.displayLaunchError.connect(displayLaunchError)
+        session.quitStarting.connect(quitStarting)
+        session.sessionFinished.connect(sessionFinished)
+        session.readyForDeletion.connect(sessionReadyForDeletion)
+        sessionSignalsConnected = true
+    }
+
+    function disconnectSessionSignals()
+    {
+        if (!sessionSignalsConnected || !session) {
+            return
+        }
+
+        session.stageStarting.disconnect(stageStarting)
+        session.stageFailed.disconnect(stageFailed)
+        session.connectionStarted.disconnect(connectionStarted)
+        session.displayLaunchError.disconnect(displayLaunchError)
+        session.quitStarting.disconnect(quitStarting)
+        session.sessionFinished.disconnect(sessionFinished)
+        session.readyForDeletion.disconnect(sessionReadyForDeletion)
+        sessionSignalsConnected = false
+    }
+
+    Component.onDestruction: {
+        disconnectSessionSignals()
     }
 
     StackView.onDeactivating: {
@@ -112,14 +151,7 @@ Item {
         // Hide the toolbar before we start loading
         toolBar.visible = false
 
-        // Hook up our signals
-        session.stageStarting.connect(stageStarting)
-        session.stageFailed.connect(stageFailed)
-        session.connectionStarted.connect(connectionStarted)
-        session.displayLaunchError.connect(displayLaunchError)
-        session.quitStarting.connect(quitStarting)
-        session.sessionFinished.connect(sessionFinished)
-        session.readyForDeletion.connect(sessionReadyForDeletion)
+        connectSessionSignals()
 
         // Ensure the SystemProperties async thread is finished,
         // since it may currently be using the SDL video subsystem

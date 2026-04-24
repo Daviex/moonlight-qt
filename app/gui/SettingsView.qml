@@ -1715,10 +1715,7 @@ Flickable {
                             StreamingPreferences.enableMdns = checked
 
                             // Restart polling so the mDNS change takes effect
-                            if (window.pollingActive) {
-                                ComputerManager.stopPollingAsync()
-                                ComputerManager.startPolling()
-                            }
+                            window.restartPolling()
                         }
                     }
                 }

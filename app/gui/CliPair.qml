@@ -4,6 +4,8 @@ import QtQuick.Controls 2.2
 import ComputerManager 1.0
 
 Item {
+    property bool launcherSignalsConnected : false
+
     function onSearchingComputer() {
         stageLabel.text = qsTr("Establishing connection to PC...")
     }
@@ -13,14 +15,42 @@ Item {
     }
 
     function onFailed(message) {
+        disconnectLauncherSignals()
+
         stageIndicator.visible = false
         errorDialog.text = message
         errorDialog.open()
     }
 
     function onSuccess(appName) {
+        disconnectLauncherSignals()
+
         stageIndicator.visible = false
         pairCompleteDialog.open()
+    }
+
+    function connectLauncherSignals() {
+        if (launcherSignalsConnected) {
+            return
+        }
+
+        launcher.searchingComputer.connect(onSearchingComputer)
+        launcher.pairing.connect(onPairing)
+        launcher.failed.connect(onFailed)
+        launcher.success.connect(onSuccess)
+        launcherSignalsConnected = true
+    }
+
+    function disconnectLauncherSignals() {
+        if (!launcherSignalsConnected) {
+            return
+        }
+
+        launcher.searchingComputer.disconnect(onSearchingComputer)
+        launcher.pairing.disconnect(onPairing)
+        launcher.failed.disconnect(onFailed)
+        launcher.success.disconnect(onSuccess)
+        launcherSignalsConnected = false
     }
 
     // Allow user to back out of pairing
@@ -38,12 +68,13 @@ Item {
         if (!launcher.isExecuted()) {
             toolBar.visible = false
 
-            launcher.searchingComputer.connect(onSearchingComputer)
-            launcher.pairing.connect(onPairing)
-            launcher.failed.connect(onFailed)
-            launcher.success.connect(onSuccess)
+            connectLauncherSignals()
             launcher.execute(ComputerManager)
         }
+    }
+
+    Component.onDestruction: {
+        disconnectLauncherSignals()
     }
 
     Row {

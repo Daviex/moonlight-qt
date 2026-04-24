@@ -4,6 +4,8 @@ import QtQuick.Controls 2.2
 import ComputerManager 1.0
 
 Item {
+    property bool launcherSignalsConnected : false
+
     function onSearchingComputer() {
         stageLabel.text = qsTr("Establishing connection to PC...")
     }
@@ -13,6 +15,8 @@ Item {
     }
 
     function onSessionCreated(appName, session) {
+        disconnectLauncherSignals()
+
         var component = Qt.createComponent("StreamSegue.qml")
         var segue = component.createObject(stackView, {
             "appName": appName,
@@ -23,6 +27,8 @@ Item {
     }
 
     function onLaunchFailed(message) {
+        disconnectLauncherSignals()
+
         errorDialog.text = message
         errorDialog.open()
         console.error(message)
@@ -33,17 +39,43 @@ Item {
         quitAppDialog.open()
     }
 
+    function connectLauncherSignals() {
+        if (launcherSignalsConnected) {
+            return
+        }
+
+        launcher.searchingComputer.connect(onSearchingComputer)
+        launcher.searchingApp.connect(onSearchingApp)
+        launcher.sessionCreated.connect(onSessionCreated)
+        launcher.failed.connect(onLaunchFailed)
+        launcher.appQuitRequired.connect(onAppQuitRequired)
+        launcherSignalsConnected = true
+    }
+
+    function disconnectLauncherSignals() {
+        if (!launcherSignalsConnected) {
+            return
+        }
+
+        launcher.searchingComputer.disconnect(onSearchingComputer)
+        launcher.searchingApp.disconnect(onSearchingApp)
+        launcher.sessionCreated.disconnect(onSessionCreated)
+        launcher.failed.disconnect(onLaunchFailed)
+        launcher.appQuitRequired.disconnect(onAppQuitRequired)
+        launcherSignalsConnected = false
+    }
+
     StackView.onActivated: {
         if (!launcher.isExecuted()) {
             toolBar.visible = false
 
-            launcher.searchingComputer.connect(onSearchingComputer)
-            launcher.searchingApp.connect(onSearchingApp)
-            launcher.sessionCreated.connect(onSessionCreated)
-            launcher.failed.connect(onLaunchFailed)
-            launcher.appQuitRequired.connect(onAppQuitRequired)
+            connectLauncherSignals()
             launcher.execute(ComputerManager)
         }
+    }
+
+    Component.onDestruction: {
+        disconnectLauncherSignals()
     }
 
     Row {
