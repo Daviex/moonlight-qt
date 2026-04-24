@@ -6,7 +6,7 @@ import StreamingPreferences 1.0
 
 NavigableItemDelegate {
     property var appModel
-    property var quitAppDialog
+    property var showQuitAppDialogFn
     property var stackViewRef
 
     id: delegateRoot
@@ -137,11 +137,7 @@ NavigableItemDelegate {
         var runningId = appModel.getRunningAppId()
         if (runningId !== 0 && runningId !== model.appid) {
             if (quitExistingApp) {
-                quitAppDialog.appName = appModel.getRunningAppName()
-                quitAppDialog.segueToStream = true
-                quitAppDialog.nextAppName = model.name
-                quitAppDialog.nextAppIndex = index
-                quitAppDialog.open()
+                showQuitAppDialogFn(appModel.getRunningAppName(), true, model.name, index)
             }
 
             return
@@ -194,9 +190,7 @@ NavigableItemDelegate {
     }
 
     function doQuitGame() {
-        quitAppDialog.appName = appModel.getRunningAppName()
-        quitAppDialog.segueToStream = false
-        quitAppDialog.open()
+        showQuitAppDialogFn(appModel.getRunningAppName(), false, "", -1)
     }
 
     Loader {

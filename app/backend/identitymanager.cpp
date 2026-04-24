@@ -14,6 +14,34 @@
 
 IdentityManager* IdentityManager::s_Im = nullptr;
 
+static bool credentialsMatch(const QByteArray& pemCert, const QByteArray& privateKey)
+{
+    BIO* certBio = BIO_new_mem_buf(pemCert.data(), -1);
+    THROW_BAD_ALLOC_IF_NULL(certBio);
+
+    X509* cert = PEM_read_bio_X509(certBio, nullptr, nullptr, nullptr);
+    BIO_free(certBio);
+    if (cert == nullptr) {
+        return false;
+    }
+
+    BIO* keyBio = BIO_new_mem_buf(const_cast<char*>(privateKey.constData()), -1);
+    THROW_BAD_ALLOC_IF_NULL(keyBio);
+
+    EVP_PKEY* key = PEM_read_bio_PrivateKey(keyBio, nullptr, nullptr, nullptr);
+    BIO_free(keyBio);
+    if (key == nullptr) {
+        X509_free(cert);
+        return false;
+    }
+
+    bool match = X509_check_private_key(cert, key) == 1;
+
+    X509_free(cert);
+    EVP_PKEY_free(key);
+    return match;
+}
+
 IdentityManager*
 IdentityManager::get()
 {
@@ -87,6 +115,9 @@ void IdentityManager::createCredentials(QSettings& settings)
     BIO_get_mem_ptr(biocert, &mem);
     m_CachedPemCert = QByteArray(mem->data, (int)mem->length);
 
+    m_CachedSslCert = QSslCertificate();
+    m_CachedSslKey = QSslKey();
+
     X509_free(cert);
     EVP_PKEY_free(pk);
     BIO_free(biokey);
@@ -98,6 +129,9 @@ void IdentityManager::createCredentials(QSettings& settings)
     }
     if (getSslKey().isNull()) {
         qFatal("Newly generated private key is unreadable");
+    }
+    if (!credentialsMatch(m_CachedPemCert, m_CachedPrivateKey)) {
+        qFatal("Newly generated certificate and private key do not match");
     }
 
     settings.setValue(SER_CERT, m_CachedPemCert);
@@ -125,6 +159,10 @@ IdentityManager::IdentityManager()
         qWarning() << "Private key is unreadable";
         createCredentials(settings);
     }
+    else if (!credentialsMatch(m_CachedPemCert, m_CachedPrivateKey)) {
+        qWarning() << "Certificate and private key do not match";
+        createCredentials(settings);
+    }
 
     // We should have valid credentials now. If not, we're screwed
     if (getSslCertificate().isNull()) {
@@ -132,6 +170,9 @@ IdentityManager::IdentityManager()
     }
     if (getSslKey().isNull()) {
         qFatal("Private key is unreadable");
+    }
+    if (!credentialsMatch(m_CachedPemCert, m_CachedPrivateKey)) {
+        qFatal("Certificate and private key do not match");
     }
 }
 

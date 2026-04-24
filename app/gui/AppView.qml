@@ -66,11 +66,20 @@ CenteredGridView {
         return model
     }
 
+    function showQuitAppDialog(appName, segueToStream, nextAppName, nextAppIndex)
+    {
+        quitAppDialog.appName = appName
+        quitAppDialog.segueToStream = segueToStream
+        quitAppDialog.nextAppName = nextAppName
+        quitAppDialog.nextAppIndex = nextAppIndex
+        quitAppDialog.open()
+    }
+
     model: appModel
 
     delegate: AppGridDelegate {
         appModel: appGrid.appModel
-        quitAppDialog: quitAppDialog
+        showQuitAppDialogFn: appGrid.showQuitAppDialog
         stackViewRef: stackView
     }
 

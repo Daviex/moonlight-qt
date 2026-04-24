@@ -363,8 +363,11 @@ void SdlInputHandler::handleControllerButtonEvent(SDL_ControllerButtonEvent* eve
         }
     }
 
-    // Handle Start+Select+L1+R1 as a gamepad quit combo
-    if (state->buttons == (PLAY_FLAG | BACK_FLAG | LB_FLAG | RB_FLAG) && qgetenv("NO_GAMEPAD_QUIT") != "1") {
+    const int quitComboMask = PLAY_FLAG | BACK_FLAG | LB_FLAG | RB_FLAG;
+
+    // Handle Start+Select+L1+R1 as a gamepad quit combo. Use a mask check rather than
+    // exact equality so the combo still works if the controller reports extra buttons.
+    if ((state->buttons & quitComboMask) == quitComboMask && qgetenv("NO_GAMEPAD_QUIT") != "1") {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Detected quit gamepad button combo");
 
@@ -380,8 +383,10 @@ void SdlInputHandler::handleControllerButtonEvent(SDL_ControllerButtonEvent* eve
         return;
     }
 
+    const int overlayComboMask = BACK_FLAG | LB_FLAG | RB_FLAG | X_FLAG;
+
     // Handle Select+L1+R1+X as a gamepad overlay combo
-    if (state->buttons == (BACK_FLAG | LB_FLAG | RB_FLAG | X_FLAG)) {
+    if ((state->buttons & overlayComboMask) == overlayComboMask) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Detected stats toggle gamepad combo");
 
