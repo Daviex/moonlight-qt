@@ -1,7 +1,12 @@
 #pragma once
 
+#include <atomic>
+#include <memory>
+
+#include <QMutex>
 #include <QSemaphore>
 #include <QQuickWindow>
+#include <QWaitCondition>
 
 #include <Limelight.h>
 #include <opus_multistream.h>
@@ -113,7 +118,7 @@ public:
 
     static Session* get()
     {
-        return s_ActiveSession;
+        return s_ActiveSession.load();
     }
 
     Overlay::OverlayManager& getOverlayManager()
@@ -144,6 +149,8 @@ signals:
     void launchWarningsChanged();
 
 private:
+    using ActiveSessionHandle = std::unique_ptr<Session, void (*)(Session*)>;
+
     void exec();
 
     bool startConnectionAsync();
@@ -242,6 +249,21 @@ private:
     static
     int drSubmitDecodeUnit(PDECODE_UNIT du);
 
+    static
+    ActiveSessionHandle acquireActiveSessionHandleForCallback();
+
+    static
+    Session* tryAcquireActiveSessionForCallback();
+
+    static
+    void releaseActiveSessionForCallback(Session* session);
+
+    static
+    void beginActiveSessionTeardown(Session* session);
+
+    static
+    void finishActiveSessionTeardown(Session* session);
+
     StreamingPreferences* m_Preferences;
     bool m_IsFullScreen;
     SupportedVideoFormatList m_SupportedVideoFormats; // Sorted in order of descending priority
@@ -254,10 +276,10 @@ private:
     IVideoDecoder* m_VideoDecoder;
     SDL_mutex* m_DecoderLock;
     bool m_AudioDisabled;
-    bool m_AudioMuted;
+    std::atomic_bool m_AudioMuted;
     Uint32 m_FullScreenFlag;
     QQuickWindow* m_QtWindow;
-    bool m_UnexpectedTermination;
+    std::atomic_bool m_UnexpectedTermination;
     SdlInputHandler* m_InputHandler;
     int m_MouseEmulationRefCount;
     int m_FlushingWindowEventsRef;
@@ -265,7 +287,7 @@ private:
     bool m_ShouldExit;
 
     bool m_AsyncConnectionSuccess;
-    int m_PortTestResults;
+    std::atomic<int> m_PortTestResults;
 
     int m_ActiveVideoFormat;
     int m_ActiveVideoWidth;
@@ -282,6 +304,10 @@ private:
     Overlay::OverlayManager m_OverlayManager;
 
     static CONNECTION_LISTENER_CALLBACKS k_ConnCallbacks;
-    static Session* s_ActiveSession;
+    static std::atomic<Session*> s_ActiveSession;
     static QSemaphore s_ActiveSessionSemaphore;
+    static std::atomic<int> s_ActiveSessionCallbackRefs;
+    static std::atomic_bool s_ActiveSessionAcceptingCallbacks;
+    static QMutex s_ActiveSessionCallbackMutex;
+    static QWaitCondition s_ActiveSessionCallbacksDrained;
 };

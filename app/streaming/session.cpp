@@ -33,19 +33,36 @@
 
 #include <QtEndian>
 #include <QCoreApplication>
+#include <QMetaObject>
 #include <QThreadPool>
 #include <QSvgRenderer>
 #include <QPainter>
 #include <QImage>
 #include <QGuiApplication>
 #include <QCursor>
+#include <QPointer>
 #include <QScreen>
+
+#include <utility>
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #include <QQuickOpenGLUtils>
 #endif
 
 #define CONN_TEST_SERVER "qt.conntest.moonlight-stream.org"
+
+namespace {
+template <typename Func>
+void invokeOnSessionThread(Session* session, Func&& func)
+{
+    QPointer<Session> guardedSession(session);
+    QMetaObject::invokeMethod(session, [guardedSession, func = std::forward<Func>(func)]() mutable {
+        if (!guardedSession.isNull()) {
+            func(guardedSession.data());
+        }
+    }, Qt::QueuedConnection);
+}
+}
 
 CONNECTION_LISTENER_CALLBACKS Session::k_ConnCallbacks = {
     Session::clStageStarting,
@@ -63,74 +80,163 @@ CONNECTION_LISTENER_CALLBACKS Session::k_ConnCallbacks = {
     Session::clSetAdaptiveTriggers
 };
 
-Session* Session::s_ActiveSession;
+std::atomic<Session*> Session::s_ActiveSession(nullptr);
 QSemaphore Session::s_ActiveSessionSemaphore(1);
+std::atomic<int> Session::s_ActiveSessionCallbackRefs(0);
+std::atomic_bool Session::s_ActiveSessionAcceptingCallbacks(false);
+QMutex Session::s_ActiveSessionCallbackMutex;
+QWaitCondition Session::s_ActiveSessionCallbacksDrained;
+
+Session::ActiveSessionHandle Session::acquireActiveSessionHandleForCallback()
+{
+    return ActiveSessionHandle(tryAcquireActiveSessionForCallback(), &Session::releaseActiveSessionForCallback);
+}
+
+Session* Session::tryAcquireActiveSessionForCallback()
+{
+    if (!s_ActiveSessionAcceptingCallbacks.load()) {
+        return nullptr;
+    }
+
+    Session* session = s_ActiveSession.load();
+    if (session == nullptr) {
+        return nullptr;
+    }
+
+    s_ActiveSessionCallbackRefs.fetch_add(1);
+
+    if (!s_ActiveSessionAcceptingCallbacks.load() || s_ActiveSession.load() != session) {
+        releaseActiveSessionForCallback(session);
+        return nullptr;
+    }
+
+    return session;
+}
+
+void Session::releaseActiveSessionForCallback(Session* session)
+{
+    if (session == nullptr) {
+        return;
+    }
+
+    if (s_ActiveSessionCallbackRefs.fetch_sub(1) == 1) {
+        QMutexLocker locker(&s_ActiveSessionCallbackMutex);
+        s_ActiveSessionCallbacksDrained.wakeAll();
+    }
+}
+
+void Session::beginActiveSessionTeardown(Session* session)
+{
+    if (s_ActiveSession.load() == session) {
+        s_ActiveSessionAcceptingCallbacks.store(false);
+    }
+}
+
+void Session::finishActiveSessionTeardown(Session* session)
+{
+    if (s_ActiveSession.load() != session) {
+        return;
+    }
+
+    QMutexLocker locker(&s_ActiveSessionCallbackMutex);
+    while (s_ActiveSessionCallbackRefs.load() != 0) {
+        s_ActiveSessionCallbacksDrained.wait(&s_ActiveSessionCallbackMutex);
+    }
+
+    s_ActiveSession.store(nullptr);
+}
 
 void Session::clStageStarting(int stage)
 {
-    // We know this is called on the same thread as LiStartConnection()
-    // which happens to be the main thread, so it's cool to interact
-    // with the GUI in these callbacks.
-    emit s_ActiveSession->stageStarting(QString::fromLocal8Bit(LiGetStageName(stage)));
+    ActiveSessionHandle session = acquireActiveSessionHandleForCallback();
+    if (!session) {
+        return;
+    }
+
+    const QString stageName = QString::fromLocal8Bit(LiGetStageName(stage));
+    invokeOnSessionThread(session.get(), [stageName](Session* session) {
+        emit session->stageStarting(stageName);
+    });
 }
 
 void Session::clStageFailed(int stage, int errorCode)
 {
+    ActiveSessionHandle session = acquireActiveSessionHandleForCallback();
+    if (!session) {
+        return;
+    }
+
     // Perform the port test now, while we're on the async connection thread and not blocking the UI.
     unsigned int portFlags = LiGetPortFlagsFromStage(stage);
-    s_ActiveSession->m_PortTestResults = LiTestClientConnectivity(CONN_TEST_SERVER, 443, portFlags);
+    session->m_PortTestResults = LiTestClientConnectivity(CONN_TEST_SERVER, 443, portFlags);
 
     char failingPorts[128];
     LiStringifyPortFlags(portFlags, ", ", failingPorts, sizeof(failingPorts));
-    emit s_ActiveSession->stageFailed(QString::fromLocal8Bit(LiGetStageName(stage)), errorCode, QString(failingPorts));
+    const QString stageName = QString::fromLocal8Bit(LiGetStageName(stage));
+    const QString failingPortList = QString::fromLocal8Bit(failingPorts);
+    invokeOnSessionThread(session.get(), [stageName, errorCode, failingPortList](Session* session) {
+        emit session->stageFailed(stageName, errorCode, failingPortList);
+    });
 }
 
 void Session::clConnectionTerminated(int errorCode)
 {
+    ActiveSessionHandle session = acquireActiveSessionHandleForCallback();
+    if (!session) {
+        return;
+    }
+
     unsigned int portFlags = LiGetPortFlagsFromTerminationErrorCode(errorCode);
-    s_ActiveSession->m_PortTestResults = LiTestClientConnectivity(CONN_TEST_SERVER, 443, portFlags);
+    session->m_PortTestResults = LiTestClientConnectivity(CONN_TEST_SERVER, 443, portFlags);
 
     // Display the termination dialog if this was not intended
+    QString errorText;
     switch (errorCode) {
     case ML_ERROR_GRACEFUL_TERMINATION:
         break;
 
     case ML_ERROR_NO_VIDEO_TRAFFIC:
-        s_ActiveSession->m_UnexpectedTermination = true;
+        session->m_UnexpectedTermination = true;
 
         char ports[128];
         SDL_assert(portFlags != 0);
         LiStringifyPortFlags(portFlags, ", ", ports, sizeof(ports));
-        emit s_ActiveSession->displayLaunchError(tr("No video received from host.") + "\n\n"+
-                                                 tr("Check your firewall and port forwarding rules for port(s): %1").arg(ports));
+        errorText = tr("No video received from host.") + "\n\n" +
+                tr("Check your firewall and port forwarding rules for port(s): %1").arg(ports);
         break;
 
     case ML_ERROR_NO_VIDEO_FRAME:
-        s_ActiveSession->m_UnexpectedTermination = true;
-        emit s_ActiveSession->displayLaunchError(tr("Your network connection isn't performing well. Reduce your video bitrate setting or try a faster connection."));
+        session->m_UnexpectedTermination = true;
+        errorText = tr("Your network connection isn't performing well. Reduce your video bitrate setting or try a faster connection.");
         break;
 
     case ML_ERROR_PROTECTED_CONTENT:
     case ML_ERROR_UNEXPECTED_EARLY_TERMINATION:
-        s_ActiveSession->m_UnexpectedTermination = true;
-        emit s_ActiveSession->displayLaunchError(tr("Something went wrong on your host PC when starting the stream.") + "\n\n" +
-                                                 tr("Make sure you don't have any DRM-protected content open on your host PC. You can also try restarting your host PC."));
+        session->m_UnexpectedTermination = true;
+        errorText = tr("Something went wrong on your host PC when starting the stream.") + "\n\n" +
+                tr("Make sure you don't have any DRM-protected content open on your host PC. You can also try restarting your host PC.");
         break;
 
     case ML_ERROR_FRAME_CONVERSION:
-        s_ActiveSession->m_UnexpectedTermination = true;
-        emit s_ActiveSession->displayLaunchError(tr("The host PC reported a fatal video encoding error.") + "\n\n" +
-                                                 tr("Try disabling HDR mode, changing the streaming resolution, or changing your host PC's display resolution."));
+        session->m_UnexpectedTermination = true;
+        errorText = tr("The host PC reported a fatal video encoding error.") + "\n\n" +
+                tr("Try disabling HDR mode, changing the streaming resolution, or changing your host PC's display resolution.");
         break;
 
     default:
-        s_ActiveSession->m_UnexpectedTermination = true;
+        session->m_UnexpectedTermination = true;
 
         // We'll assume large errors are hex values
         bool hexError = qAbs(errorCode) > 1000;
-        emit s_ActiveSession->displayLaunchError(tr("Connection terminated") + "\n\n" +
-                                                 tr("Error code: %1").arg(errorCode, hexError ? 8 : 0, hexError ? 16 : 10, QChar('0')));
+        errorText = tr("Connection terminated") + "\n\n" +
+                tr("Error code: %1").arg(errorCode, hexError ? 8 : 0, hexError ? 16 : 10, QChar('0'));
         break;
+    }
+
+    if (!errorText.isEmpty()) {
+        invokeOnSessionThread(session.get(), [errorText](Session* session) {
+            emit session->displayLaunchError(errorText);
+        });
     }
 
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
@@ -158,6 +264,11 @@ void Session::clLogMessage(const char* format, ...)
 
 void Session::clRumble(unsigned short controllerNumber, unsigned short lowFreqMotor, unsigned short highFreqMotor)
 {
+    ActiveSessionHandle session = acquireActiveSessionHandleForCallback();
+    if (!session) {
+        return;
+    }
+
     // We push an event for the main thread to handle in order to properly synchronize
     // with the removal of game controllers that could result in our game controller
     // going away during this callback.
@@ -171,15 +282,20 @@ void Session::clRumble(unsigned short controllerNumber, unsigned short lowFreqMo
 
 void Session::clConnectionStatusUpdate(int connectionStatus)
 {
+    ActiveSessionHandle session = acquireActiveSessionHandleForCallback();
+    if (!session) {
+        return;
+    }
+
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "Connection status update: %d",
                 connectionStatus);
 
-    if (!s_ActiveSession->m_Preferences->connectionWarnings) {
+    if (!session->m_Preferences->connectionWarnings) {
         return;
     }
 
-    if (s_ActiveSession->m_MouseEmulationRefCount > 0) {
+    if (session->m_MouseEmulationRefCount > 0) {
         // Don't display the overlay if mouse emulation is already using it
         return;
     }
@@ -187,33 +303,43 @@ void Session::clConnectionStatusUpdate(int connectionStatus)
     switch (connectionStatus)
     {
     case CONN_STATUS_POOR:
-        s_ActiveSession->m_OverlayManager.updateOverlayText(Overlay::OverlayStatusUpdate,
-                                                            s_ActiveSession->m_StreamConfig.bitrate > 5000 ?
-                                                                "Slow connection to PC\nReduce your bitrate" : "Poor connection to PC");
-        s_ActiveSession->m_OverlayManager.setOverlayState(Overlay::OverlayStatusUpdate, true);
+        session->m_OverlayManager.updateOverlayText(Overlay::OverlayStatusUpdate,
+                                                    session->m_StreamConfig.bitrate > 5000 ?
+                                                        "Slow connection to PC\nReduce your bitrate" : "Poor connection to PC");
+        session->m_OverlayManager.setOverlayState(Overlay::OverlayStatusUpdate, true);
         break;
     case CONN_STATUS_OKAY:
-        s_ActiveSession->m_OverlayManager.setOverlayState(Overlay::OverlayStatusUpdate, false);
+        session->m_OverlayManager.setOverlayState(Overlay::OverlayStatusUpdate, false);
         break;
     }
 }
 
 void Session::clSetHdrMode(bool enabled)
 {
+    ActiveSessionHandle session = acquireActiveSessionHandleForCallback();
+    if (!session) {
+        return;
+    }
+
     // If we're in the process of recreating our decoder when we get
     // this callback, we'll drop it. The main thread will make the
     // callback when it finishes creating the new decoder.
-    if (SDL_TryLockMutex(s_ActiveSession->m_DecoderLock) == 0) {
-        IVideoDecoder* decoder = s_ActiveSession->m_VideoDecoder;
+    if (SDL_TryLockMutex(session->m_DecoderLock) == 0) {
+        IVideoDecoder* decoder = session->m_VideoDecoder;
         if (decoder != nullptr) {
             decoder->setHdrMode(enabled);
         }
-        SDL_UnlockMutex(s_ActiveSession->m_DecoderLock);
+        SDL_UnlockMutex(session->m_DecoderLock);
     }
 }
 
 void Session::clRumbleTriggers(uint16_t controllerNumber, uint16_t leftTrigger, uint16_t rightTrigger)
 {
+    ActiveSessionHandle session = acquireActiveSessionHandleForCallback();
+    if (!session) {
+        return;
+    }
+
     // We push an event for the main thread to handle in order to properly synchronize
     // with the removal of game controllers that could result in our game controller
     // going away during this callback.
@@ -227,6 +353,11 @@ void Session::clRumbleTriggers(uint16_t controllerNumber, uint16_t leftTrigger, 
 
 void Session::clSetMotionEventState(uint16_t controllerNumber, uint8_t motionType, uint16_t reportRateHz)
 {
+    ActiveSessionHandle session = acquireActiveSessionHandleForCallback();
+    if (!session) {
+        return;
+    }
+
     // We push an event for the main thread to handle in order to properly synchronize
     // with the removal of game controllers that could result in our game controller
     // going away during this callback.
@@ -240,6 +371,11 @@ void Session::clSetMotionEventState(uint16_t controllerNumber, uint8_t motionTyp
 
 void Session::clSetControllerLED(uint16_t controllerNumber, uint8_t r, uint8_t g, uint8_t b)
 {
+    ActiveSessionHandle session = acquireActiveSessionHandleForCallback();
+    if (!session) {
+        return;
+    }
+
     // We push an event for the main thread to handle in order to properly synchronize
     // with the removal of game controllers that could result in our game controller
     // going away during this callback.
@@ -252,6 +388,11 @@ void Session::clSetControllerLED(uint16_t controllerNumber, uint8_t r, uint8_t g
 }
 
 void Session::clSetAdaptiveTriggers(uint16_t controllerNumber, uint8_t eventFlags, uint8_t typeLeft, uint8_t typeRight, uint8_t *left, uint8_t *right){
+    ActiveSessionHandle session = acquireActiveSessionHandleForCallback();
+    if (!session) {
+        return;
+    }
+
     // We push an event for the main thread to handle in order to properly synchronize
     // with the removal of game controllers that could result in our game controller
     // going away during this callback.
@@ -340,10 +481,15 @@ bool Session::chooseDecoder(StreamingPreferences::VideoDecoderSelection vds,
 
 int Session::drSetup(int videoFormat, int width, int height, int frameRate, void *, int)
 {
-    s_ActiveSession->m_ActiveVideoFormat = videoFormat;
-    s_ActiveSession->m_ActiveVideoWidth = width;
-    s_ActiveSession->m_ActiveVideoHeight = height;
-    s_ActiveSession->m_ActiveVideoFrameRate = frameRate;
+    ActiveSessionHandle session = acquireActiveSessionHandleForCallback();
+    if (!session) {
+        return 0;
+    }
+
+    session->m_ActiveVideoFormat = videoFormat;
+    session->m_ActiveVideoWidth = width;
+    session->m_ActiveVideoHeight = height;
+    session->m_ActiveVideoFrameRate = frameRate;
 
     // Defer decoder setup until we've started streaming so we
     // don't have to hide and show the SDL window (which seems to
@@ -357,6 +503,11 @@ int Session::drSetup(int videoFormat, int width, int height, int frameRate, void
 
 int Session::drSubmitDecodeUnit(PDECODE_UNIT du)
 {
+    ActiveSessionHandle session = acquireActiveSessionHandleForCallback();
+    if (!session) {
+        return DR_OK;
+    }
+
     // Use a lock since we'll be yanking this decoder out
     // from underneath the session when we initiate destruction.
     // We need to destroy the decoder on the main thread to satisfy
@@ -365,15 +516,15 @@ int Session::drSubmitDecodeUnit(PDECODE_UNIT du)
     // safely return DR_OK and wait for the IDR frame request by
     // the decoder reinitialization code.
 
-    if (SDL_TryLockMutex(s_ActiveSession->m_DecoderLock) == 0) {
-        IVideoDecoder* decoder = s_ActiveSession->m_VideoDecoder;
+    if (SDL_TryLockMutex(session->m_DecoderLock) == 0) {
+        IVideoDecoder* decoder = session->m_VideoDecoder;
         if (decoder != nullptr) {
             int ret = decoder->submitDecodeUnit(du);
-            SDL_UnlockMutex(s_ActiveSession->m_DecoderLock);
+            SDL_UnlockMutex(session->m_DecoderLock);
             return ret;
         }
         else {
-            SDL_UnlockMutex(s_ActiveSession->m_DecoderLock);
+            SDL_UnlockMutex(session->m_DecoderLock);
             return DR_OK;
         }
     }
@@ -1234,30 +1385,26 @@ public:
     DeferredSessionCleanupTask(Session* session) :
         m_Session(session) {}
 
-private:
-    virtual ~DeferredSessionCleanupTask() override
-    {
-        // Allow another session to start now that we're cleaned up
-        Session::s_ActiveSession = nullptr;
-        Session::s_ActiveSessionSemaphore.release();
-
-        // Notify that the session is ready to be cleaned up
-        emit m_Session->readyForDeletion();
-    }
-
     void run() override
     {
+        Session::beginActiveSessionTeardown(m_Session);
+
         // Only quit the running app if our session terminated gracefully
         bool shouldQuit =
-                !m_Session->m_UnexpectedTermination &&
+                !m_Session->m_UnexpectedTermination.load() &&
                 m_Session->m_Preferences->quitAppAfter;
 
         // Notify the UI
         if (shouldQuit) {
-            emit m_Session->quitStarting();
+            invokeOnSessionThread(m_Session, [](Session* session) {
+                emit session->quitStarting();
+            });
         }
         else {
-            emit m_Session->sessionFinished(m_Session->m_PortTestResults);
+            const int portTestResults = m_Session->m_PortTestResults.load();
+            invokeOnSessionThread(m_Session, [portTestResults](Session* session) {
+                emit session->sessionFinished(portTestResults);
+            });
         }
 
         // The video decoder must already be destroyed, since it could
@@ -1267,6 +1414,7 @@ private:
 
         // Finish cleanup of the connection state
         LiStopConnection();
+        Session::finishActiveSessionTeardown(m_Session);
 
         // Perform a best-effort app quit
         if (shouldQuit) {
@@ -1280,15 +1428,29 @@ private:
             }
 
             // Session is finished now
-            emit m_Session->sessionFinished(m_Session->m_PortTestResults);
+            const int portTestResults = m_Session->m_PortTestResults.load();
+            invokeOnSessionThread(m_Session, [portTestResults](Session* session) {
+                emit session->sessionFinished(portTestResults);
+            });
         }
 
         // Exit the entire program if requested
         if (m_Session->m_ShouldExit) {
-            QCoreApplication::instance()->quit();
+            if (QCoreApplication* application = QCoreApplication::instance()) {
+                QMetaObject::invokeMethod(application, []() {
+                    QCoreApplication::quit();
+                }, Qt::QueuedConnection);
+            }
         }
+
+        Session::s_ActiveSessionSemaphore.release();
+
+        invokeOnSessionThread(m_Session, [](Session* session) {
+            emit session->readyForDeletion();
+        });
     }
 
+private:
     Session* m_Session;
 };
 
@@ -1597,10 +1759,16 @@ bool Session::startConnectionAsync()
                       !m_Preferences->multiController,
                       rtspSessionUrl);
     } catch (const GfeHttpResponseException& e) {
-        emit displayLaunchError(tr("Host returned error: %1").arg(e.toQString()));
+        const QString errorText = tr("Host returned error: %1").arg(e.toQString());
+        invokeOnSessionThread(this, [errorText](Session* session) {
+            emit session->displayLaunchError(errorText);
+        });
         return false;
     } catch (const QtNetworkReplyException& e) {
-        emit displayLaunchError(e.toQString());
+        const QString errorText = e.toQString();
+        invokeOnSessionThread(this, [errorText](Session* session) {
+            emit session->displayLaunchError(errorText);
+        });
         return false;
     }
 
@@ -1689,7 +1857,9 @@ bool Session::startConnectionAsync()
         return false;
     }
 
-    emit connectionStarted();
+    invokeOnSessionThread(this, [](Session* session) {
+        emit session->connectionStarted();
+    });
     return true;
 }
 
@@ -1729,7 +1899,8 @@ void Session::start()
     s_ActiveSessionSemaphore.acquire();
 
     // We're now active
-    s_ActiveSession = this;
+    s_ActiveSession.store(this);
+    s_ActiveSessionAcceptingCallbacks.store(true);
 
     // Initialize the gamepad code with our preferences
     // NB: m_InputHandler must be initialize before starting the connection.
@@ -1758,6 +1929,10 @@ void Session::exec()
 {
     // If the connection failed, clean up and abort the connection.
     if (!m_AsyncConnectionSuccess) {
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+        QCoreApplication::sendPostedEvents();
+
+        beginActiveSessionTeardown(this);
         delete m_InputHandler;
         m_InputHandler = nullptr;
         SDL_QuitSubSystem(SDL_INIT_VIDEO);
@@ -2191,7 +2366,7 @@ void Session::exec()
                                    enableVsync,
                                    enableVsync && m_Preferences->framePacing,
                                    false,
-                                   s_ActiveSession->m_VideoDecoder)) {
+                                   m_VideoDecoder)) {
                     SDL_UnlockMutex(m_DecoderLock);
                     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                                  "Failed to recreate decoder after reset");
@@ -2284,6 +2459,8 @@ void Session::exec()
     }
 
 DispatchDeferredCleanup:
+    beginActiveSessionTeardown(this);
+
     // Switch back to synchronous logging mode
     StreamUtils::exitAsyncLoggingMode();
 
@@ -2347,6 +2524,9 @@ DispatchDeferredCleanup:
     }
 
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
+
+    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+    QCoreApplication::sendPostedEvents();
 
     // Cleanup can take a while, so dispatch it to a worker thread.
     // When it is complete, it will release our s_ActiveSessionSemaphore

@@ -133,22 +133,37 @@ int Session::arInit(int /* audioConfiguration */,
                     const POPUS_MULTISTREAM_CONFIGURATION opusConfig,
                     void* /* arContext */, int /* arFlags */)
 {
-    SDL_memcpy(&s_ActiveSession->m_OriginalAudioConfig, opusConfig, sizeof(*opusConfig));
-    s_ActiveSession->initializeAudioRenderer();
+    ActiveSessionHandle session = acquireActiveSessionHandleForCallback();
+    if (!session) {
+        return 0;
+    }
+
+    SDL_memcpy(&session->m_OriginalAudioConfig, opusConfig, sizeof(*opusConfig));
+    session->initializeAudioRenderer();
     return 0;
 }
 
 void Session::arCleanup()
 {
-    delete s_ActiveSession->m_AudioRenderer;
-    s_ActiveSession->m_AudioRenderer = nullptr;
+    ActiveSessionHandle session = acquireActiveSessionHandleForCallback();
+    if (!session) {
+        return;
+    }
 
-    opus_multistream_decoder_destroy(s_ActiveSession->m_OpusDecoder);
-    s_ActiveSession->m_OpusDecoder = nullptr;
+    delete session->m_AudioRenderer;
+    session->m_AudioRenderer = nullptr;
+
+    opus_multistream_decoder_destroy(session->m_OpusDecoder);
+    session->m_OpusDecoder = nullptr;
 }
 
 void Session::arDecodeAndPlaySample(char* sampleData, int sampleLength)
 {
+    ActiveSessionHandle session = acquireActiveSessionHandleForCallback();
+    if (!session) {
+        return;
+    }
+
     int samplesDecoded;
 
 #ifndef STEAM_LINK
@@ -156,7 +171,7 @@ void Session::arDecodeAndPlaySample(char* sampleData, int sampleLength)
     // our sample delivery time. On Steam Link, this causes starvation
     // of other threads due to severely restricted CPU time available,
     // so we will skip it on that platform.
-    if (s_ActiveSession->m_AudioSampleCount == 0) {
+    if (session->m_AudioSampleCount == 0) {
         if (SDL_SetThreadPriority(SDL_THREAD_PRIORITY_HIGH) < 0) {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Unable to set audio thread to high priority: %s",
@@ -166,10 +181,10 @@ void Session::arDecodeAndPlaySample(char* sampleData, int sampleLength)
 #endif
 
     // See if we need to drop this sample
-    if (s_ActiveSession->m_DropAudioEndTime != 0) {
-        if (SDL_TICKS_PASSED(SDL_GetTicks(), s_ActiveSession->m_DropAudioEndTime)) {
+    if (session->m_DropAudioEndTime != 0) {
+        if (SDL_TICKS_PASSED(SDL_GetTicks(), session->m_DropAudioEndTime)) {
             // Avoid calling SDL_GetTicks() now
-            s_ActiveSession->m_DropAudioEndTime = 0;
+            session->m_DropAudioEndTime = 0;
 
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                         "Audio drop window has ended");
@@ -180,24 +195,24 @@ void Session::arDecodeAndPlaySample(char* sampleData, int sampleLength)
         }
     }
 
-    s_ActiveSession->m_AudioSampleCount++;
+    session->m_AudioSampleCount++;
 
     // If audio is muted, don't decode or play the audio
-    if (s_ActiveSession->m_AudioMuted) {
+    if (session->m_AudioMuted.load()) {
         return;
     }
 
-    if (s_ActiveSession->m_AudioRenderer != nullptr) {
-        int sampleSize = s_ActiveSession->m_AudioRenderer->getAudioBufferSampleSize();
-        int frameSize = sampleSize * s_ActiveSession->m_ActiveAudioConfig.channelCount;
-        int desiredBufferSize = frameSize * s_ActiveSession->m_ActiveAudioConfig.samplesPerFrame;
-        void* buffer = s_ActiveSession->m_AudioRenderer->getAudioBuffer(&desiredBufferSize);
+    if (session->m_AudioRenderer != nullptr) {
+        int sampleSize = session->m_AudioRenderer->getAudioBufferSampleSize();
+        int frameSize = sampleSize * session->m_ActiveAudioConfig.channelCount;
+        int desiredBufferSize = frameSize * session->m_ActiveAudioConfig.samplesPerFrame;
+        void* buffer = session->m_AudioRenderer->getAudioBuffer(&desiredBufferSize);
         if (buffer == nullptr) {
             return;
         }
 
-        if (s_ActiveSession->m_AudioRenderer->getAudioBufferFormat() == IAudioRenderer::AudioFormat::Float32NE) {
-            samplesDecoded = opus_multistream_decode_float(s_ActiveSession->m_OpusDecoder,
+        if (session->m_AudioRenderer->getAudioBufferFormat() == IAudioRenderer::AudioFormat::Float32NE) {
+            samplesDecoded = opus_multistream_decode_float(session->m_OpusDecoder,
                                                            (unsigned char*)sampleData,
                                                            sampleLength,
                                                            (float*)buffer,
@@ -205,7 +220,7 @@ void Session::arDecodeAndPlaySample(char* sampleData, int sampleLength)
                                                            0);
         }
         else {
-            samplesDecoded = opus_multistream_decode(s_ActiveSession->m_OpusDecoder,
+            samplesDecoded = opus_multistream_decode(session->m_OpusDecoder,
                                                      (unsigned char*)sampleData,
                                                      sampleLength,
                                                      (short*)buffer,
@@ -222,15 +237,15 @@ void Session::arDecodeAndPlaySample(char* sampleData, int sampleLength)
             desiredBufferSize = 0;
         }
 
-        if (!s_ActiveSession->m_AudioRenderer->submitAudio(desiredBufferSize)) {
+        if (!session->m_AudioRenderer->submitAudio(desiredBufferSize)) {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Reinitializing audio renderer after failure");
 
-            opus_multistream_decoder_destroy(s_ActiveSession->m_OpusDecoder);
-            s_ActiveSession->m_OpusDecoder = nullptr;
+            opus_multistream_decoder_destroy(session->m_OpusDecoder);
+            session->m_OpusDecoder = nullptr;
 
-            delete s_ActiveSession->m_AudioRenderer;
-            s_ActiveSession->m_AudioRenderer = nullptr;
+            delete session->m_AudioRenderer;
+            session->m_AudioRenderer = nullptr;
         }
     }
 
@@ -238,15 +253,15 @@ void Session::arDecodeAndPlaySample(char* sampleData, int sampleLength)
     // to avoid thrashing if the audio device is unavailable. It is
     // safe to reinitialize here because we can't be torn down while
     // the audio decoder/playback thread is still alive.
-    if (s_ActiveSession->m_AudioRenderer == nullptr && (s_ActiveSession->m_AudioSampleCount % 200) == 0) {
+    if (session->m_AudioRenderer == nullptr && (session->m_AudioSampleCount % 200) == 0) {
         // Since we're doing this inline and audio initialization takes time, we need
         // to drop samples to account for the time we've spent blocking audio rendering
         // so we return to real-time playback and don't accumulate latency.
         Uint32 audioReinitStartTime = SDL_GetTicks();
-        if (s_ActiveSession->initializeAudioRenderer()) {
+        if (session->initializeAudioRenderer()) {
             Uint32 audioReinitStopTime = SDL_GetTicks();
 
-            s_ActiveSession->m_DropAudioEndTime = audioReinitStopTime + (audioReinitStopTime - audioReinitStartTime);
+            session->m_DropAudioEndTime = audioReinitStopTime + (audioReinitStopTime - audioReinitStartTime);
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                         "Audio reinitialization took %d ms - starting drop window",
                         audioReinitStopTime - audioReinitStartTime);
