@@ -38,6 +38,8 @@ public:
         setSingleDashWordOptionMode(QCommandLineParser::ParseAsLongOptions);
         addHelpOption();
         addVersionOption();
+        addOption(QCommandLineOption(QStringList{"debug-log", "console-log"},
+                                     "Keep diagnostic logging on stderr/stdout instead of redirecting it to the log file."));
     }
 
     void handleHelpAndVersionOptions()

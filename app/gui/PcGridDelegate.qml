@@ -3,18 +3,20 @@ import QtQuick.Controls 2.2
 
 NavigableItemDelegate {
     property var computerModel
-    property var errorDialog
-    property var pairDialog
-    property var testConnectionDialog
-    property var renamePcDialog
-    property var deletePcDialog
-    property var showPcDetailsDialog
+    property var errorDialogRef
+    property var pairDialogRef
+    property var testConnectionDialogRef
+    property var renamePcDialogRef
+    property var deletePcDialogRef
+    property var showPcDetailsDialogRef
     property var stackViewRef
 
     id: delegateRoot
     width: 300
     height: 320
     grid: GridView.view
+    property int pendingPairIndex: -1
+    property string pendingPairPin: ""
 
     property alias pcContextMenu: pcContextMenuLoader.item
 
@@ -104,33 +106,33 @@ NavigableItemDelegate {
                 text: qsTr("Test Network")
                 onTriggered: {
                     computerModel.testConnectionForComputer(index)
-                    testConnectionDialog.open()
+                    testConnectionDialogRef.open()
                 }
             }
 
             NavigableMenuItem {
                 text: qsTr("Rename PC")
                 onTriggered: {
-                    renamePcDialog.pcIndex = index
-                    renamePcDialog.originalName = model.name
-                    renamePcDialog.open()
+                    renamePcDialogRef.pcIndex = index
+                    renamePcDialogRef.originalName = model.name
+                    renamePcDialogRef.open()
                 }
             }
 
             NavigableMenuItem {
                 text: qsTr("Delete PC")
                 onTriggered: {
-                    deletePcDialog.pcIndex = index
-                    deletePcDialog.pcName = model.name
-                    deletePcDialog.open()
+                    deletePcDialogRef.pcIndex = index
+                    deletePcDialogRef.pcName = model.name
+                    deletePcDialogRef.open()
                 }
             }
 
             NavigableMenuItem {
                 text: qsTr("View Details")
                 onTriggered: {
-                    showPcDetailsDialog.pcDetails = model.details
-                    showPcDetailsDialog.open()
+                    showPcDetailsDialogRef.pcDetails = model.details
+                    showPcDetailsDialogRef.open()
                 }
             }
         }
@@ -139,9 +141,9 @@ NavigableItemDelegate {
     onClicked: {
         if (model.online) {
             if (!model.serverSupported) {
-                errorDialog.text = qsTr("The version of GeForce Experience on %1 is not supported by this build of Moonlight. You must update Moonlight to stream from %1.").arg(model.name)
-                errorDialog.helpText = ""
-                errorDialog.open()
+                errorDialogRef.text = qsTr("The version of GeForce Experience on %1 is not supported by this build of Moonlight. You must update Moonlight to stream from %1.").arg(model.name)
+                errorDialogRef.helpText = ""
+                errorDialogRef.open()
             }
             else if (model.paired) {
                 var component = Qt.createComponent("AppView.qml")
@@ -154,10 +156,11 @@ NavigableItemDelegate {
             else {
                 var pin = computerModel.generatePinString()
 
-                computerModel.pairComputer(index, pin)
-
-                pairDialog.pin = pin
-                pairDialog.open()
+                pairDialogRef.pin = pin
+                pairDialogRef.open()
+                pendingPairIndex = index
+                pendingPairPin = pin
+                pairStartTimer.restart()
             }
         }
         else {
@@ -185,8 +188,28 @@ NavigableItemDelegate {
     }
 
     Keys.onDeletePressed: {
-        deletePcDialog.pcIndex = index
-        deletePcDialog.pcName = model.name
-        deletePcDialog.open()
+        deletePcDialogRef.pcIndex = index
+        deletePcDialogRef.pcName = model.name
+        deletePcDialogRef.open()
+    }
+
+    Timer {
+        id: pairStartTimer
+        interval: 0
+        repeat: false
+
+        onTriggered: {
+            if (pairDialogRef && pairDialogRef.visible && pendingPairIndex >= 0) {
+                var pairIndex = pendingPairIndex
+                var pairPin = pendingPairPin
+                pendingPairIndex = -1
+                pendingPairPin = ""
+                computerModel.pairComputer(pairIndex, pairPin)
+            }
+            else {
+                pendingPairIndex = -1
+                pendingPairPin = ""
+            }
+        }
     }
 }

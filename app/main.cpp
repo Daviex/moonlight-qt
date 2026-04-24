@@ -77,6 +77,7 @@ static QTextStream s_LoggerStream(stderr);
 static QThreadPool s_LoggerThread;
 static QMutex s_SyncLoggerMutex;
 static bool s_SuppressVerboseOutput;
+static bool s_ForceConsoleLogging;
 static QRegularExpression k_RikeyRegex("&rikey=\\w+");
 static QRegularExpression k_RikeyIdRegex("&rikeyid=[\\d-]+");
 #ifdef LOG_TO_FILE
@@ -679,7 +680,7 @@ static bool prepareLibrariesBeforeApp()
 }
 
 #ifdef Q_OS_WIN32
-static void attachParentConsoleIfNeeded(HANDLE oldConOut, HANDLE oldConErr)
+static void attachParentConsoleIfNeeded(HANDLE oldConOut, HANDLE oldConErr, bool createIfMissing = false)
 {
     // If we don't have stdout or stderr handles (which will normally be the case
     // since we're a /SUBSYSTEM:WINDOWS app), attach to our parent console and use
@@ -687,7 +688,12 @@ static void attachParentConsoleIfNeeded(HANDLE oldConOut, HANDLE oldConErr)
     //
     // If we do have stdout or stderr handles, that means the user has used standard
     // handle redirection. In that case, we don't want to override those handles.
-    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+    bool hasConsole = AttachConsole(ATTACH_PARENT_PROCESS);
+    if (!hasConsole && createIfMissing) {
+        hasConsole = AllocConsole();
+    }
+
+    if (hasConsole) {
         // If we didn't have an old stdout/stderr handle, use the new CONOUT$ handle
         if (IS_UNSPECIFIED_HANDLE(oldConOut)) {
             FILE* fp;
@@ -992,6 +998,25 @@ int main(int argc, char *argv[])
     // Grab the original std handles before we potentially redirect them later
     HANDLE oldConOut = GetStdHandle(STD_OUTPUT_HANDLE);
     HANDLE oldConErr = GetStdHandle(STD_ERROR_HANDLE);
+    bool attachConsoleEarly = false;
+    for (int i = 1; i < argc; i++) {
+        QString arg = QString::fromLocal8Bit(argv[i]);
+        if (arg == "--debug-log" || arg == "--console-log") {
+            s_ForceConsoleLogging = true;
+            attachConsoleEarly = true;
+        }
+        else if (arg == "--help" || arg == "-h" || arg == "--version" ||
+                 arg.compare("list", Qt::CaseInsensitive) == 0 ||
+                 arg.compare("stream", Qt::CaseInsensitive) == 0 ||
+                 arg.compare("quit", Qt::CaseInsensitive) == 0 ||
+                 arg.compare("pair", Qt::CaseInsensitive) == 0) {
+            attachConsoleEarly = true;
+        }
+    }
+
+    if (attachConsoleEarly) {
+        attachParentConsoleIfNeeded(oldConOut, oldConErr, s_ForceConsoleLogging);
+    }
 #endif
 
 #ifdef LOG_TO_FILE
@@ -999,7 +1024,7 @@ int main(int argc, char *argv[])
 
 #ifdef Q_OS_WIN32
     // Only log to a file if the user didn't redirect stderr somewhere else
-    if (IS_UNSPECIFIED_HANDLE(oldConErr))
+    if (!s_ForceConsoleLogging && IS_UNSPECIFIED_HANDLE(oldConErr))
 #endif
     {
         s_LoggerFile = new QFile(tempDir.filePath(QString("Moonlight-%1.log").arg(QDateTime::currentSecsSinceEpoch())));
@@ -1074,7 +1099,9 @@ int main(int argc, char *argv[])
 #endif
 
 #ifdef Q_OS_WIN32
-    attachParentConsoleIfNeeded(oldConOut, oldConErr);
+    if (!s_ForceConsoleLogging) {
+        attachParentConsoleIfNeeded(oldConOut, oldConErr);
+    }
 #endif
 
     const QStringList arguments = app.arguments();

@@ -106,12 +106,12 @@ CenteredGridView {
 
     delegate: PcGridDelegate {
         computerModel: pcGrid.computerModel
-        errorDialog: errorDialog
-        pairDialog: pairDialog
-        testConnectionDialog: testConnectionDialog
-        renamePcDialog: renamePcDialog
-        deletePcDialog: deletePcDialog
-        showPcDetailsDialog: showPcDetailsDialog
+        errorDialogRef: errorDialog
+        pairDialogRef: pairDialog
+        testConnectionDialogRef: testConnectionDialog
+        renamePcDialogRef: renamePcDialog
+        deletePcDialogRef: deletePcDialog
+        showPcDetailsDialogRef: showPcDetailsDialog
         stackViewRef: stackView
     }
 

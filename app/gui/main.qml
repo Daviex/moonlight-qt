@@ -101,19 +101,24 @@ ApplicationWindow {
         }
     }
 
-    // It would be better to use TextMetrics here, but it always lays out
-    // the text slightly more compactly than real Text does in ToolTip,
-    // causing unexpected line breaks to be inserted
-    Text {
-        id: tooltipTextLayoutHelper
+    Item {
         visible: false
-        font: ToolTip.toolTip.font
-        text: ToolTip.toolTip.text
-    }
+        width: 0
+        height: 0
 
-    // This configures the maximum width of the singleton attached QML ToolTip. If left unconstrained,
-    // it will never insert a line break and just extend on forever.
-    ToolTip.toolTip.contentWidth: Math.min(tooltipTextLayoutHelper.width, 400)
+        // It would be better to use TextMetrics here, but it always lays out
+        // the text slightly more compactly than real Text does in ToolTip,
+        // causing unexpected line breaks to be inserted
+        Text {
+            id: tooltipTextLayoutHelper
+            font: parent.ToolTip.toolTip.font
+            text: parent.ToolTip.toolTip.text
+        }
+
+        // This configures the maximum width of the singleton attached QML ToolTip. If left unconstrained,
+        // it will never insert a line break and just extend on forever.
+        ToolTip.toolTip.contentWidth: Math.min(tooltipTextLayoutHelper.width, 400)
+    }
 
     function prepareForRetranslateBackNavigation() {
         retranslateBackTargetIndex = -1

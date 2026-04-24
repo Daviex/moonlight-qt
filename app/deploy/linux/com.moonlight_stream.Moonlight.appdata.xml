@@ -51,6 +51,15 @@
 	</screenshots>
 
 	<releases>
+		<release version="6.2.4-daviex" date="2026-04-24">
+			<description>
+				<p>Local daviex branch build that adds a startup diagnostics switch for Windows.</p>
+				<ul>
+					<li>Added <code>--debug-log</code> and <code>--console-log</code> to keep diagnostic output on stderr/stdout instead of redirecting it to the Windows log file.</li>
+					<li>When launched with those switches on Windows, Moonlight now attaches to the parent console or creates its own console window so startup logs are visible even for the GUI build.</li>
+				</ul>
+			</description>
+		</release>
 		<release version="6.2.2-daviex" date="2026-04-24">
 			<description>
 				<p>Local daviex branch build that keeps the theme selector changes but removes the later QML cache startup experiments.</p>

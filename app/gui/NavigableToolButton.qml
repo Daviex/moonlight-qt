@@ -12,8 +12,8 @@ ToolButton {
     activeFocusOnTab: true
 
     icon.source: iconSource
-    icon.width: background.width
-    icon.height: background.height
+    icon.width: 40
+    icon.height: 40
 
     // This determines the size of the Material highlight. We increase it
     // from the default because we use larger than normal icons for TV readability.

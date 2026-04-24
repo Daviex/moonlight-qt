@@ -9,7 +9,8 @@
 #include <openssl/x509.h>
 #include <openssl/evp.h>
 
-#define REQUEST_TIMEOUT_MS 5000
+#define UNPAIR_REQUEST_TIMEOUT_MS 5000
+#define PAIR_REQUEST_TIMEOUT_MS 60000
 
 NvPairingManager::NvPairingManager(NvComputer* computer) :
     m_Http(computer)
@@ -242,7 +243,7 @@ NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverC
     if (serverCertStr == nullptr)
     {
         qCritical() << "Server likely already pairing";
-        m_Http.openConnectionToString(m_Http.m_BaseUrlHttp, "unpair", nullptr, REQUEST_TIMEOUT_MS);
+        m_Http.openConnectionToString(m_Http.m_BaseUrlHttp, "unpair", nullptr, UNPAIR_REQUEST_TIMEOUT_MS);
         return PairState::ALREADY_IN_PROGRESS;
     }
 
@@ -251,7 +252,7 @@ NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverC
         Q_ASSERT(!unverifiedServerCert.isNull());
 
         qCritical() << "Failed to parse plaincert";
-        m_Http.openConnectionToString(m_Http.m_BaseUrlHttp, "unpair", nullptr, REQUEST_TIMEOUT_MS);
+        m_Http.openConnectionToString(m_Http.m_BaseUrlHttp, "unpair", nullptr, UNPAIR_REQUEST_TIMEOUT_MS);
         return PairState::FAILED;
     }
 
@@ -265,12 +266,12 @@ NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverC
                                                          "pair",
                                                          "devicename=roth&updateState=1&clientchallenge=" +
                                                          encryptedChallenge.toHex(),
-                                                         REQUEST_TIMEOUT_MS);
+                                                         PAIR_REQUEST_TIMEOUT_MS);
     NvHTTP::verifyResponseStatus(challengeXml);
     if (NvHTTP::getXmlString(challengeXml, "paired") != "1")
     {
         qCritical() << "Failed pairing at stage #2";
-        m_Http.openConnectionToString(m_Http.m_BaseUrlHttp, "unpair", nullptr, REQUEST_TIMEOUT_MS);
+        m_Http.openConnectionToString(m_Http.m_BaseUrlHttp, "unpair", nullptr, UNPAIR_REQUEST_TIMEOUT_MS);
         return PairState::FAILED;
     }
 
@@ -290,12 +291,12 @@ NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverC
                                                     "pair",
                                                     "devicename=roth&updateState=1&serverchallengeresp=" +
                                                     encryptedChallengeResponseHash.toHex(),
-                                                    REQUEST_TIMEOUT_MS);
+                                                    PAIR_REQUEST_TIMEOUT_MS);
     NvHTTP::verifyResponseStatus(respXml);
     if (NvHTTP::getXmlString(respXml, "paired") != "1")
     {
         qCritical() << "Failed pairing at stage #3";
-        m_Http.openConnectionToString(m_Http.m_BaseUrlHttp, "unpair", nullptr, REQUEST_TIMEOUT_MS);
+        m_Http.openConnectionToString(m_Http.m_BaseUrlHttp, "unpair", nullptr, UNPAIR_REQUEST_TIMEOUT_MS);
         return PairState::FAILED;
     }
 
@@ -308,7 +309,7 @@ NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverC
                          serverCertStr))
     {
         qCritical() << "MITM detected";
-        m_Http.openConnectionToString(m_Http.m_BaseUrlHttp, "unpair", nullptr, REQUEST_TIMEOUT_MS);
+        m_Http.openConnectionToString(m_Http.m_BaseUrlHttp, "unpair", nullptr, UNPAIR_REQUEST_TIMEOUT_MS);
         return PairState::FAILED;
     }
 
@@ -319,7 +320,7 @@ NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverC
     if (QCryptographicHash::hash(expectedResponseData, hashAlgo) != serverResponse)
     {
         qCritical() << "Incorrect PIN";
-        m_Http.openConnectionToString(m_Http.m_BaseUrlHttp, "unpair", nullptr, REQUEST_TIMEOUT_MS);
+        m_Http.openConnectionToString(m_Http.m_BaseUrlHttp, "unpair", nullptr, UNPAIR_REQUEST_TIMEOUT_MS);
         return PairState::PIN_WRONG;
     }
 
@@ -331,24 +332,24 @@ NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverC
                                                           "pair",
                                                           "devicename=roth&updateState=1&clientpairingsecret=" +
                                                           clientPairingSecret.toHex(),
-                                                          REQUEST_TIMEOUT_MS);
+                                                          PAIR_REQUEST_TIMEOUT_MS);
     NvHTTP::verifyResponseStatus(secretRespXml);
     if (NvHTTP::getXmlString(secretRespXml, "paired") != "1")
     {
         qCritical() << "Failed pairing at stage #4";
-        m_Http.openConnectionToString(m_Http.m_BaseUrlHttp, "unpair", nullptr, REQUEST_TIMEOUT_MS);
+        m_Http.openConnectionToString(m_Http.m_BaseUrlHttp, "unpair", nullptr, UNPAIR_REQUEST_TIMEOUT_MS);
         return PairState::FAILED;
     }
 
     QString pairChallengeXml = m_Http.openConnectionToString(m_Http.m_BaseUrlHttps,
                                                              "pair",
                                                              "devicename=roth&updateState=1&phrase=pairchallenge",
-                                                             REQUEST_TIMEOUT_MS);
+                                                             PAIR_REQUEST_TIMEOUT_MS);
     NvHTTP::verifyResponseStatus(pairChallengeXml);
     if (NvHTTP::getXmlString(pairChallengeXml, "paired") != "1")
     {
         qCritical() << "Failed pairing at stage #5";
-        m_Http.openConnectionToString(m_Http.m_BaseUrlHttp, "unpair", nullptr, REQUEST_TIMEOUT_MS);
+        m_Http.openConnectionToString(m_Http.m_BaseUrlHttp, "unpair", nullptr, UNPAIR_REQUEST_TIMEOUT_MS);
         return PairState::FAILED;
     }
 
