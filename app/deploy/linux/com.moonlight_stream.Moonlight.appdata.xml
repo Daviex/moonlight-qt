@@ -51,6 +51,17 @@
 	</screenshots>
 
 	<releases>
+		<release version="6.2.1-daviex" date="2026-04-24">
+			<description>
+				<p>Local daviex branch build with follow-up fixes for the theme-enabled Flatpak package.</p>
+				<ul>
+					<li>Moved the Theme selector to the top of Basic Settings so it is immediately visible.</li>
+					<li>Documented the required clean Flatpak rebuild flow for QML and qrc resource changes.</li>
+					<li>Fixed stale compiled QML reuse by versioning the in-app QML cache path by build.</li>
+					<li>Disabled Qt QML disk cache entirely under Flatpak to avoid startup and stale-UI issues from cached data across installs.</li>
+				</ul>
+			</description>
+		</release>
 		<release version="6.2.0-daviex" date="2026-04-24">
 			<description>
 				<p>Local daviex branch build with the new live theme selector.</p>
