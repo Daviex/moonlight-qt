@@ -9,6 +9,7 @@
 #include <QPalette>
 #include <QFont>
 #include <QCursor>
+#include <QCryptographicHash>
 #include <QElapsedTimer>
 #include <QTemporaryFile>
 #include <QRegularExpression>
@@ -424,7 +425,22 @@ struct StartupUiConfiguration
     bool runConfigChecks = false;
 };
 
-static void initializeApplicationIdentityAndPaths()
+static QByteArray buildQmlDiskCacheKey(const QString& executablePath)
+{
+    QFile executableFile(executablePath);
+    if (!executableFile.open(QIODevice::ReadOnly)) {
+        return QByteArray(VERSION_STR);
+    }
+
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!hash.addData(&executableFile)) {
+        return QByteArray(VERSION_STR);
+    }
+
+    return QByteArray(VERSION_STR) + "-" + hash.result().left(8).toHex();
+}
+
+static void initializeApplicationIdentityAndPaths(const QString& executablePath)
 {
     // Set the app version for the QCommandLineParser's showVersion() command
     QCoreApplication::setApplicationVersion(VERSION_STR);
@@ -447,7 +463,9 @@ static void initializeApplicationIdentityAndPaths()
 
     // Override the default QML cache directory with the one we chose
     if (qEnvironmentVariableIsEmpty("QML_DISK_CACHE_PATH")) {
-        qputenv("QML_DISK_CACHE_PATH", Path::getQmlCacheDir().toUtf8());
+        const QByteArray qmlCacheDir = (Path::getQmlCacheDir() + "/" +
+                                        QString::fromLatin1(buildQmlDiskCacheKey(executablePath))).toUtf8();
+        qputenv("QML_DISK_CACHE_PATH", qmlCacheDir);
     }
 }
 
@@ -986,7 +1004,7 @@ int main(int argc, char *argv[])
 {
     SDL_SetMainReady();
 
-    initializeApplicationIdentityAndPaths();
+    initializeApplicationIdentityAndPaths(QString::fromLocal8Bit(argv[0]));
 
 #ifdef Q_OS_WIN32
     // Grab the original std handles before we potentially redirect them later
