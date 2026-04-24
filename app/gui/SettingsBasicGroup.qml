@@ -29,6 +29,51 @@ GroupBox {
 
         Label {
             width: parent.width
+            id: themeTitle
+            text: qsTr("Theme")
+            font.pointSize: 12
+            wrapMode: Text.Wrap
+        }
+
+        AutoResizingComboBox {
+            Component.onCompleted: {
+                var saved_theme = StreamingPreferences.theme
+                currentIndex = 0
+                for (var i = 0; i < themeListModel.count; i++) {
+                    var el_theme = themeListModel.get(i).val
+                    if (saved_theme === el_theme) {
+                        currentIndex = i
+                        break
+                    }
+                }
+
+                activated(currentIndex)
+            }
+
+            id: themeComboBox
+            textRole: "text"
+            model: ListModel {
+                id: themeListModel
+                ListElement {
+                    text: qsTr("Default")
+                    val: StreamingPreferences.THEME_DEFAULT
+                }
+                ListElement {
+                    text: qsTr("OLED")
+                    val: StreamingPreferences.THEME_OLED
+                }
+            }
+
+            onActivated: {
+                var new_theme = themeListModel.get(currentIndex).val
+                if (StreamingPreferences.theme !== new_theme) {
+                    StreamingPreferences.theme = new_theme
+                }
+            }
+        }
+
+        Label {
+            width: parent.width
             id: resFPStitle
             text: qsTr("Resolution and FPS")
             font.pointSize: 12
