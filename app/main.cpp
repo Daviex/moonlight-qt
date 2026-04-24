@@ -461,8 +461,11 @@ static void initializeApplicationIdentityAndPaths(const QString& executablePath)
 
     Path::initialize(portableMode);
 
+    if (qEnvironmentVariableIsSet("FLATPAK_ID")) {
+        qputenv("QML_DISABLE_DISK_CACHE", "1");
+    }
     // Override the default QML cache directory with the one we chose
-    if (qEnvironmentVariableIsEmpty("QML_DISK_CACHE_PATH")) {
+    else if (qEnvironmentVariableIsEmpty("QML_DISK_CACHE_PATH")) {
         const QByteArray qmlCacheDir = (Path::getQmlCacheDir() + "/" +
                                         QString::fromLatin1(buildQmlDiskCacheKey(executablePath))).toUtf8();
         qputenv("QML_DISK_CACHE_PATH", qmlCacheDir);
