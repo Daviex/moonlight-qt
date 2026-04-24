@@ -106,6 +106,12 @@ Flickable {
             page: settingsPage
         }
 
+        SettingsUiGroup {
+            id: uiSettingsGroupBox
+            page: settingsPage
+            windowRef: window
+        }
+
         GroupBox {
 
             id: audioSettingsGroupBox
@@ -254,11 +260,6 @@ Flickable {
             }
         }
 
-        SettingsUiGroup {
-            id: uiSettingsGroupBox
-            page: settingsPage
-            windowRef: window
-        }
     }
 
     Column {
