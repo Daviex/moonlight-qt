@@ -40,6 +40,79 @@ scripts/build-appimage.sh
 STEAMLINK_SDK_PATH=/path/to/steamlink-sdk scripts/build-steamlink-app.sh
 ```
 
+For Flatpak builds from Windows, use Debian WSL and the external Flathub manifest repo. The Flatpak manifest is not stored in this repository. The sequence below was verified against this checkout and avoids the finish/export issues hit during ad hoc attempts:
+
+```sh
+# Inside Debian WSL
+sudo apt update
+sudo apt install -y flatpak flatpak-builder git python3 appstream-compose
+
+# Debian's package provides appstreamcli-compose, but flatpak tooling still
+# looks for appstream-compose by name during finalization.
+sudo ln -sf /usr/libexec/appstreamcli-compose /usr/bin/appstream-compose
+
+flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+export REPO=/mnt/c/Users/david/Desktop/Work/moonlight-qt
+export WORKDIR=~/moonlight-flatpak
+export OUTDIR=/mnt/c/Users/david/Desktop/Work/moonlight-flatpak-output
+
+mkdir -p "$WORKDIR"
+cd "$WORKDIR"
+if [ ! -d com.moonlight_stream.Moonlight ]; then
+    git clone https://github.com/flathub/com.moonlight_stream.Moonlight.git
+fi
+cd com.moonlight_stream.Moonlight
+
+# Build a local manifest pointed at the current checkout instead of the
+# release tag in Flathub. Replacing the sources array also drops the
+# Flathub-only patch entries for the release build.
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+p = Path("com.moonlight_stream.Moonlight.json")
+data = json.loads(p.read_text())
+data.pop("rename-icon", None)
+
+for module in data["modules"]:
+    if module.get("name") == "moonlight":
+        module["sources"] = [{"type": "dir", "path": "/mnt/c/Users/david/Desktop/Work/moonlight-qt"}]
+        break
+else:
+    raise SystemExit("moonlight module not found")
+
+Path("com.moonlight_stream.Moonlight.local.json").write_text(json.dumps(data, indent=2) + "\n")
+PY
+
+flatpak-builder --user --install-deps-from=flathub --force-clean build-dir com.moonlight_stream.Moonlight.local.json
+
+# Finalize/export manually. Exporting directly to /mnt/c hung, while this
+# sequence worked when exporting to the WSL filesystem first.
+flatpak build-finish build-dir \
+    --command=moonlight \
+    --share=network \
+    --socket=fallback-x11 \
+    --socket=wayland \
+    --share=ipc \
+    --socket=pulseaudio \
+    --device=all \
+    --talk-name=org.freedesktop.ScreenSaver \
+    --env=IGNORE_RFI_LATENCY_BUG=1 \
+    --env=QT_QUICK_CONTROLS_STYLE=Material \
+    --env=LIBVA_DRIVER_NAME= \
+    --unset-env=LIBVA_DRIVER_NAME \
+    --env=LIBVA_DRIVERS_PATH= \
+    --unset-env=LIBVA_DRIVERS_PATH \
+    --filesystem=xdg-run/gamescope-0 \
+    --filesystem=host-os:ro
+
+mkdir -p "$WORKDIR/repo" "$OUTDIR"
+flatpak build-export --disable-sandbox "$WORKDIR/repo" build-dir
+flatpak build-bundle "$WORKDIR/repo" "$WORKDIR/moonlight-current.flatpak" com.moonlight_stream.Moonlight
+cp -f "$WORKDIR/moonlight-current.flatpak" "$OUTDIR/moonlight-current.flatpak"
+```
+
 There is no repo-wide test target in the root qmake project. The explicit automated tests that ship in-tree are the vendored `qmdnsengine` tests, which use CMake instead of qmake:
 
 ```sh
