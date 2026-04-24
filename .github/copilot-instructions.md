@@ -85,7 +85,12 @@ else:
 Path("com.moonlight_stream.Moonlight.local.json").write_text(json.dumps(data, indent=2) + "\n")
 PY
 
-flatpak-builder --user --install-deps-from=flathub --force-clean build-dir com.moonlight_stream.Moonlight.local.json
+# If you changed existing QML/resource files, also clear the Flatpak builder's
+# cached moonlight module output. Otherwise it may reuse stale qrc/QML results
+# even though the rebuilt app reports the new version string.
+rm -rf build-dir repo .flatpak-builder/build/moonlight
+
+flatpak-builder --user --install-deps-from=flathub --disable-cache --force-clean --build-only build-dir com.moonlight_stream.Moonlight.local.json
 
 # Finalize/export manually. Exporting directly to /mnt/c hung, while this
 # sequence worked when exporting to the WSL filesystem first.
