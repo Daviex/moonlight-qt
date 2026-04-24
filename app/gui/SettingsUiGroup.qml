@@ -1,5 +1,6 @@
 import QtQuick 2.9
 import QtQuick.Controls 2.2
+import QtQuick.Controls.Material 2.2
 
 import StreamingPreferences 1.0
 import SystemProperties 1.0
@@ -10,8 +11,15 @@ GroupBox {
 
     width: parent.width - (parent.leftPadding + parent.rightPadding)
     padding: 12
-    title: "<font color=\"skyblue\">" + qsTr("UI Settings") + "</font>"
+    title: "<font color=\"" + (StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? Material.accent : "skyblue") + "\">" + qsTr("UI Settings") + "</font>"
     font.pointSize: 12
+
+    background: Rectangle {
+        color: StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? "#050505" : "#303030"
+        border.color: "#1A1A1A"
+        border.width: StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? 1 : 0
+        radius: 8
+    }
 
     Column {
         anchors.fill: parent
@@ -238,6 +246,51 @@ GroupBox {
 
             onActivated: {
                 StreamingPreferences.uiDisplayMode = uiDisplayModeListModel.get(currentIndex).val
+            }
+        }
+
+        Label {
+            width: parent.width
+            id: themeTitle
+            text: qsTr("Theme")
+            font.pointSize: 12
+            wrapMode: Text.Wrap
+        }
+
+        AutoResizingComboBox {
+            Component.onCompleted: {
+                var saved_theme = StreamingPreferences.theme
+                currentIndex = 0
+                for (var i = 0; i < themeListModel.count; i++) {
+                    var el_theme = themeListModel.get(i).val
+                    if (saved_theme === el_theme) {
+                        currentIndex = i
+                        break
+                    }
+                }
+
+                activated(currentIndex)
+            }
+
+            id: themeComboBox
+            textRole: "text"
+            model: ListModel {
+                id: themeListModel
+                ListElement {
+                    text: qsTr("Default")
+                    val: StreamingPreferences.THEME_DEFAULT
+                }
+                ListElement {
+                    text: qsTr("OLED")
+                    val: StreamingPreferences.THEME_OLED
+                }
+            }
+
+            onActivated: {
+                var new_theme = themeListModel.get(currentIndex).val
+                if (StreamingPreferences.theme !== new_theme) {
+                    StreamingPreferences.theme = new_theme
+                }
             }
         }
 

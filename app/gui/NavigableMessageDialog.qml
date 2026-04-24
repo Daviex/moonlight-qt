@@ -47,6 +47,7 @@ NavigableDialog {
 
             id: dialogLabel
             text: dialogText + ((helpText && (standardButtons & Dialog.Help)) ? (helpTextSeparator + helpText) : "")
+            color: Material.foreground
             wrapMode: Text.Wrap
             elide: Label.ElideRight
 

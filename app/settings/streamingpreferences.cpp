@@ -38,6 +38,7 @@
 #define SER_CONNWARNINGS "connwarnings"
 #define SER_CONFWARNINGS "confwarnings"
 #define SER_UIDISPLAYMODE "uidisplaymode"
+#define SER_THEME "theme"
 #define SER_RICHPRESENCE "richpresence"
 #define SER_GAMEPADMOUSE "gamepadmouse"
 #define SER_DEFAULTVER "defaultver"
@@ -91,6 +92,7 @@ struct StreamingPreferencesSnapshot
     StreamingPreferences::VideoDecoderSelection videoDecoderSelection;
     StreamingPreferences::WindowMode windowMode;
     StreamingPreferences::UIDisplayMode uiDisplayMode;
+    StreamingPreferences::Theme theme;
     StreamingPreferences::Language language;
     bool swapMouseButtons;
     bool muteOnFocusLoss;
@@ -133,6 +135,7 @@ StreamingPreferencesSnapshot makeSnapshot(const StreamingPreferences* prefs)
         prefs->videoDecoderSelection,
         prefs->windowMode,
         prefs->uiDisplayMode,
+        prefs->theme,
         prefs->language,
         prefs->swapMouseButtons,
         prefs->muteOnFocusLoss,
@@ -178,6 +181,7 @@ void saveSnapshot(const StreamingPreferencesSnapshot& snapshot)
     settings.setValue(SER_VIDEODEC, static_cast<int>(snapshot.videoDecoderSelection));
     settings.setValue(SER_WINDOWMODE, static_cast<int>(snapshot.windowMode));
     settings.setValue(SER_UIDISPLAYMODE, static_cast<int>(snapshot.uiDisplayMode));
+    settings.setValue(SER_THEME, static_cast<int>(snapshot.theme));
     settings.setValue(SER_LANGUAGE, static_cast<int>(snapshot.language));
     settings.setValue(SER_DEFAULTVER, CURRENT_DEFAULT_VER);
     settings.setValue(SER_SWAPMOUSEBUTTONS, snapshot.swapMouseButtons);
@@ -335,6 +339,8 @@ void StreamingPreferences::reload()
     uiDisplayMode = static_cast<UIDisplayMode>(settings.value(SER_UIDISPLAYMODE,
                                                static_cast<int>(settings.value(SER_STARTWINDOWED, true).toBool() ? UIDisplayMode::UI_WINDOWED
                                                                                                                  : UIDisplayMode::UI_MAXIMIZED)).toInt());
+    theme = static_cast<Theme>(settings.value(SER_THEME,
+                                              static_cast<int>(Theme::THEME_DEFAULT)).toInt());
     language = static_cast<Language>(settings.value(SER_LANGUAGE,
                                                     static_cast<int>(Language::LANG_AUTO)).toInt());
 

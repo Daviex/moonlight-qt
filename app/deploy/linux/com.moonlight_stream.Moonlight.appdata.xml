@@ -51,7 +51,32 @@
 	</screenshots>
 
 	<releases>
-		<release version="6.1.0-daviex" date="2024-09-16">
+		<release version="6.2.0-daviex" date="2026-04-24">
+			<description>
+				<p>Local daviex branch build with the new live theme selector.</p>
+				<ul>
+					<li>Added a new Theme setting with Default and OLED modes.</li>
+					<li>Theme changes now apply in real time from the Settings page without restarting the client.</li>
+					<li>OLED mode uses true-black shell, dialog, toolbar, and settings surfaces with brighter accent highlights.</li>
+					<li>Default mode preserves the original color styling while sharing the same new theme infrastructure.</li>
+				</ul>
+			</description>
+		</release>
+		<release version="6.1.0-daviex" date="2026-04-24">
+			<description>
+				<p>Local daviex branch build used to verify this customized package is installed.</p>
+				<p>Summary of work completed on this branch today:</p>
+				<ul>
+					<li>Fixed GUI lifecycle cleanup and centralized polling/focus handling in the main shell.</li>
+					<li>Hardened host model lifetimes and session callback teardown to reduce crash-risk during deletion and shutdown paths.</li>
+					<li>Refactored application startup flow and extracted reusable QML components from the large PC, app, and settings pages.</li>
+					<li>Scoped the runtime language retranslate fallback and deferred routine preference saves to reduce UI stalls.</li>
+					<li>Documented Qt-specific GUI workarounds, repository guidance, and the verified Debian WSL Flatpak build flow.</li>
+					<li>Branded this local package as version 6.1.0-daviex so it is easy to distinguish from upstream builds.</li>
+				</ul>
+			</description>
+		</release>
+		<release version="6.1.0" date="2024-09-16">
 			<description>
 				<p>New features:</p>
 				<ul>

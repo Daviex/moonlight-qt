@@ -62,6 +62,13 @@ public:
     };
     Q_ENUM(UIDisplayMode)
 
+    enum Theme
+    {
+        THEME_DEFAULT,
+        THEME_OLED
+    };
+    Q_ENUM(Theme)
+
     // New entries must go at the end of the enum
     // to avoid renumbering existing entries (which
     // would affect existing user preferences).
@@ -139,6 +146,7 @@ public:
     Q_PROPERTY(WindowMode windowMode MEMBER windowMode NOTIFY windowModeChanged)
     Q_PROPERTY(WindowMode recommendedFullScreenMode MEMBER recommendedFullScreenMode CONSTANT)
     Q_PROPERTY(UIDisplayMode uiDisplayMode MEMBER uiDisplayMode NOTIFY uiDisplayModeChanged)
+    Q_PROPERTY(Theme theme MEMBER theme NOTIFY themeChanged)
     Q_PROPERTY(bool swapMouseButtons MEMBER swapMouseButtons NOTIFY mouseButtonsChanged)
     Q_PROPERTY(bool muteOnFocusLoss MEMBER muteOnFocusLoss NOTIFY muteOnFocusLossChanged)
     Q_PROPERTY(bool backgroundGamepad MEMBER backgroundGamepad NOTIFY backgroundGamepadChanged)
@@ -187,6 +195,7 @@ public:
     WindowMode windowMode;
     WindowMode recommendedFullScreenMode;
     UIDisplayMode uiDisplayMode;
+    Theme theme;
     Language language;
     CaptureSysKeysMode captureSysKeysMode;
 
@@ -210,6 +219,7 @@ signals:
     void enableYUV444Changed();
     void videoDecoderSelectionChanged();
     void uiDisplayModeChanged();
+    void themeChanged();
     void windowModeChanged();
     void framePacingChanged();
     void connectionWarningsChanged();

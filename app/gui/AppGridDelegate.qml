@@ -2,6 +2,8 @@ import QtQuick 2.9
 import QtQuick.Controls 2.2
 import QtQuick.Controls.Material 2.2
 
+import StreamingPreferences 1.0
+
 NavigableItemDelegate {
     property var appModel
     property var quitAppDialog
@@ -76,7 +78,7 @@ NavigableItemDelegate {
                 ToolTip.timeout: 3000
                 ToolTip.visible: hovered
 
-                Material.background: "#D0808080"
+                Material.background: StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? "#D0000000" : "#D0808080"
             }
 
             RoundButton {
@@ -101,7 +103,7 @@ NavigableItemDelegate {
                 ToolTip.timeout: 3000
                 ToolTip.visible: hovered
 
-                Material.background: "#D0808080"
+                Material.background: StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? "#D0000000" : "#D0808080"
             }
         }
     }

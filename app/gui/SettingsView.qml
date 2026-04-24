@@ -1,5 +1,6 @@
 import QtQuick 2.9
 import QtQuick.Controls 2.2
+import QtQuick.Controls.Material 2.2
 import QtQuick.Layouts 1.2
 import QtQuick.Window 2.2
 
@@ -110,8 +111,15 @@ Flickable {
             id: audioSettingsGroupBox
             width: (parent.width - (parent.leftPadding + parent.rightPadding))
             padding: 12
-            title: "<font color=\"skyblue\">" + qsTr("Audio Settings") + "</font>"
+            title: "<font color=\"" + (StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? Material.accent : "skyblue") + "\">" + qsTr("Audio Settings") + "</font>"
             font.pointSize: 12
+
+            background: Rectangle {
+                color: StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? "#050505" : "#303030"
+                border.color: "#1A1A1A"
+                border.width: StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? 1 : 0
+                radius: 8
+            }
 
             Column {
                 anchors.fill: parent
@@ -203,8 +211,15 @@ Flickable {
             id: hostSettingsGroupBox
             width: (parent.width - (parent.leftPadding + parent.rightPadding))
             padding: 12
-            title: "<font color=\"skyblue\">" + qsTr("Host Settings") + "</font>"
+            title: "<font color=\"" + (StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? Material.accent : "skyblue") + "\">" + qsTr("Host Settings") + "</font>"
             font.pointSize: 12
+
+            background: Rectangle {
+                color: StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? "#050505" : "#303030"
+                border.color: "#1A1A1A"
+                border.width: StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? 1 : 0
+                radius: 8
+            }
 
             Column {
                 anchors.fill: parent
@@ -258,8 +273,15 @@ Flickable {
             id: inputSettingsGroupBox
             width: (parent.width - (parent.leftPadding + parent.rightPadding))
             padding: 12
-            title: "<font color=\"skyblue\">" + qsTr("Input Settings") + "</font>"
+            title: "<font color=\"" + (StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? Material.accent : "skyblue") + "\">" + qsTr("Input Settings") + "</font>"
             font.pointSize: 12
+
+            background: Rectangle {
+                color: StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? "#050505" : "#303030"
+                border.color: "#1A1A1A"
+                border.width: StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? 1 : 0
+                radius: 8
+            }
 
             Column {
                 anchors.fill: parent
@@ -406,8 +428,15 @@ Flickable {
             id: gamepadSettingsGroupBox
             width: (parent.width - (parent.leftPadding + parent.rightPadding))
             padding: 12
-            title: "<font color=\"skyblue\">" + qsTr("Gamepad Settings") + "</font>"
+            title: "<font color=\"" + (StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? Material.accent : "skyblue") + "\">" + qsTr("Gamepad Settings") + "</font>"
             font.pointSize: 12
+
+            background: Rectangle {
+                color: StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? "#050505" : "#303030"
+                border.color: "#1A1A1A"
+                border.width: StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? 1 : 0
+                radius: 8
+            }
 
             Column {
                 anchors.fill: parent

@@ -12,6 +12,23 @@ import SdlGamepadKeyNavigation 1.0
 
 ApplicationWindow {
     property bool pollingActive: false
+    property bool oledTheme: StreamingPreferences.theme === StreamingPreferences.THEME_OLED
+    property color oledBlack: "#000000"
+    property color oledSurface: "#050505"
+    property color oledBorder: "#1A1A1A"
+    property color oledAccent: "#38BDF8"
+    property color oledText: "#F5F7FA"
+    property color oledMutedText: "#AEB8C2"
+    property color defaultBackground: SystemProperties.usesMaterial3Theme ? "#303030" : "#212121"
+    property color defaultSurface: "#303030"
+    property color defaultText: "#F5F5F5"
+    property color defaultMutedText: "#D0D0D0"
+    property color activeBackground: oledTheme ? oledBlack : defaultBackground
+    property color activeSurface: oledTheme ? oledSurface : defaultSurface
+    property color activeBorder: oledTheme ? oledBorder : "transparent"
+    property color activeAccent: oledTheme ? oledAccent : "#87CEEB"
+    property color activeText: oledTheme ? oledText : defaultText
+    property color activeMutedText: oledTheme ? oledMutedText : defaultMutedText
 
     // Set after a runtime retranslate to skip any AppView pages when
     // leaving Settings. AppView still doesn't safely survive a retranslate().
@@ -20,16 +37,20 @@ ApplicationWindow {
     id: window
     width: 1280
     height: 600
+    color: activeBackground
+
+    Material.theme: Material.Dark
+    Material.background: activeBackground
+    Material.primary: activeAccent
+    Material.accent: activeAccent
+    Material.foreground: activeText
+
+    background: Rectangle {
+        color: window.activeBackground
+    }
 
     // This function runs prior to creation of the initial StackView item
     function doEarlyInit() {
-        // Override the background color to Material 2 colors for Qt 6.5+
-        // in order to improve contrast between GFE's placeholder box art
-        // and the background of the app grid.
-        if (SystemProperties.usesMaterial3Theme) {
-            Material.background = "#303030"
-        }
-
         SdlGamepadKeyNavigation.enable()
     }
 
@@ -264,12 +285,20 @@ ApplicationWindow {
         height: 60
         anchors.topMargin: 5
         anchors.bottomMargin: 5
+        Material.elevation: 0
+
+        background: Rectangle {
+            color: window.activeBackground
+            border.color: window.activeBorder
+            border.width: window.oledTheme ? 1 : 0
+        }
 
         Label {
             id: titleLabel
             visible: toolBar.width > 700
             anchors.fill: parent
             text: stackView.currentItem.objectName
+            color: window.activeText
             font.pointSize: 20
             elide: Label.ElideRight
             horizontalAlignment: Qt.AlignHCenter
@@ -299,6 +328,7 @@ ApplicationWindow {
             // we need to ensure the toolbar controls don't collide
             Label {
                 id: titleRowLabel
+                color: window.activeText
                 font.pointSize: titleLabel.font.pointSize
                 elide: Label.ElideRight
                 horizontalAlignment: Qt.AlignHCenter
@@ -315,6 +345,7 @@ ApplicationWindow {
                 id: versionLabel
                 visible: stackView.currentItem instanceof SettingsView
                 text: qsTr("Version %1").arg(SystemProperties.versionString)
+                color: window.activeMutedText
                 font.pointSize: 12
                 horizontalAlignment: Qt.AlignRight
                 verticalAlignment: Qt.AlignVCenter

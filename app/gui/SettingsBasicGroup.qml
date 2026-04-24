@@ -1,5 +1,6 @@
 import QtQuick 2.9
 import QtQuick.Controls 2.2
+import QtQuick.Controls.Material 2.2
 import QtQuick.Layouts 1.2
 
 import StreamingPreferences 1.0
@@ -12,8 +13,15 @@ GroupBox {
 
     width: parent.width - (parent.leftPadding + parent.rightPadding)
     padding: 12
-    title: "<font color=\"skyblue\">" + qsTr("Basic Settings") + "</font>"
+    title: "<font color=\"" + (StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? Material.accent : "skyblue") + "\">" + qsTr("Basic Settings") + "</font>"
     font.pointSize: 12
+
+    background: Rectangle {
+        color: StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? "#050505" : "#303030"
+        border.color: "#1A1A1A"
+        border.width: StreamingPreferences.theme === StreamingPreferences.THEME_OLED ? 1 : 0
+        radius: 8
+    }
 
     Column {
         anchors.fill: parent
