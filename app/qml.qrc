@@ -2,8 +2,19 @@
     <qresource prefix="/">
         <file>gui/main.qml</file>
         <file>gui/PcView.qml</file>
+        <file>gui/PcGridDelegate.qml</file>
+        <file>gui/PcPairDialog.qml</file>
+        <file>gui/PcDeleteDialog.qml</file>
+        <file>gui/PcTestConnectionDialog.qml</file>
+        <file>gui/PcRenameDialog.qml</file>
+        <file>gui/PcDetailsDialog.qml</file>
         <file>gui/AppView.qml</file>
+        <file>gui/AppGridDelegate.qml</file>
+        <file>gui/QuitAppDialog.qml</file>
         <file>gui/SettingsView.qml</file>
+        <file>gui/SettingsBasicGroup.qml</file>
+        <file>gui/SettingsUiGroup.qml</file>
+        <file>gui/SettingsAdvancedGroup.qml</file>
         <file>gui/StreamSegue.qml</file>
         <file>gui/GamepadMapper.qml</file>
         <file>gui/QuitSegue.qml</file>
