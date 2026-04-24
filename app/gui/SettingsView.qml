@@ -83,8 +83,9 @@ Flickable {
     StackView.onDeactivating: {
         SdlGamepadKeyNavigation.setUiNavMode(false)
 
-        // Save the prefs so the Session can observe the changes
-        StreamingPreferences.save()
+        // Save asynchronously when leaving the page so QSettings flush latency
+        // doesn't block navigation. Destruction still performs a synchronous save.
+        StreamingPreferences.saveAsync()
     }
 
     Component.onDestruction: {

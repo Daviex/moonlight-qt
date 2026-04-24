@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QMutex>
 #include <QRect>
 #include <QQmlEngine>
 
@@ -14,6 +15,7 @@ public:
     Q_INVOKABLE static int
     getDefaultBitrate(int width, int height, int fps, bool yuv444);
 
+    Q_INVOKABLE void saveAsync();
     Q_INVOKABLE void save();
 
     void reload();
@@ -231,5 +233,7 @@ private:
     QString getSuffixFromLanguage(Language lang);
 
     QQmlEngine* m_QmlEngine;
+    QMutex m_SaveMutex;
+    quint64 m_SaveGeneration = 0;
 };
 

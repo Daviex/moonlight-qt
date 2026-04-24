@@ -2,6 +2,7 @@
 #include "utils.h"
 
 #include <QSettings>
+#include <QThreadPool>
 #include <QTranslator>
 #include <QCoreApplication>
 #include <QLocale>
@@ -57,6 +58,174 @@
 static StreamingPreferences* s_GlobalPrefs;
 
 Q_GLOBAL_STATIC(QReadWriteLock, s_GlobalPrefsLock)
+
+namespace {
+
+struct StreamingPreferencesSnapshot
+{
+    int width;
+    int height;
+    int fps;
+    int bitrateKbps;
+    bool unlockBitrate;
+    bool autoAdjustBitrate;
+    bool enableVsync;
+    bool gameOptimizations;
+    bool playAudioOnHost;
+    bool multiController;
+    bool enableMdns;
+    bool quitAppAfter;
+    bool absoluteMouseMode;
+    bool absoluteTouchMode;
+    bool framePacing;
+    bool connectionWarnings;
+    bool configurationWarnings;
+    bool richPresence;
+    bool gamepadMouse;
+    bool detectNetworkBlocking;
+    bool showPerformanceOverlay;
+    StreamingPreferences::AudioConfig audioConfig;
+    bool enableHdr;
+    bool enableYUV444;
+    StreamingPreferences::VideoCodecConfig videoCodecConfig;
+    StreamingPreferences::VideoDecoderSelection videoDecoderSelection;
+    StreamingPreferences::WindowMode windowMode;
+    StreamingPreferences::UIDisplayMode uiDisplayMode;
+    StreamingPreferences::Language language;
+    bool swapMouseButtons;
+    bool muteOnFocusLoss;
+    bool backgroundGamepad;
+    bool reverseScrollDirection;
+    bool swapFaceButtons;
+    StreamingPreferences::CaptureSysKeysMode captureSysKeysMode;
+    bool keepAwake;
+    int packetSize;
+};
+
+StreamingPreferencesSnapshot makeSnapshot(const StreamingPreferences* prefs)
+{
+    return StreamingPreferencesSnapshot {
+        prefs->width,
+        prefs->height,
+        prefs->fps,
+        prefs->bitrateKbps,
+        prefs->unlockBitrate,
+        prefs->autoAdjustBitrate,
+        prefs->enableVsync,
+        prefs->gameOptimizations,
+        prefs->playAudioOnHost,
+        prefs->multiController,
+        prefs->enableMdns,
+        prefs->quitAppAfter,
+        prefs->absoluteMouseMode,
+        prefs->absoluteTouchMode,
+        prefs->framePacing,
+        prefs->connectionWarnings,
+        prefs->configurationWarnings,
+        prefs->richPresence,
+        prefs->gamepadMouse,
+        prefs->detectNetworkBlocking,
+        prefs->showPerformanceOverlay,
+        prefs->audioConfig,
+        prefs->enableHdr,
+        prefs->enableYUV444,
+        prefs->videoCodecConfig,
+        prefs->videoDecoderSelection,
+        prefs->windowMode,
+        prefs->uiDisplayMode,
+        prefs->language,
+        prefs->swapMouseButtons,
+        prefs->muteOnFocusLoss,
+        prefs->backgroundGamepad,
+        prefs->reverseScrollDirection,
+        prefs->swapFaceButtons,
+        prefs->captureSysKeysMode,
+        prefs->keepAwake,
+        prefs->packetSize,
+    };
+}
+
+void saveSnapshot(const StreamingPreferencesSnapshot& snapshot)
+{
+    QSettings settings;
+
+    settings.setValue(SER_WIDTH, snapshot.width);
+    settings.setValue(SER_HEIGHT, snapshot.height);
+    settings.setValue(SER_FPS, snapshot.fps);
+    settings.setValue(SER_BITRATE, snapshot.bitrateKbps);
+    settings.setValue(SER_UNLOCK_BITRATE, snapshot.unlockBitrate);
+    settings.setValue(SER_AUTOADJUSTBITRATE, snapshot.autoAdjustBitrate);
+    settings.setValue(SER_VSYNC, snapshot.enableVsync);
+    settings.setValue(SER_GAMEOPTS, snapshot.gameOptimizations);
+    settings.setValue(SER_HOSTAUDIO, snapshot.playAudioOnHost);
+    settings.setValue(SER_MULTICONT, snapshot.multiController);
+    settings.setValue(SER_MDNS, snapshot.enableMdns);
+    settings.setValue(SER_QUITAPPAFTER, snapshot.quitAppAfter);
+    settings.setValue(SER_ABSMOUSEMODE, snapshot.absoluteMouseMode);
+    settings.setValue(SER_ABSTOUCHMODE, snapshot.absoluteTouchMode);
+    settings.setValue(SER_FRAMEPACING, snapshot.framePacing);
+    settings.setValue(SER_CONNWARNINGS, snapshot.connectionWarnings);
+    settings.setValue(SER_CONFWARNINGS, snapshot.configurationWarnings);
+    settings.setValue(SER_RICHPRESENCE, snapshot.richPresence);
+    settings.setValue(SER_GAMEPADMOUSE, snapshot.gamepadMouse);
+    settings.setValue(SER_PACKETSIZE, snapshot.packetSize);
+    settings.setValue(SER_DETECTNETBLOCKING, snapshot.detectNetworkBlocking);
+    settings.setValue(SER_SHOWPERFOVERLAY, snapshot.showPerformanceOverlay);
+    settings.setValue(SER_AUDIOCFG, static_cast<int>(snapshot.audioConfig));
+    settings.setValue(SER_HDR, snapshot.enableHdr);
+    settings.setValue(SER_YUV444, snapshot.enableYUV444);
+    settings.setValue(SER_VIDEOCFG, static_cast<int>(snapshot.videoCodecConfig));
+    settings.setValue(SER_VIDEODEC, static_cast<int>(snapshot.videoDecoderSelection));
+    settings.setValue(SER_WINDOWMODE, static_cast<int>(snapshot.windowMode));
+    settings.setValue(SER_UIDISPLAYMODE, static_cast<int>(snapshot.uiDisplayMode));
+    settings.setValue(SER_LANGUAGE, static_cast<int>(snapshot.language));
+    settings.setValue(SER_DEFAULTVER, CURRENT_DEFAULT_VER);
+    settings.setValue(SER_SWAPMOUSEBUTTONS, snapshot.swapMouseButtons);
+    settings.setValue(SER_MUTEONFOCUSLOSS, snapshot.muteOnFocusLoss);
+    settings.setValue(SER_BACKGROUNDGAMEPAD, snapshot.backgroundGamepad);
+    settings.setValue(SER_REVERSESCROLL, snapshot.reverseScrollDirection);
+    settings.setValue(SER_SWAPFACEBUTTONS, snapshot.swapFaceButtons);
+    settings.setValue(SER_CAPTURESYSKEYS, snapshot.captureSysKeysMode);
+    settings.setValue(SER_KEEPAWAKE, snapshot.keepAwake);
+    settings.sync();
+
+    if (settings.status() != QSettings::NoError) {
+        qWarning() << "Failed to save streaming preferences:" << settings.status();
+    }
+}
+
+class DeferredStreamingPreferencesSaveTask : public QRunnable
+{
+public:
+    DeferredStreamingPreferencesSaveTask(QMutex* saveMutex,
+                                         quint64* saveGeneration,
+                                         const StreamingPreferencesSnapshot& snapshot,
+                                         quint64 generation)
+        : m_SaveMutex(saveMutex)
+        , m_SaveGeneration(saveGeneration)
+        , m_Snapshot(snapshot)
+        , m_Generation(generation)
+    {
+    }
+
+    void run() override
+    {
+        QMutexLocker locker(m_SaveMutex);
+        if (m_Generation != *m_SaveGeneration) {
+            return;
+        }
+
+        saveSnapshot(m_Snapshot);
+    }
+
+private:
+    QMutex* m_SaveMutex;
+    quint64* m_SaveGeneration;
+    StreamingPreferencesSnapshot m_Snapshot;
+    quint64 m_Generation;
+};
+
+} // namespace
 
 StreamingPreferences::StreamingPreferences(QQmlEngine *qmlEngine)
     : m_QmlEngine(qmlEngine)
@@ -318,46 +487,23 @@ QString StreamingPreferences::getSuffixFromLanguage(StreamingPreferences::Langua
 
 void StreamingPreferences::save()
 {
-    QSettings settings;
+    const StreamingPreferencesSnapshot snapshot = makeSnapshot(this);
 
-    settings.setValue(SER_WIDTH, width);
-    settings.setValue(SER_HEIGHT, height);
-    settings.setValue(SER_FPS, fps);
-    settings.setValue(SER_BITRATE, bitrateKbps);
-    settings.setValue(SER_UNLOCK_BITRATE, unlockBitrate);
-    settings.setValue(SER_AUTOADJUSTBITRATE, autoAdjustBitrate);
-    settings.setValue(SER_VSYNC, enableVsync);
-    settings.setValue(SER_GAMEOPTS, gameOptimizations);
-    settings.setValue(SER_HOSTAUDIO, playAudioOnHost);
-    settings.setValue(SER_MULTICONT, multiController);
-    settings.setValue(SER_MDNS, enableMdns);
-    settings.setValue(SER_QUITAPPAFTER, quitAppAfter);
-    settings.setValue(SER_ABSMOUSEMODE, absoluteMouseMode);
-    settings.setValue(SER_ABSTOUCHMODE, absoluteTouchMode);
-    settings.setValue(SER_FRAMEPACING, framePacing);
-    settings.setValue(SER_CONNWARNINGS, connectionWarnings);
-    settings.setValue(SER_CONFWARNINGS, configurationWarnings);
-    settings.setValue(SER_RICHPRESENCE, richPresence);
-    settings.setValue(SER_GAMEPADMOUSE, gamepadMouse);
-    settings.setValue(SER_PACKETSIZE, packetSize);
-    settings.setValue(SER_DETECTNETBLOCKING, detectNetworkBlocking);
-    settings.setValue(SER_SHOWPERFOVERLAY, showPerformanceOverlay);
-    settings.setValue(SER_AUDIOCFG, static_cast<int>(audioConfig));
-    settings.setValue(SER_HDR, enableHdr);
-    settings.setValue(SER_YUV444, enableYUV444);
-    settings.setValue(SER_VIDEOCFG, static_cast<int>(videoCodecConfig));
-    settings.setValue(SER_VIDEODEC, static_cast<int>(videoDecoderSelection));
-    settings.setValue(SER_WINDOWMODE, static_cast<int>(windowMode));
-    settings.setValue(SER_UIDISPLAYMODE, static_cast<int>(uiDisplayMode));
-    settings.setValue(SER_LANGUAGE, static_cast<int>(language));
-    settings.setValue(SER_DEFAULTVER, CURRENT_DEFAULT_VER);
-    settings.setValue(SER_SWAPMOUSEBUTTONS, swapMouseButtons);
-    settings.setValue(SER_MUTEONFOCUSLOSS, muteOnFocusLoss);
-    settings.setValue(SER_BACKGROUNDGAMEPAD, backgroundGamepad);
-    settings.setValue(SER_REVERSESCROLL, reverseScrollDirection);
-    settings.setValue(SER_SWAPFACEBUTTONS, swapFaceButtons);
-    settings.setValue(SER_CAPTURESYSKEYS, captureSysKeysMode);
-    settings.setValue(SER_KEEPAWAKE, keepAwake);
+    QMutexLocker locker(&m_SaveMutex);
+    ++m_SaveGeneration;
+    saveSnapshot(snapshot);
+}
+
+void StreamingPreferences::saveAsync()
+{
+    const StreamingPreferencesSnapshot snapshot = makeSnapshot(this);
+
+    QMutexLocker locker(&m_SaveMutex);
+    const quint64 generation = ++m_SaveGeneration;
+    QThreadPool::globalInstance()->start(new DeferredStreamingPreferencesSaveTask(&m_SaveMutex,
+                                                                                  &m_SaveGeneration,
+                                                                                  snapshot,
+                                                                                  generation));
 }
 
 int StreamingPreferences::getDefaultBitrate(int width, int height, int fps, bool yuv444)
