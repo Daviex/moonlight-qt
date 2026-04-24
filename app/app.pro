@@ -566,5 +566,7 @@ macx {
     }
 }
 
-VERSION = "$$cat(version.txt)"
-DEFINES += VERSION_STR=\\\"$$cat(version.txt)\\\"
+APP_VERSION_TEXT = "$$cat(version.txt)"
+VERSION = $$APP_VERSION_TEXT
+win32: VERSION = $$section(APP_VERSION_TEXT, -, 0, 0)
+DEFINES += VERSION_STR=\\\"$$APP_VERSION_TEXT\\\"

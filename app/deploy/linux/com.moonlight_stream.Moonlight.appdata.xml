@@ -51,6 +51,16 @@
 	</screenshots>
 
 	<releases>
+		<release version="6.2.2-daviex" date="2026-04-24">
+			<description>
+				<p>Local daviex branch build that keeps the theme selector changes but removes the later QML cache startup experiments.</p>
+				<ul>
+					<li>Kept the live Default and OLED theme selector with the control surfaced at the top of Basic Settings.</li>
+					<li>Rolled back the in-app QML cache path and Flatpak cache-disable runtime changes that were tried while debugging startup hangs.</li>
+					<li>Prepared this build as a fresh Windows validation candidate with a new visible version string.</li>
+				</ul>
+			</description>
+		</release>
 		<release version="6.2.1-daviex" date="2026-04-24">
 			<description>
 				<p>Local daviex branch build with follow-up fixes for the theme-enabled Flatpak package.</p>

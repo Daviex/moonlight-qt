@@ -9,7 +9,6 @@
 #include <QPalette>
 #include <QFont>
 #include <QCursor>
-#include <QCryptographicHash>
 #include <QElapsedTimer>
 #include <QTemporaryFile>
 #include <QRegularExpression>
@@ -425,22 +424,7 @@ struct StartupUiConfiguration
     bool runConfigChecks = false;
 };
 
-static QByteArray buildQmlDiskCacheKey(const QString& executablePath)
-{
-    QFile executableFile(executablePath);
-    if (!executableFile.open(QIODevice::ReadOnly)) {
-        return QByteArray(VERSION_STR);
-    }
-
-    QCryptographicHash hash(QCryptographicHash::Sha256);
-    if (!hash.addData(&executableFile)) {
-        return QByteArray(VERSION_STR);
-    }
-
-    return QByteArray(VERSION_STR) + "-" + hash.result().left(8).toHex();
-}
-
-static void initializeApplicationIdentityAndPaths(const QString& executablePath)
+static void initializeApplicationIdentityAndPaths()
 {
     // Set the app version for the QCommandLineParser's showVersion() command
     QCoreApplication::setApplicationVersion(VERSION_STR);
@@ -461,14 +445,9 @@ static void initializeApplicationIdentityAndPaths(const QString& executablePath)
 
     Path::initialize(portableMode);
 
-    if (qEnvironmentVariableIsSet("FLATPAK_ID")) {
-        qputenv("QML_DISABLE_DISK_CACHE", "1");
-    }
     // Override the default QML cache directory with the one we chose
-    else if (qEnvironmentVariableIsEmpty("QML_DISK_CACHE_PATH")) {
-        const QByteArray qmlCacheDir = (Path::getQmlCacheDir() + "/" +
-                                        QString::fromLatin1(buildQmlDiskCacheKey(executablePath))).toUtf8();
-        qputenv("QML_DISK_CACHE_PATH", qmlCacheDir);
+    if (qEnvironmentVariableIsEmpty("QML_DISK_CACHE_PATH")) {
+        qputenv("QML_DISK_CACHE_PATH", Path::getQmlCacheDir().toUtf8());
     }
 }
 
@@ -1007,7 +986,7 @@ int main(int argc, char *argv[])
 {
     SDL_SetMainReady();
 
-    initializeApplicationIdentityAndPaths(QString::fromLocal8Bit(argv[0]));
+    initializeApplicationIdentityAndPaths();
 
 #ifdef Q_OS_WIN32
     // Grab the original std handles before we potentially redirect them later
