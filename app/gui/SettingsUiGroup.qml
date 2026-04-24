@@ -182,7 +182,7 @@ GroupBox {
                         ToolTip.show(qsTr("You must restart Moonlight for this change to take effect"), 5000)
                     }
                     else {
-                        windowRef.clearOnBack = true
+                        windowRef.prepareForRetranslateBackNavigation()
                         page.languageChanged()
                     }
                 }

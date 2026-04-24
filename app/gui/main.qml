@@ -13,10 +13,9 @@ import SdlGamepadKeyNavigation 1.0
 ApplicationWindow {
     property bool pollingActive: false
 
-    // Set by SettingsView to force the back operation to pop all
-    // pages except the initial view. This is required when doing
-    // a retranslate() because AppView breaks for some reason.
-    property bool clearOnBack: false
+    // Set after a runtime retranslate to skip any AppView pages when
+    // leaving Settings. AppView still doesn't safely survive a retranslate().
+    property int retranslateBackTargetIndex: -1
 
     id: window
     width: 1280
@@ -95,13 +94,36 @@ ApplicationWindow {
     // it will never insert a line break and just extend on forever.
     ToolTip.toolTip.contentWidth: Math.min(tooltipTextLayoutHelper.width, 400)
 
+    function prepareForRetranslateBackNavigation() {
+        retranslateBackTargetIndex = -1
+
+        if (!(stackView.currentItem instanceof SettingsView)) {
+            return
+        }
+
+        var foundUnsafePage = false
+        for (var i = stackView.currentItem.StackView.index - 1; i >= 0; --i) {
+            var item = stackView.get(i)
+            if (item instanceof AppView) {
+                foundUnsafePage = true
+                continue
+            }
+
+            if (foundUnsafePage) {
+                retranslateBackTargetIndex = i
+            }
+            return
+        }
+    }
+
     function goBack() {
-        if (clearOnBack) {
-            // Pop all items except the first one
-            stackView.pop(null)
-            clearOnBack = false
+        if (retranslateBackTargetIndex >= 0 && retranslateBackTargetIndex < stackView.depth) {
+            var targetItem = stackView.get(retranslateBackTargetIndex)
+            retranslateBackTargetIndex = -1
+            stackView.pop(targetItem)
         }
         else {
+            retranslateBackTargetIndex = -1
             stackView.pop()
         }
     }
@@ -165,6 +187,11 @@ ApplicationWindow {
             // Ensure focus travels to the next view when going back
             if (currentItem) {
                 currentItem.forceActiveFocus()
+            }
+
+            if (retranslateBackTargetIndex >= 0 &&
+                    !(currentItem instanceof SettingsView)) {
+                retranslateBackTargetIndex = -1
             }
         }
 
