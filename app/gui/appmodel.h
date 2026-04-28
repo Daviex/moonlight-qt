@@ -50,7 +50,7 @@ public:
 private slots:
     void handleComputerStateChanged(NvComputer* computer);
 
-    void handleBoxArtLoaded(NvComputer* computer, NvApp app, QUrl image);
+    void handleBoxArtLoaded(QString computerUuid, NvApp app, QUrl image);
 
 signals:
     void computerLost();
@@ -63,6 +63,7 @@ private:
     bool isAppCurrentlyVisible(const NvApp& app);
 
     NvComputer* m_Computer;
+    QString m_ComputerUuid;
     BoxArtManager m_BoxArtManager;
     ComputerManager* m_ComputerManager;
     QVector<NvApp> m_VisibleApps, m_AllApps;

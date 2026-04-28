@@ -17,6 +17,7 @@
 #define LAUNCH_TIMEOUT_MS 120000
 #define RESUME_TIMEOUT_MS 30000
 #define QUIT_TIMEOUT_MS 30000
+#define MAX_STRING_RESPONSE_BYTES (8 * 1024 * 1024)
 
 NvHTTP::NvHTTP(NvAddress address, uint16_t httpsPort, QSslCertificate serverCert, QNetworkAccessManager* nam) :
     m_Nam(nam ? nam : new QNetworkAccessManager(this)),
@@ -445,17 +446,15 @@ NvHTTP::openConnectionToString(QUrl baseUrl,
                                NvLogLevel logLevel)
 {
     QNetworkReply* reply = openConnection(baseUrl, command, arguments, timeoutMs, logLevel);
-    QString ret;
+    QByteArray data = reply->read(MAX_STRING_RESPONSE_BYTES + 1);
+    if (data.size() > MAX_STRING_RESPONSE_BYTES) {
+        QtNetworkReplyException exception(QNetworkReply::ProtocolInvalidOperationError,
+                                          tr("Response too large for %1").arg(command));
+        delete reply;
+        throw exception;
+    }
 
-    QTextStream stream(reply);
-
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    stream.setEncoding(QStringConverter::Utf8);
-#else
-    stream.setCodec("UTF-8");
-#endif
-
-    ret = stream.readAll();
+    QString ret = QString::fromUtf8(data);
     delete reply;
 
     return ret;

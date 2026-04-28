@@ -44,19 +44,35 @@ void Path::writeCacheFile(QString fileName, QByteArray data)
 
     // Create the cache path if it does not exist
     if (!cacheDir.exists()) {
-        cacheDir.mkpath(".");
+        if (!cacheDir.mkpath(".")) {
+            qWarning() << "Failed to create cache directory:" << cacheDir.absolutePath();
+            return;
+        }
     }
 
     QFile dataFile(cacheDir.absoluteFilePath(fileName));
-    if (dataFile.open(QIODevice::WriteOnly)) {
-        dataFile.write(data);
+    if (!dataFile.open(QIODevice::WriteOnly)) {
+        qWarning() << "Failed to open cache file for writing:" << dataFile.fileName() << dataFile.errorString();
+        return;
+    }
+
+    qint64 bytesWritten = dataFile.write(data);
+    if (bytesWritten != data.size()) {
+        qWarning() << "Failed to write complete cache file:" << dataFile.fileName() << bytesWritten << "of" << data.size();
+        return;
+    }
+
+    if (!dataFile.flush()) {
+        qWarning() << "Failed to flush cache file:" << dataFile.fileName() << dataFile.errorString();
     }
 }
 
 void Path::deleteCacheFile(QString fileName)
 {
     QFile dataFile(QDir(s_CacheDir).absoluteFilePath(fileName));
-    dataFile.remove();
+    if (dataFile.exists() && !dataFile.remove()) {
+        qWarning() << "Failed to delete cache file:" << dataFile.fileName() << dataFile.errorString();
+    }
 }
 
 QFileInfo Path::getCacheFileInfo(QString fileName)

@@ -18,7 +18,7 @@ private slots:
     void handleUpdateCheckRequestFinished(QNetworkReply* reply);
 
 private:
-    void parseStringToVersionQuad(QString& string, QVector<int>& version);
+    bool parseStringToVersionQuad(const QString& string, QVector<int>& version);
 
     int compareVersion(QVector<int>& version1, QVector<int>& version2);
 

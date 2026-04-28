@@ -15,6 +15,7 @@ void AppModel::initialize(ComputerManager* computerManager, int computerIndex, b
 
     Q_ASSERT(computerIndex < m_ComputerManager->getComputers().count());
     m_Computer = m_ComputerManager->getComputers().at(computerIndex);
+    m_ComputerUuid = m_Computer->uuid;
     m_CurrentGameId = m_Computer->currentGameId;
     m_ShowHiddenGames = showHiddenGames;
 
@@ -301,9 +302,12 @@ void AppModel::handleComputerStateChanged(NvComputer* computer)
     }
 }
 
-void AppModel::handleBoxArtLoaded(NvComputer* computer, NvApp app, QUrl /* image */)
+void AppModel::handleBoxArtLoaded(QString computerUuid, NvApp app, QUrl /* image */)
 {
-    Q_ASSERT(computer == m_Computer);
+    if (computerUuid != m_ComputerUuid) {
+        qWarning() << "Ignoring box art callback for unexpected host:" << computerUuid;
+        return;
+    }
 
     int index = m_VisibleApps.indexOf(app);
 

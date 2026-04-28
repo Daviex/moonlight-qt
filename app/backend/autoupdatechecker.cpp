@@ -21,7 +21,9 @@ AutoUpdateChecker::AutoUpdateChecker(QObject *parent) :
 
     QString currentVersion(VERSION_STR);
     qDebug() << "Current Moonlight version:" << currentVersion;
-    parseStringToVersionQuad(currentVersion, m_CurrentVersionQuad);
+    if (!parseStringToVersionQuad(currentVersion, m_CurrentVersionQuad)) {
+        qWarning() << "Failed to parse current Moonlight version:" << currentVersion;
+    }
 
     // Should at least have a 1.0-style version number
     Q_ASSERT(m_CurrentVersionQuad.count() > 1);
@@ -55,12 +57,22 @@ void AutoUpdateChecker::start()
 #endif
 }
 
-void AutoUpdateChecker::parseStringToVersionQuad(QString& string, QVector<int>& version)
+bool AutoUpdateChecker::parseStringToVersionQuad(const QString& string, QVector<int>& version)
 {
+    version.clear();
     QStringList list = string.split('.');
     for (const QString& component : std::as_const(list)) {
-        version.append(component.toInt());
+        bool ok;
+        int value = component.toInt(&ok);
+        if (!ok || value < 0) {
+            version.clear();
+            return false;
+        }
+
+        version.append(value);
     }
+
+    return version.count() > 1;
 }
 
 QString AutoUpdateChecker::getPlatform()
@@ -168,8 +180,11 @@ void AutoUpdateChecker::handleUpdateCheckRequestFinished(QNetworkReply* reply)
 
                         QString requiredVersion = updateObj["kernel_version_at_least"].toString();
                         QString actualVersion = QSysInfo::kernelVersion();
-                        parseStringToVersionQuad(requiredVersion, requiredVersionQuad);
-                        parseStringToVersionQuad(actualVersion, actualVersionQuad);
+                        if (!parseStringToVersionQuad(requiredVersion, requiredVersionQuad) ||
+                                !parseStringToVersionQuad(actualVersion, actualVersionQuad)) {
+                            qWarning() << "Failed to parse kernel version requirement:" << actualVersion << requiredVersion;
+                            continue;
+                        }
 
                         if (compareVersion(actualVersionQuad, requiredVersionQuad) < 0) {
                             qDebug() << "Skipping manifest entry due to kernel version (" << actualVersion << "<" << requiredVersion << ")";
@@ -183,7 +198,10 @@ void AutoUpdateChecker::handleUpdateCheckRequestFinished(QNetworkReply* reply)
                     qDebug() << "Latest version of Moonlight for this platform is:" << latestVersion;
 
                     QVector<int> latestVersionQuad;
-                    parseStringToVersionQuad(latestVersion, latestVersionQuad);
+                    if (!parseStringToVersionQuad(latestVersion, latestVersionQuad)) {
+                        qWarning() << "Failed to parse update manifest version:" << latestVersion;
+                        continue;
+                    }
 
                     int res = compareVersion(m_CurrentVersionQuad, latestVersionQuad);
                     if (res < 0) {

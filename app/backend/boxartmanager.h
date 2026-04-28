@@ -24,20 +24,24 @@ public:
 
 signals:
     void
-    boxArtLoadComplete(NvComputer* computer, NvApp app, QUrl image);
+    boxArtLoadComplete(QString computerUuid, NvApp app, QUrl image);
 
 public slots:
 
 private slots:
     void
-    handleBoxArtLoadComplete(NvComputer* computer, NvApp app, QUrl image);
+    handleBoxArtLoadComplete(QString computerUuid, NvApp app, QUrl image);
 
 private:
     QUrl
-    loadBoxArtFromNetwork(NvComputer* computer, int appId);
+    loadBoxArtFromNetwork(NvAddress address,
+                          uint16_t httpsPort,
+                          QSslCertificate serverCert,
+                          QString computerUuid,
+                          int appId);
 
     QString
-    getFilePathForBoxArt(NvComputer* computer, int appId);
+    getFilePathForBoxArt(QString computerUuid, int appId);
 
     QDir m_BoxArtDir;
     QThreadPool m_ThreadPool;

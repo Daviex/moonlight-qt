@@ -2,10 +2,12 @@
 #include "path.h"
 
 #include <QNetworkReply>
+#include <QRegularExpression>
 #include <QSettings>
 
 #define COMPAT_VERSION "v1"
 #define COMPAT_KEY "latestsupportedversion-"
+#define MAX_COMPAT_VERSION_BYTES 4096
 
 CompatFetcher::CompatFetcher(QObject *parent) :
     QObject(parent)
@@ -134,7 +136,17 @@ void CompatFetcher::handleCompatInfoFetched(QNetworkReply* reply)
         // Queue the reply for deletion
         reply->deleteLater();
 
-        QString version = QString(reply->readAll()).trimmed();
+        if (reply->bytesAvailable() > MAX_COMPAT_VERSION_BYTES) {
+            qWarning() << "Ignoring oversized compatibility data:" << reply->bytesAvailable();
+            return;
+        }
+
+        QString version = QString::fromUtf8(reply->readAll()).trimmed();
+        static const QRegularExpression versionRegex(QStringLiteral("^\\d+(\\.\\d+)*$"));
+        if (!versionRegex.match(version).hasMatch()) {
+            qWarning() << "Ignoring malformed compatibility version:" << version;
+            return;
+        }
 
         QSettings settings;
         settings.setValue(COMPAT_KEY COMPAT_VERSION, version);

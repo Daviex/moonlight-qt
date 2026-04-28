@@ -3,6 +3,8 @@
 
 #include <QNetworkReply>
 
+#define MAX_MAPPING_DB_BYTES (4 * 1024 * 1024)
+
 MappingFetcher::MappingFetcher(QObject *parent) :
     QObject(parent)
 {
@@ -86,6 +88,11 @@ void MappingFetcher::handleMappingListFetched(QNetworkReply* reply)
             qInfo() << "Gamepad mappings are up to date";
         }
         else {
+            if (reply->bytesAvailable() > MAX_MAPPING_DB_BYTES) {
+                qWarning() << "Ignoring oversized gamepad mapping database:" << reply->bytesAvailable();
+                return;
+            }
+
             // Update the cached data on disk for next call to applyMappings()
             QByteArray data = reply->readAll();
             if (!data.isEmpty()) {
