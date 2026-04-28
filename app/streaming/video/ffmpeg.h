@@ -65,6 +65,8 @@ private:
 
     void updateDecodePathSummary(const AVCodec* decoder);
 
+    void logSlowPathWarnings(const QString& rendererDetails);
+
     bool createFrontendRenderer(PDECODER_PARAMETERS params, bool useAlternateFrontend);
 
     static
@@ -145,6 +147,7 @@ private:
     bool m_NeedsSpsFixup;
     bool m_TestOnly;
     bool m_HasPendingDecodeUnit;
+    bool m_SlowPathWarningsLogged;
     TestMode m_CurrentTestMode;
     SDL_Thread* m_DecoderThread;
     SDL_atomic_t m_DecoderThreadShouldQuit;

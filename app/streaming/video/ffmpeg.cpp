@@ -236,6 +236,7 @@ FFmpegVideoDecoder::FFmpegVideoDecoder(bool testOnly)
       m_NeedsSpsFixup(false),
       m_TestOnly(testOnly),
       m_HasPendingDecodeUnit(false),
+      m_SlowPathWarningsLogged(false),
       m_CurrentTestMode(TestMode::TestFrameOnly),
       m_DecoderThread(nullptr)
 {
@@ -280,6 +281,7 @@ void FFmpegVideoDecoder::reset()
     m_FramesIn = m_FramesOut = 0;
     m_FrameInfoQueue.clear();
     m_HasPendingDecodeUnit = false;
+    m_SlowPathWarningsLogged = false;
     SDL_zero(m_PendingDecodeUnit);
 
     delete m_Pacer;
@@ -1061,6 +1063,34 @@ void FFmpegVideoDecoder::updateDecodePathSummary(const AVCodec* decoder)
 
     if (!rendererDetails.isEmpty()) {
         m_DecodePathSummary += QString(", renderer=(%1)").arg(rendererDetails);
+    }
+
+    logSlowPathWarnings(rendererDetails);
+}
+
+void FFmpegVideoDecoder::logSlowPathWarnings(const QString& rendererDetails)
+{
+    if (m_SlowPathWarningsLogged) {
+        return;
+    }
+    m_SlowPathWarningsLogged = true;
+
+    if (!isHardwareAccelerated()) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Video decode slow path selected: software decoding is active. "
+                    "Lowering resolution/FPS or enabling hardware decoding may improve performance.");
+    }
+
+    if (rendererDetails.contains("CPU conversion: yes", Qt::CaseInsensitive)) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Video render slow path selected: CPU color conversion is active. "
+                    "Using a renderer/codec combination with native YUV support may improve performance.");
+    }
+
+    if (rendererDetails.contains("hardware readback: yes", Qt::CaseInsensitive)) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Video render slow path selected: hardware frames are being read back to CPU memory. "
+                    "A zero-copy hardware renderer may improve performance.");
     }
 }
 
