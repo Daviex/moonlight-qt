@@ -397,3 +397,17 @@ After diagnostics are available, the first real optimization to prototype should
 **Thoughts:** Agreed. This matches the implementation plan: Phase 1 diagnostics first, Phase 2 decoder loop next, Phase 3 pacer tuning, Phase 4 user-facing slow-path guidance, Phase 5 validation. Items 4, 5, and 7 should stay deferred unless Phase 1 telemetry surfaces a concrete need. The biggest risk to this plan is scope creep into D3D11VA heuristics or AVFrame pooling — both should be explicitly out of scope for the initial implementation.
 
 **Re-review:** Confirmed. The next step remains correct after the second pass. I would adjust the implementation boundaries slightly: Phase 2 should include the `m_DecodeBuffer.resize()` safety fix because it is tightly coupled to packet submission, but AVFrame pooling and D3D11VA heuristic changes should stay excluded unless profiling provides a clear reason.
+
+## Implementation follow-up
+
+The merged implementation has now addressed the highest-confidence items from this study:
+
+1. Decode-path diagnostics were added to logs and the debug overlay. The selected decoder, hardware/software state, frontend/backend renderer, D3D11VA mode, SDL conversion/readback state, VAAPI path, pacer state, and decode-loop wait counters are now visible.
+2. The FFmpeg hot path now keeps copied packets alive across `avcodec_send_packet()` `EAGAIN`, retries after draining decoder output, explicitly sizes the decode buffer before writes, zeroes FFmpeg padding, and reduces the empty-poll wait from 2 ms to 1 ms.
+3. VAAPI direct rendering now caches output window size and refreshes it from window-size notifications instead of calling `SDL_GetWindowSize()` every rendered frame.
+4. Pacer timer slack is refresh-aware with 1-3 ms bounds, and queue-history windows were shortened to 200 ms while keeping the existing queue-depth and hardware-frame budget coupling unchanged.
+5. D3D11VA now measures average and maximum context-lock wait time for the shared FFmpeg/render lock and exposes it in diagnostics without changing the existing driver-sensitive heuristics.
+6. Session startup now caches duplicate decoder availability probes within one initialization and logs probe timing/cache hits.
+7. Runtime slow-path guidance now logs one-shot warnings when the actual selected path uses software decode, CPU color conversion, or hardware-frame CPU readback.
+
+The final Windows MSVC release build command from `.github\copilot-instructions.md` completed successfully and wrote the latest build output to `build\build-msvc-release.log`. Remaining deferred items are still intentionally out of scope without profiling evidence: AVFrame pooling, reusable H.264 parser state, broad D3D11VA bind/copy heuristic changes, codec preference rewrites, software thread-count changes, and Intel VAAPI direct-map changes.

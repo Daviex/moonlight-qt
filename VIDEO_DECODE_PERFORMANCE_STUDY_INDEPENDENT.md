@@ -469,3 +469,26 @@ For completeness, these prior-study findings have no direct counterpart in the i
 - The prior study contributes the **only user-visible item**: settings-level slow-path warnings (Opportunity #8).
 
 The two studies are complementary. A merged implementation backlog should include the prior plan unchanged for Phases 1–4, plus the new D3D11VA shared-device, VAAPI hot-path, decoder-probe-startup, and stats-on-hot-path findings as additional candidates for a Phase 6 once Phase 1 diagnostics are in place to measure them.
+
+---
+
+## 7  Implementation results
+
+The merged implementation completed the low-risk and measurable parts of the backlog:
+
+| Finding | Implementation status |
+|---|---|
+| #1 `SDL_Delay(2)` / FFmpeg `EAGAIN` handling | Implemented as safer pending-packet retry after decoder drain, plus a bounded 1 ms empty-poll wait. |
+| #2 D3D11VA shared-device context contention | Implemented as diagnostics: average/max context-lock wait is measured and exposed. No driver-sensitive rendering heuristic was changed. |
+| #3 Per-IDR `h264_new()` / `h264_free()` | Deferred. The parser has no obvious reset helper, so reuse remains lower priority than the safer hot-path fixes. |
+| #4 Stats/string work on hot path | Partially implemented. Decode-path strings remain cached and only refresh when the debug overlay updates; normal stats accumulation is preserved. |
+| #5 VAAPI per-frame `SDL_GetWindowSize()` | Implemented by caching output size and updating it from window-change notifications. |
+| #6 VAAPI `vaPutSurface()` VBlank stall | Deferred as a renderer-selection/profiling decision. The direct-vs-EGL path is now visible in diagnostics first. |
+| #7 Duplicate decoder probes | Implemented with a per-session availability cache and probe timing/cache-hit logs. |
+| #8 Queue/HW-frame budget coupling | Preserved. Queue depth and `PACER_MAX_OUTSTANDING_FRAMES` were not raised independently. |
+| #9 Pacer 500 ms drop-history window | Implemented as a 200 ms queue-history window with refresh-aware timer slack. |
+| #10 `m_DecodeBuffer.reserve()` per frame | Implemented as explicit buffer sizing plus zeroed FFmpeg input padding. |
+| #11 D3D11VA copy-mode GPU copy | Deferred. Diagnostics now expose bind/copy and lock contention before any heuristic change. |
+| #12 Intel VAAPI direct-map workaround | Preserved. Slow-path guidance now warns when hardware readback is actually selected. |
+
+Final validation used the Windows MSVC release build path and saved output to `build\build-msvc-release.log`; the build completed successfully. Runtime hardware validation on VAAPI/Linux, D3D11VA contention scenarios, and high-refresh display combinations should still be used before expanding the deferred items into behavioral changes.
