@@ -1,6 +1,11 @@
 QT += core quick network quickcontrols2 svg
 CONFIG += c++17
 
+gui-next {
+    QT += widgets
+    DEFINES += GUI_NEXT_WIDGETS
+}
+
 unix:!macx {
     TARGET = moonlight
 } else {
@@ -255,6 +260,18 @@ HEADERS += \
     gui/sdlgamepadkeynavigation.h \
     streaming/video/overlaymanager.h \
     backend/systemproperties.h
+
+gui-next {
+    SOURCES += \
+        gui-next/widgetscontrolleradapter.cpp \
+        gui-next/widgetshell.cpp \
+        streaming/qtwidgetwindowcontext.cpp
+
+    HEADERS += \
+        gui-next/widgetscontrolleradapter.h \
+        gui-next/widgetshell.h \
+        streaming/qtwidgetwindowcontext.h
+}
 
 # Platform-specific renderers and decoders
 ffmpeg {

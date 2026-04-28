@@ -1,4 +1,7 @@
 #include <QGuiApplication>
+#ifdef GUI_NEXT_WIDGETS
+#include <QApplication>
+#endif
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QIcon>
@@ -13,6 +16,7 @@
 #include <QTemporaryFile>
 #include <QRegularExpression>
 #include <QSurfaceFormat>
+#include <QScopedPointer>
 
 #ifdef Q_OS_UNIX
 #include <sys/socket.h>
@@ -54,6 +58,9 @@
 #include "streaming/session.h"
 #include "settings/streamingpreferences.h"
 #include "gui/sdlgamepadkeynavigation.h"
+#ifdef GUI_NEXT_WIDGETS
+#include "gui-next/widgetshell.h"
+#endif
 
 #if defined(Q_OS_WIN32)
 #define IS_UNSPECIFIED_HANDLE(x) ((x) == INVALID_HANDLE_VALUE || (x) == NULL)
@@ -752,7 +759,11 @@ int main(int argc, char *argv[])
         SDL_SetHint("SDL_VIDEO_WAYLAND_MODE_SCALING", "aspect");
     }
 
+#ifdef GUI_NEXT_WIDGETS
+    QApplication app(argc, argv);
+#else
     QGuiApplication app(argc, argv);
+#endif
 
 #ifdef Q_OS_UNIX
     // Register signal handlers to arbitrate between SDL and Qt.
@@ -952,6 +963,14 @@ int main(int argc, char *argv[])
     // Create the identity manager on the main thread
     IdentityManager::get();
 
+#ifdef GUI_NEXT_WIDGETS
+    QScopedPointer<GuiNextWindow> guiNextWindow;
+    if (commandLineParserResult == GlobalCommandLineParser::NormalStartRequested) {
+        guiNextWindow.reset(new GuiNextWindow());
+        guiNextWindow->show();
+    }
+#endif
+
     // We require the Material theme
     QQuickStyle::setStyle("Material");
 
@@ -978,6 +997,12 @@ int main(int argc, char *argv[])
 
     switch (commandLineParserResult) {
     case GlobalCommandLineParser::NormalStartRequested:
+#ifdef GUI_NEXT_WIDGETS
+        if (guiNextWindow != nullptr) {
+            hasGUI = false;
+            break;
+        }
+#endif
         initialView = "qrc:/gui/PcView.qml";
         break;
     case GlobalCommandLineParser::StreamRequested:
