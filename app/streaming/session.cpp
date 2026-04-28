@@ -576,11 +576,19 @@ Session::~Session()
     // NB: This may not get destroyed for a long time! Don't put any non-trivial cleanup here.
     // Use Session::exec() or DeferredSessionCleanupTask instead.
 
-    SDL_DestroyMutex(m_DecoderLock);
+    if (m_DecoderLock != nullptr) {
+        SDL_DestroyMutex(m_DecoderLock);
+    }
 }
 
 bool Session::initialize(QQuickWindow* qtWindow)
 {
+    if (m_DecoderLock == nullptr) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "Failed to create decoder lock");
+        return false;
+    }
+
     m_QtWindow = qtWindow;
 
 #ifdef Q_OS_DARWIN

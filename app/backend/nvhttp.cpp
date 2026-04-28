@@ -509,9 +509,20 @@ NvHTTP::openConnection(QUrl baseUrl,
     // Run the request with a timeout if requested
     QEventLoop loop;
     connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, &loop, &QEventLoop::quit);
+    bool shuttingDown = false;
+    auto aboutToQuitConnection = connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, &loop, [&]() {
+        shuttingDown = true;
+        loop.quit();
+    });
+    bool timedOut = false;
+    QTimer timeoutTimer;
+    timeoutTimer.setSingleShot(true);
     if (timeoutMs) {
-        QTimer::singleShot(timeoutMs, &loop, &QEventLoop::quit);
+        connect(&timeoutTimer, &QTimer::timeout, &loop, [&]() {
+            timedOut = true;
+            loop.quit();
+        });
+        timeoutTimer.start(timeoutMs);
     }
     if (logLevel >= NvLogLevel::NVLL_VERBOSE) {
         qInfo() << "Executing request:" << url.toString();
@@ -521,8 +532,9 @@ NvHTTP::openConnection(QUrl baseUrl,
     // Abort the request if it timed out
     if (!reply->isFinished())
     {
+        const char* abortReason = shuttingDown ? "shutdown" : (timedOut ? "timed out" : "unfinished");
         if (logLevel >= NvLogLevel::NVLL_ERROR) {
-            qWarning() << "Aborting timed out request for" << url.toString();
+            qWarning() << "Aborting" << abortReason << "request for" << url.toString();
         }
         reply->abort();
     }
@@ -531,6 +543,7 @@ NvHTTP::openConnection(QUrl baseUrl,
     // If we couldn't use fine-grained connection idle timeouts, kill them all now
     m_Nam->clearAccessCache();
 #endif
+    disconnect(aboutToQuitConnection);
     disconnect(sslErrorsConnection);
 
     // Handle error
@@ -548,7 +561,8 @@ NvHTTP::openConnection(QUrl baseUrl,
             throw exception;
         }
         else if (reply->error() == QNetworkReply::OperationCanceledError) {
-            QtNetworkReplyException exception(QNetworkReply::TimeoutError, "Request timed out");
+            QtNetworkReplyException exception(timedOut ? QNetworkReply::TimeoutError : QNetworkReply::OperationCanceledError,
+                                              timedOut ? "Request timed out" : "Request canceled by application shutdown");
             delete reply;
             throw exception;
         }

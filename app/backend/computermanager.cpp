@@ -265,15 +265,23 @@ void DelayedFlushThread::run() {
 
             // Reset the delayed flush flag to ensure any racing saveHosts() call will set it again
             m_ComputerManager->m_NeedsDelayedFlush = false;
+        }
 
-            // Update the last serialized hosts map under the delayed flush mutex
-            m_ComputerManager->m_LastSerializedHosts.clear();
+        QHash<QString, NvComputer> lastSerializedHosts;
+        {
+            QReadLocker hostsLock(&m_ComputerManager->m_Lock);
             for (const NvComputer* computer : std::as_const(m_ComputerManager->m_KnownHosts)) {
                 // Copy the current state of the NvComputer to allow us to check later if we need
                 // to serialize it again when attribute updates occur.
                 QReadLocker computerLock(&computer->lock);
-                m_ComputerManager->m_LastSerializedHosts[computer->uuid] = *computer;
+                lastSerializedHosts[computer->uuid] = *computer;
             }
+        }
+
+        // Update the last serialized hosts map under the delayed flush mutex
+        {
+            QMutexLocker locker(&m_ComputerManager->m_DelayedFlushMutex);
+            m_ComputerManager->m_LastSerializedHosts = lastSerializedHosts;
         }
 
         // Perform the flush
