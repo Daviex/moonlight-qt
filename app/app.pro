@@ -1,6 +1,12 @@
 QT += core network svg
 CONFIG += c++17
 
+legacy-qml {
+    CONFIG -= gui-next
+} else {
+    CONFIG += gui-next
+}
+
 gui-next {
     QT += widgets
     DEFINES += GUI_NEXT_WIDGETS
