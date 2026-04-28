@@ -171,6 +171,7 @@ SOURCES += \
     backend/boxartmanager.cpp \
     backend/richpresencemanager.cpp \
     frontend/applistfacade.cpp \
+    frontend/applicationfacade.cpp \
     frontend/computerlistfacade.cpp \
     frontend/preferencesfacade.cpp \
     frontend/sdlcontrollernavigation.cpp \
@@ -223,6 +224,7 @@ HEADERS += \
     backend/boxartmanager.h \
     backend/richpresencemanager.h \
     frontend/applistfacade.h \
+    frontend/applicationfacade.h \
     frontend/computerlistfacade.h \
     frontend/controllernavigation.h \
     frontend/frontendtypes.h \
