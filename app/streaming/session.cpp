@@ -1,6 +1,7 @@
 #include "session.h"
 #include "settings/streamingpreferences.h"
 #include "streaming/streamutils.h"
+#include "streaming/qtquickwindowcontext.h"
 #include "backend/richpresencemanager.h"
 
 #include <Limelight.h>
@@ -39,11 +40,6 @@
 #include <QImage>
 #include <QGuiApplication>
 #include <QCursor>
-#include <QScreen>
-
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-#include <QQuickOpenGLUtils>
-#endif
 
 #define CONN_TEST_SERVER "qt.conntest.moonlight-stream.org"
 
@@ -617,7 +613,7 @@ Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *prefere
       m_VideoDecoder(nullptr),
       m_DecoderLock(SDL_CreateMutex()),
       m_AudioMuted(false),
-      m_QtWindow(nullptr),
+      m_WindowContext(nullptr),
       m_UnexpectedTermination(true), // Failure prior to streaming is unexpected
       m_InputHandler(nullptr),
       m_MouseEmulationRefCount(0),
@@ -644,13 +640,19 @@ Session::~Session()
 
 bool Session::initialize(QQuickWindow* qtWindow)
 {
+    m_OwnedWindowContext.reset(new QtQuickWindowContext(qtWindow));
+    return initialize(m_OwnedWindowContext.get());
+}
+
+bool Session::initialize(SessionWindowContext* windowContext)
+{
     if (m_DecoderLock == nullptr) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "Failed to create decoder lock");
         return false;
     }
 
-    m_QtWindow = qtWindow;
+    m_WindowContext = windowContext;
     m_DecoderAvailabilityCache.clear();
 
 #ifdef Q_OS_DARWIN
@@ -1371,17 +1373,15 @@ void Session::getWindowDimensions(int& x, int& y,
         displayIndex = SDL_GetWindowDisplayIndex(m_Window);
         SDL_assert(displayIndex >= 0);
     }
-    // Create our window on the same display that Qt's UI
-    // was being displayed on.
+    // Create our window on the same display that the UI was being displayed on.
     else {
-        Q_ASSERT(m_QtWindow != nullptr);
-        if (m_QtWindow != nullptr) {
-            QScreen* screen = m_QtWindow->screen();
-            if (screen != nullptr) {
-                QRect displayRect = screen->geometry();
+        Q_ASSERT(m_WindowContext != nullptr);
+        if (m_WindowContext != nullptr) {
+            QRect displayRect = m_WindowContext->screenGeometry();
+            if (!displayRect.isNull()) {
 
                 SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                            "Qt UI screen is at (%d,%d)",
+                            "UI screen is at (%d,%d)",
                             displayRect.x(), displayRect.y());
                 for (int i = 0; i < SDL_GetNumVideoDisplays(); i++) {
                     SDL_Rect displayBounds;
@@ -1405,7 +1405,7 @@ void Session::getWindowDimensions(int& x, int& y,
             }
             else {
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                            "Qt window is not associated with a QScreen!");
+                            "UI window is not associated with a screen!");
             }
         }
     }
@@ -1865,24 +1865,14 @@ void Session::exec()
 
     // If we're starting in windowed mode and the Moonlight GUI is maximized or
     // minimized, match that with the streaming window.
-    if (!m_IsFullScreen && m_QtWindow != nullptr) {
-#if QT_VERSION >= QT_VERSION_CHECK(5, 10, 0)
-        // Qt 5.10+ can propagate multiple states together
-        if (m_QtWindow->windowStates() & Qt::WindowMaximized) {
+    if (!m_IsFullScreen && m_WindowContext != nullptr) {
+        SessionWindowState windowState = m_WindowContext->windowState();
+        if (windowState.maximized) {
             defaultWindowFlags |= SDL_WINDOW_MAXIMIZED;
         }
-        if (m_QtWindow->windowStates() & Qt::WindowMinimized) {
+        if (windowState.minimized) {
             defaultWindowFlags |= SDL_WINDOW_MINIMIZED;
         }
-#else
-        // Qt 5.9 only supports a single state at a time
-        if (m_QtWindow->windowState() == Qt::WindowMaximized) {
-            defaultWindowFlags |= SDL_WINDOW_MAXIMIZED;
-        }
-        else if (m_QtWindow->windowState() == Qt::WindowMinimized) {
-            defaultWindowFlags |= SDL_WINDOW_MINIMIZED;
-        }
-#endif
     }
 
     // We use only the computer name on macOS to match Apple conventions where the
@@ -2390,22 +2380,8 @@ DispatchDeferredCleanup:
     // routinely maximize the streaming window simply to view the stream
     // in a larger window, but they don't necessarily want the UI in such
     // a large window.
-    if (!m_IsFullScreen && m_QtWindow != nullptr && m_Window != nullptr) {
-#if QT_VERSION >= QT_VERSION_CHECK(5, 10, 0)
-        if (SDL_GetWindowFlags(m_Window) & SDL_WINDOW_MINIMIZED) {
-            m_QtWindow->setWindowStates(m_QtWindow->windowStates() | Qt::WindowMinimized);
-        }
-        else if (m_QtWindow->windowStates() & Qt::WindowMinimized) {
-            m_QtWindow->setWindowStates(m_QtWindow->windowStates() & ~Qt::WindowMinimized);
-        }
-#else
-        if (SDL_GetWindowFlags(m_Window) & SDL_WINDOW_MINIMIZED) {
-            m_QtWindow->setWindowState(Qt::WindowMinimized);
-        }
-        else if (m_QtWindow->windowState() & Qt::WindowMinimized) {
-            m_QtWindow->setWindowState(Qt::WindowNoState);
-        }
-#endif
+    if (!m_IsFullScreen && m_WindowContext != nullptr && m_Window != nullptr) {
+        m_WindowContext->setMinimized(SDL_GetWindowFlags(m_Window) & SDL_WINDOW_MINIMIZED);
     }
 
     // This must be called after the decoder is deleted, because

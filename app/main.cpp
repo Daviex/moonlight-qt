@@ -12,6 +12,7 @@
 #include <QElapsedTimer>
 #include <QTemporaryFile>
 #include <QRegularExpression>
+#include <QSurfaceFormat>
 
 #ifdef Q_OS_UNIX
 #include <sys/socket.h>

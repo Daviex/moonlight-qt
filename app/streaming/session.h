@@ -2,15 +2,18 @@
 
 #include <QHash>
 #include <QSemaphore>
-#include <QQuickWindow>
+#include <memory>
 
 #include <Limelight.h>
 #include <opus_multistream.h>
 #include "settings/streamingpreferences.h"
+#include "sessionwindowcontext.h"
 #include "input/input.h"
 #include "video/decoder.h"
 #include "audio/renderers/renderer.h"
 #include "video/overlaymanager.h"
+
+class QQuickWindow;
 
 class SupportedVideoFormatList : public QList<int>
 {
@@ -102,6 +105,8 @@ public:
     explicit Session(NvComputer* computer, NvApp& app, StreamingPreferences *preferences = nullptr);
     virtual ~Session();
 
+    // The caller must keep windowContext alive until readyForDeletion() is emitted.
+    bool initialize(SessionWindowContext* windowContext);
     Q_INVOKABLE bool initialize(QQuickWindow* qtWindow);
     Q_INVOKABLE void start();
     Q_INVOKABLE void interrupt();
@@ -261,7 +266,8 @@ private:
     bool m_AudioDisabled;
     bool m_AudioMuted;
     Uint32 m_FullScreenFlag;
-    QQuickWindow* m_QtWindow;
+    std::unique_ptr<SessionWindowContext> m_OwnedWindowContext;
+    SessionWindowContext* m_WindowContext;
     bool m_UnexpectedTermination;
     SdlInputHandler* m_InputHandler;
     int m_MouseEmulationRefCount;
