@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QSemaphore>
 #include <QQuickWindow>
 
@@ -182,6 +183,10 @@ private:
                                                StreamingPreferences::VideoDecoderSelection vds,
                                                int videoFormat, int width, int height, int frameRate);
 
+    DecoderAvailability getCachedDecoderAvailability(SDL_Window* window,
+                                                     StreamingPreferences::VideoDecoderSelection vds,
+                                                     int videoFormat, int width, int height, int frameRate);
+
     static
     bool chooseDecoder(StreamingPreferences::VideoDecoderSelection vds,
                        SDL_Window* window, int videoFormat, int width, int height,
@@ -271,6 +276,7 @@ private:
     int m_ActiveVideoWidth;
     int m_ActiveVideoHeight;
     int m_ActiveVideoFrameRate;
+    QHash<QString, DecoderAvailability> m_DecoderAvailabilityCache;
 
     OpusMSDecoder* m_OpusDecoder;
     IAudioRenderer* m_AudioRenderer;
