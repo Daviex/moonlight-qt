@@ -174,6 +174,7 @@ SOURCES += \
     frontend/computerlistfacade.cpp \
     frontend/preferencesfacade.cpp \
     frontend/sdlcontrollernavigation.cpp \
+    frontend/sessioncoordinator.cpp \
     frontend/systemfacade.cpp \
     frontend/updatefacade.cpp \
     cli/commandlineparser.cpp \
@@ -227,6 +228,7 @@ HEADERS += \
     frontend/frontendtypes.h \
     frontend/preferencesfacade.h \
     frontend/sdlcontrollernavigation.h \
+    frontend/sessioncoordinator.h \
     frontend/systemfacade.h \
     frontend/updatefacade.h \
     cli/commandlineparser.h \
