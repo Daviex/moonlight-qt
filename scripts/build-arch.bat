@@ -150,7 +150,10 @@ mkdir %SYMBOLS_FOLDER%
 
 echo Configuring the project
 pushd %BUILD_FOLDER%
-%QMAKE_CMD% %SOURCE_ROOT%\moonlight-qt.pro
+if defined QMAKE_EXTRA_ARGS (
+    echo Using extra QMake arguments: %QMAKE_EXTRA_ARGS%
+)
+%QMAKE_CMD% %SOURCE_ROOT%\moonlight-qt.pro %QMAKE_EXTRA_ARGS%
 if !ERRORLEVEL! NEQ 0 goto Error
 popd
 
