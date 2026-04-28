@@ -60,6 +60,9 @@ D3D11VARenderer::D3D11VARenderer(int decoderSelectionPass)
       m_DecoderSelectionPass(decoderSelectionPass),
       m_DevicesWithFL11Support(0),
       m_DevicesWithCodecSupport(0),
+      m_ContextLockWaitTimeUs(0),
+      m_MaxContextLockWaitTimeUs(0),
+      m_ContextLockCount(0),
       m_LastColorTrc(AVCOL_TRC_UNSPECIFIED),
       m_AllowTearing(false),
       m_OverlayLock(0),
@@ -1516,18 +1519,30 @@ QString D3D11VARenderer::getRendererDebugInfo()
     const char* fenceType =
         m_FenceType == SupportedFenceType::Monitored ? "monitored" :
         (m_FenceType == SupportedFenceType::NonMonitored ? "non-monitored" : "unsupported");
+    uint64_t averageLockWaitUs = m_ContextLockCount != 0 ?
+        m_ContextLockWaitTimeUs / m_ContextLockCount : 0;
 
-    return QString("texture access: %1, device mode: %2, fence: %3")
+    return QString("texture access: %1, device mode: %2, fence: %3, context lock wait avg/max: %4/%5 us")
         .arg(m_BindDecoderOutputTextures ? "bind" : "copy")
         .arg(m_DecodeDevice == m_RenderDevice ? "shared" : "separate")
-        .arg(fenceType);
+        .arg(fenceType)
+        .arg(averageLockWaitUs)
+        .arg(m_MaxContextLockWaitTimeUs);
 }
 
 void D3D11VARenderer::lockContext(void *lock_ctx)
 {
     auto me = (D3D11VARenderer*)lock_ctx;
 
+    uint64_t beforeLockUs = LiGetMicroseconds();
     SDL_LockMutex(me->m_ContextLock);
+    uint64_t waitTimeUs = LiGetMicroseconds() - beforeLockUs;
+
+    me->m_ContextLockWaitTimeUs += waitTimeUs;
+    if (waitTimeUs > me->m_MaxContextLockWaitTimeUs) {
+        me->m_MaxContextLockWaitTimeUs = waitTimeUs;
+    }
+    me->m_ContextLockCount++;
 }
 
 void D3D11VARenderer::unlockContext(void *lock_ctx)

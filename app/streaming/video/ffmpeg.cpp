@@ -2180,6 +2180,7 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
             VIDEO_STATS lastTwoWndStats = {};
             addVideoStats(m_LastWndVideoStats, lastTwoWndStats);
             addVideoStats(m_ActiveWndVideoStats, lastTwoWndStats);
+            updateDecodePathSummary(m_VideoDecoderCtx->codec);
 
             stringifyVideoStats(lastTwoWndStats,
                                 Session::get()->getOverlayManager().getOverlayText(Overlay::OverlayDebug),

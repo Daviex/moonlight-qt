@@ -85,6 +85,9 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Fence> m_DecodeR2DFence, m_RenderR2DFence;
     UINT64 m_R2DFenceValue;
     SDL_mutex* m_ContextLock;
+    uint64_t m_ContextLockWaitTimeUs;
+    uint64_t m_MaxContextLockWaitTimeUs;
+    uint32_t m_ContextLockCount;
     bool m_BindDecoderOutputTextures;
 
     DECODER_PARAMETERS m_DecoderParams;
