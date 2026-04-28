@@ -25,7 +25,10 @@ VAAPIRenderer::VAAPIRenderer(int decoderSelectionPass)
       m_BlacklistedForDirectRendering(false),
       m_RequiresExplicitPixelFormat(false),
       m_DirectRenderingSupported(false),
-      m_OverlayMutex(nullptr)
+      m_OverlayMutex(nullptr),
+      m_Window(nullptr),
+      m_WindowWidth(0),
+      m_WindowHeight(0)
 #ifdef HAVE_EGL
     , m_EglExportType(EglExportType::Unknown),
       m_EglImageFactory(this)
@@ -248,6 +251,7 @@ VAAPIRenderer::initialize(PDECODER_PARAMETERS params)
     int err;
 
     m_Window = params->window;
+    SDL_GetWindowSize(m_Window, &m_WindowWidth, &m_WindowHeight);
     m_VideoFormat = params->videoFormat;
 
     m_HwContext = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_VAAPI);
@@ -667,9 +671,11 @@ QString VAAPIRenderer::getRendererDebugInfo()
         break;
     }
 
-    QString details = QString("window system: %1, direct render: %2")
+    QString details = QString("window system: %1, direct render: %2, output: %3x%4")
         .arg(windowSystem)
-        .arg(m_DirectRenderingSupported ? "yes" : "no");
+        .arg(m_DirectRenderingSupported ? "yes" : "no")
+        .arg(m_WindowWidth)
+        .arg(m_WindowHeight);
 
 #ifdef HAVE_EGL
     const char* eglExport = "unknown";
@@ -838,6 +844,11 @@ void VAAPIRenderer::notifyOverlayUpdated(Overlay::OverlayType type)
 
 bool VAAPIRenderer::notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO info)
 {
+    if (info->stateChangeFlags & WINDOW_STATE_CHANGE_SIZE) {
+        m_WindowWidth = info->width;
+        m_WindowHeight = info->height;
+    }
+
     // We can transparently handle size and display changes
     return !(info->stateChangeFlags & ~(WINDOW_STATE_CHANGE_SIZE | WINDOW_STATE_CHANGE_DISPLAY));
 }
@@ -849,16 +860,13 @@ VAAPIRenderer::renderFrame(AVFrame* frame)
     AVHWDeviceContext* deviceContext = (AVHWDeviceContext*)m_HwContext->data;
     AVVAAPIDeviceContext* vaDeviceContext = (AVVAAPIDeviceContext*)deviceContext->hwctx;
 
-    int windowWidth, windowHeight;
-    SDL_GetWindowSize(m_Window, &windowWidth, &windowHeight);
-
     SDL_Rect src, dst;
     src.x = src.y = 0;
     src.w = frame->width;
     src.h = frame->height;
     dst.x = dst.y = 0;
-    dst.w = windowWidth;
-    dst.h = windowHeight;
+    dst.w = m_WindowWidth;
+    dst.h = m_WindowHeight;
 
     StreamUtils::scaleSourceToDestinationSurface(&src, &dst);
 
@@ -898,10 +906,10 @@ VAAPIRenderer::renderFrame(AVFrame* frame)
 
             // Negative values are relative to the other side of the window
             if (overlayRect.x < 0) {
-                overlayRect.x += windowWidth;
+                overlayRect.x += m_WindowWidth;
             }
             if (overlayRect.y < 0) {
-                overlayRect.y += windowHeight;
+                overlayRect.y += m_WindowHeight;
             }
 
             status = vaAssociateSubpicture(vaDeviceContext->display,

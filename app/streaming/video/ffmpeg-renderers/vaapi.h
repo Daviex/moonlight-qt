@@ -119,6 +119,8 @@ private:
 #endif
 
     SDL_Window* m_Window;
+    int m_WindowWidth;
+    int m_WindowHeight;
     int m_VideoFormat;
 
 #ifdef HAVE_EGL
