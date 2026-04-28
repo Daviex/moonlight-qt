@@ -36,7 +36,7 @@ flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flath
 
 Do not replace `/usr/bin/appstream-compose` with `/usr/libexec/appstreamcli-compose`. They are not CLI-compatible: `flatpak-builder` may pass old `appstream-compose` options such as `--basename`, which `appstreamcli-compose` rejects.
 
-The `PKG_CONFIG_PATH` override in the generated local manifest is required because libplacebo installs `libplacebo.pc` under `/app/lib64/pkgconfig` in the KDE SDK. Without it, qmake may miss libplacebo and build Moonlight without the Vulkan renderer, which disables the HDR toggle on Steam Deck.
+The `PKG_CONFIG_PATH` override in the generated local manifest is required because libplacebo installs `libplacebo.pc` under `/app/lib64/pkgconfig` in the KDE SDK. Without it, qmake may miss libplacebo and build Moonlight without the Vulkan renderer, which disables the HDR toggle on Steam Deck. The `QMAKE_RPATHDIR+=/app/lib64` option is also required because the libplacebo shared library is installed under `/app/lib64`; without it, the Flatpak can fail at launch with `libplacebo.so.360: cannot open shared object file`.
 
 Build the current checkout with the Flathub manifest:
 
@@ -65,6 +65,7 @@ data.pop("rename-icon", None)
 
 for module in data["modules"]:
     if module.get("name") == "moonlight":
+        module.setdefault("config-opts", []).append("QMAKE_RPATHDIR+=/app/lib64")
         module["sources"] = [{"type": "dir", "path": "/mnt/c/Users/david/Desktop/Work/moonlight-qt"}]
         module.setdefault("build-options", {}).setdefault("env", {})["PKG_CONFIG_PATH"] = "/app/lib64/pkgconfig:/app/lib/pkgconfig:/app/share/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig"
         break
