@@ -1,13 +1,11 @@
 #pragma once
 
-#include <QTimer>
 #include <QEvent>
 
-#include "SDL_compat.h"
-
+#include "frontend/sdlcontrollernavigation.h"
 #include "settings/streamingpreferences.h"
 
-class SdlGamepadKeyNavigation : public QObject
+class SdlGamepadKeyNavigation : public QObject, public IControllerNavigationSink
 {
     Q_OBJECT
 
@@ -27,20 +25,11 @@ public:
     Q_INVOKABLE int getConnectedGamepads();
 
 private:
+    void handleControllerNavigation(ControllerNavigationAction action, bool pressed) override;
+    void handleControllerQuit() override;
+
     void sendKey(QEvent::Type type, Qt::Key key, Qt::KeyboardModifiers modifiers = Qt::NoModifier);
 
-    void updateTimerState();
-
-private slots:
-    void onPollingTimerFired();
-
 private:
-    StreamingPreferences* m_Prefs;
-    QTimer* m_PollingTimer;
-    QList<SDL_GameController*> m_Gamepads;
-    bool m_Enabled;
-    bool m_UiNavMode;
-    bool m_FirstPoll;
-    bool m_HasFocus;
-    Uint32 m_LastAxisNavigationEventTime;
+    SdlControllerNavigation* m_ControllerNavigation;
 };

@@ -170,6 +170,9 @@ SOURCES += \
     backend/computermanager.cpp \
     backend/boxartmanager.cpp \
     backend/richpresencemanager.cpp \
+    frontend/applistfacade.cpp \
+    frontend/computerlistfacade.cpp \
+    frontend/sdlcontrollernavigation.cpp \
     cli/commandlineparser.cpp \
     cli/listapps.cpp \
     cli/quitstream.cpp \
@@ -214,6 +217,11 @@ HEADERS += \
     backend/computermanager.h \
     backend/boxartmanager.h \
     backend/richpresencemanager.h \
+    frontend/applistfacade.h \
+    frontend/computerlistfacade.h \
+    frontend/controllernavigation.h \
+    frontend/frontendtypes.h \
+    frontend/sdlcontrollernavigation.h \
     cli/commandlineparser.h \
     cli/listapps.h \
     cli/quitstream.h \
