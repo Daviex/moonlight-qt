@@ -172,7 +172,10 @@ SOURCES += \
     backend/richpresencemanager.cpp \
     frontend/applistfacade.cpp \
     frontend/computerlistfacade.cpp \
+    frontend/preferencesfacade.cpp \
     frontend/sdlcontrollernavigation.cpp \
+    frontend/systemfacade.cpp \
+    frontend/updatefacade.cpp \
     cli/commandlineparser.cpp \
     cli/listapps.cpp \
     cli/quitstream.cpp \
@@ -221,7 +224,10 @@ HEADERS += \
     frontend/computerlistfacade.h \
     frontend/controllernavigation.h \
     frontend/frontendtypes.h \
+    frontend/preferencesfacade.h \
     frontend/sdlcontrollernavigation.h \
+    frontend/systemfacade.h \
+    frontend/updatefacade.h \
     cli/commandlineparser.h \
     cli/listapps.h \
     cli/quitstream.h \
