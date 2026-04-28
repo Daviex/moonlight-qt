@@ -75,6 +75,9 @@ private:
     IFFmpegRenderer* m_VsyncRenderer;
     int m_MaxVideoFps;
     int m_DisplayFps;
+    int m_TimerSlackMillis;
+    int m_PacingQueueHistoryLimit;
+    int m_RenderQueueHistoryLimit;
     PVIDEO_STATS m_VideoStats;
     int m_RendererAttributes;
     bool m_PacingRequested;

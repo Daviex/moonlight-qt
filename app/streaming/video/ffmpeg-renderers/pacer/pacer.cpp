@@ -22,12 +22,21 @@
 static_assert(PACER_MAX_OUTSTANDING_FRAMES == MAX_QUEUED_FRAMES + 2,
               "PACER_MAX_OUTSTANDING_FRAMES and MAX_QUEUED_FRAMES must agree");
 
-// We may be woken up slightly late so don't go all the way
-// up to the next V-sync since we may accidentally step into
-// the next V-sync period. It also takes some amount of time
-// to do the render itself, so we can't render right before
-// V-sync happens.
-#define TIMER_SLACK_MS 3
+// We may be woken up slightly late so don't go all the way up to the next
+// V-sync. Derive this from the refresh interval so high-refresh streams don't
+// render unnecessarily early while preserving the old 3 ms cap at low refresh.
+#define TIMER_SLACK_MAX_MS 3
+#define QUEUE_HISTORY_WINDOW_MS 200
+
+static int getTimerSlackMillis(int frameIntervalMillis)
+{
+    return SDL_max(1, SDL_min(TIMER_SLACK_MAX_MS, frameIntervalMillis / 4));
+}
+
+static int getQueueHistoryLimit(int sampleRate)
+{
+    return SDL_max(1, (sampleRate * QUEUE_HISTORY_WINDOW_MS + 999) / 1000);
+}
 
 Pacer::Pacer(IFFmpegRenderer* renderer, PVIDEO_STATS videoStats) :
     m_RenderThread(nullptr),
@@ -38,6 +47,9 @@ Pacer::Pacer(IFFmpegRenderer* renderer, PVIDEO_STATS videoStats) :
     m_VsyncRenderer(renderer),
     m_MaxVideoFps(0),
     m_DisplayFps(0),
+    m_TimerSlackMillis(TIMER_SLACK_MAX_MS),
+    m_PacingQueueHistoryLimit(1),
+    m_RenderQueueHistoryLimit(1),
     m_VideoStats(videoStats),
     m_PacingRequested(false)
 {
@@ -223,8 +235,8 @@ void Pacer::handleVsync(int timeUntilNextVsyncMillis)
             }
         }
 
-        // Keep a rolling 500 ms window of pacing queue history
-        if (m_PacingQueueHistory.count() == m_DisplayFps / 2) {
+        // Keep a short rolling queue history so burst drops recover quickly.
+        if (m_PacingQueueHistory.count() == m_PacingQueueHistoryLimit) {
             m_PacingQueueHistory.dequeue();
         }
 
@@ -244,7 +256,8 @@ void Pacer::handleVsync(int timeUntilNextVsyncMillis)
 
     if (m_PacingQueue.isEmpty()) {
         // Wait for a frame to arrive or our V-sync timeout to expire
-        if (!m_PacingQueueNotEmpty.wait(&m_FrameQueueLock, SDL_max(timeUntilNextVsyncMillis, TIMER_SLACK_MS) - TIMER_SLACK_MS)) {
+        if (!m_PacingQueueNotEmpty.wait(&m_FrameQueueLock,
+                                        SDL_max(timeUntilNextVsyncMillis, m_TimerSlackMillis) - m_TimerSlackMillis)) {
             // Wait timed out - unlock and bail
             m_FrameQueueLock.unlock();
             return;
@@ -264,13 +277,16 @@ bool Pacer::initialize(SDL_Window* window, int maxVideoFps, bool enablePacing)
 {
     m_MaxVideoFps = maxVideoFps;
     m_DisplayFps = StreamUtils::getDisplayRefreshRate(window);
+    m_TimerSlackMillis = getTimerSlackMillis(1000 / m_DisplayFps);
+    m_PacingQueueHistoryLimit = getQueueHistoryLimit(m_DisplayFps);
+    m_RenderQueueHistoryLimit = getQueueHistoryLimit(m_MaxVideoFps);
     m_RendererAttributes = m_VsyncRenderer->getRendererAttributes();
     m_PacingRequested = enablePacing;
 
     if (enablePacing) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "Frame pacing: target %d Hz with %d FPS stream",
-                    m_DisplayFps, m_MaxVideoFps);
+                    "Frame pacing: target %d Hz with %d FPS stream, %d ms timer slack, %d ms queue history",
+                    m_DisplayFps, m_MaxVideoFps, m_TimerSlackMillis, QUEUE_HISTORY_WINDOW_MS);
 
         SDL_SysWMinfo info;
         SDL_VERSION(&info.version);
@@ -311,8 +327,8 @@ bool Pacer::initialize(SDL_Window* window, int maxVideoFps, bool enablePacing)
     }
     else {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "Frame pacing disabled: target %d Hz with %d FPS stream",
-                    m_DisplayFps, m_MaxVideoFps);
+                    "Frame pacing disabled: target %d Hz with %d FPS stream, %d ms timer slack, %d ms queue history",
+                    m_DisplayFps, m_MaxVideoFps, m_TimerSlackMillis, QUEUE_HISTORY_WINDOW_MS);
     }
 
     if (m_VsyncSource != nullptr) {
@@ -328,12 +344,14 @@ bool Pacer::initialize(SDL_Window* window, int maxVideoFps, bool enablePacing)
 
 QString Pacer::getDebugInfo() const
 {
-    return QString("requested: %1, active vsync source: %2, render thread: %3, display: %4 Hz, stream: %5 FPS")
+    return QString("requested: %1, active vsync source: %2, render thread: %3, display: %4 Hz, stream: %5 FPS, timer slack: %6 ms, history: %7 ms")
         .arg(m_PacingRequested ? "yes" : "no")
         .arg(m_VsyncSource != nullptr ? "yes" : "no")
         .arg(m_RenderThread != nullptr ? "yes" : "no")
         .arg(m_DisplayFps)
-        .arg(m_MaxVideoFps);
+        .arg(m_MaxVideoFps)
+        .arg(m_TimerSlackMillis)
+        .arg(QUEUE_HISTORY_WINDOW_MS);
 }
 
 void Pacer::signalVsync()
@@ -381,8 +399,8 @@ void Pacer::renderFrame(AVFrame* frame)
             }
         }
 
-        // Keep a rolling 500 ms window of render queue history
-        if (m_RenderQueueHistory.count() == m_MaxVideoFps / 2) {
+        // Keep a short rolling queue history so burst drops recover quickly.
+        if (m_RenderQueueHistory.count() == m_RenderQueueHistoryLimit) {
             m_RenderQueueHistory.dequeue();
         }
 
