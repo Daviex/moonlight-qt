@@ -7,3 +7,4 @@ build/
 config.tests/*/.qmake.stash
 config.tests/*/Makefile
 build-msys2-ucrt64
+.flatpak-builder
