@@ -111,7 +111,12 @@ public:
         if (!match.hasMatch()) {
             showError(QString("Invalid %1 format: %2").arg(name, value(name)));
         }
-        return qMakePair(match.captured(1).toInt(), match.captured(2).toInt());
+        int width = match.captured(1).toInt();
+        int height = match.captured(2).toInt();
+        if (!inRange(width, 1, 16384) || !inRange(height, 1, 16384)) {
+            showError(QString("Invalid %1 dimensions: %2").arg(name, value(name)));
+        }
+        return qMakePair(width, height);
     }
 
     void addFlagOption(QString name, QString descriptiveName)

@@ -55,6 +55,8 @@ private slots:
     void handlePairingCompleted(NvComputer* computer, QString error);
 
 private:
+    bool isValidComputerIndex(int computerIndex, const char* operation) const;
+
     QVector<NvComputer*> m_Computers;
     ComputerManager* m_ComputerManager;
 };

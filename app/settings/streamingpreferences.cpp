@@ -58,6 +58,40 @@ static StreamingPreferences* s_GlobalPrefs;
 
 Q_GLOBAL_STATIC(QReadWriteLock, s_GlobalPrefsLock)
 
+static int readBoundedInt(QSettings& settings, const char* key, int defaultValue, int minimum, int maximum)
+{
+    int value = settings.value(key, defaultValue).toInt();
+    if (value < minimum || value > maximum) {
+        qWarning() << "Ignoring out-of-range setting" << key << ":" << value;
+        return defaultValue;
+    }
+
+    return value;
+}
+
+static int readPacketSize(QSettings& settings)
+{
+    int value = settings.value(SER_PACKETSIZE, 0).toInt();
+    if (value != 0 && value < 1024) {
+        qWarning() << "Ignoring out-of-range packet size:" << value;
+        return 0;
+    }
+
+    return value;
+}
+
+template<typename EnumType>
+static EnumType readEnum(QSettings& settings, const char* key, EnumType defaultValue, EnumType minimum, EnumType maximum)
+{
+    int value = settings.value(key, static_cast<int>(defaultValue)).toInt();
+    if (value < static_cast<int>(minimum) || value > static_cast<int>(maximum)) {
+        qWarning() << "Ignoring out-of-range enum setting" << key << ":" << value;
+        return defaultValue;
+    }
+
+    return static_cast<EnumType>(value);
+}
+
 StreamingPreferences::StreamingPreferences(QQmlEngine *qmlEngine)
     : m_QmlEngine(qmlEngine)
 {
@@ -121,11 +155,11 @@ void StreamingPreferences::reload()
     }
 #endif
 
-    width = settings.value(SER_WIDTH, 1280).toInt();
-    height = settings.value(SER_HEIGHT, 720).toInt();
-    fps = settings.value(SER_FPS, 60).toInt();
+    width = readBoundedInt(settings, SER_WIDTH, 1280, 1, 16384);
+    height = readBoundedInt(settings, SER_HEIGHT, 720, 1, 16384);
+    fps = readBoundedInt(settings, SER_FPS, 60, 10, 480);
     enableYUV444 = settings.value(SER_YUV444, false).toBool();
-    bitrateKbps = settings.value(SER_BITRATE, getDefaultBitrate(width, height, fps, enableYUV444)).toInt();
+    bitrateKbps = readBoundedInt(settings, SER_BITRATE, getDefaultBitrate(width, height, fps, enableYUV444), 500, 500000);
     unlockBitrate = settings.value(SER_UNLOCK_BITRATE, false).toBool();
     autoAdjustBitrate = settings.value(SER_AUTOADJUSTBITRATE, true).toBool();
     enableVsync = settings.value(SER_VSYNC, true).toBool();
@@ -143,7 +177,7 @@ void StreamingPreferences::reload()
     gamepadMouse = settings.value(SER_GAMEPADMOUSE, true).toBool();
     detectNetworkBlocking = settings.value(SER_DETECTNETBLOCKING, true).toBool();
     showPerformanceOverlay = settings.value(SER_SHOWPERFOVERLAY, false).toBool();
-    packetSize = settings.value(SER_PACKETSIZE, 0).toInt();
+    packetSize = readPacketSize(settings);
     swapMouseButtons = settings.value(SER_SWAPMOUSEBUTTONS, false).toBool();
     muteOnFocusLoss = settings.value(SER_MUTEONFOCUSLOSS, false).toBool();
     backgroundGamepad = settings.value(SER_BACKGROUNDGAMEPAD, false).toBool();
@@ -151,23 +185,22 @@ void StreamingPreferences::reload()
     swapFaceButtons = settings.value(SER_SWAPFACEBUTTONS, false).toBool();
     keepAwake = settings.value(SER_KEEPAWAKE, true).toBool();
     enableHdr = settings.value(SER_HDR, false).toBool();
-    captureSysKeysMode = static_cast<CaptureSysKeysMode>(settings.value(SER_CAPTURESYSKEYS,
-                                                         static_cast<int>(CaptureSysKeysMode::CSK_OFF)).toInt());
-    audioConfig = static_cast<AudioConfig>(settings.value(SER_AUDIOCFG,
-                                                  static_cast<int>(AudioConfig::AC_STEREO)).toInt());
-    videoCodecConfig = static_cast<VideoCodecConfig>(settings.value(SER_VIDEOCFG,
-                                                  static_cast<int>(VideoCodecConfig::VCC_AUTO)).toInt());
-    videoDecoderSelection = static_cast<VideoDecoderSelection>(settings.value(SER_VIDEODEC,
-                                                  static_cast<int>(VideoDecoderSelection::VDS_AUTO)).toInt());
-    windowMode = static_cast<WindowMode>(settings.value(SER_WINDOWMODE,
-                                                        // Try to load from the old preference value too
-                                                        static_cast<int>(settings.value(SER_FULLSCREEN, true).toBool() ?
-                                                                             recommendedFullScreenMode : WindowMode::WM_WINDOWED)).toInt());
-    uiDisplayMode = static_cast<UIDisplayMode>(settings.value(SER_UIDISPLAYMODE,
-                                               static_cast<int>(settings.value(SER_STARTWINDOWED, true).toBool() ? UIDisplayMode::UI_WINDOWED
-                                                                                                                 : UIDisplayMode::UI_MAXIMIZED)).toInt());
-    language = static_cast<Language>(settings.value(SER_LANGUAGE,
-                                                    static_cast<int>(Language::LANG_AUTO)).toInt());
+    captureSysKeysMode = readEnum(settings, SER_CAPTURESYSKEYS, CaptureSysKeysMode::CSK_OFF,
+                                  CaptureSysKeysMode::CSK_OFF, CaptureSysKeysMode::CSK_ALWAYS);
+    audioConfig = readEnum(settings, SER_AUDIOCFG, AudioConfig::AC_STEREO,
+                           AudioConfig::AC_STEREO, AudioConfig::AC_71_SURROUND);
+    videoCodecConfig = readEnum(settings, SER_VIDEOCFG, VideoCodecConfig::VCC_AUTO,
+                                VideoCodecConfig::VCC_AUTO, VideoCodecConfig::VCC_FORCE_AV1);
+    videoDecoderSelection = readEnum(settings, SER_VIDEODEC, VideoDecoderSelection::VDS_AUTO,
+                                     VideoDecoderSelection::VDS_AUTO, VideoDecoderSelection::VDS_FORCE_SOFTWARE);
+    windowMode = readEnum(settings, SER_WINDOWMODE,
+                          settings.value(SER_FULLSCREEN, true).toBool() ? recommendedFullScreenMode : WindowMode::WM_WINDOWED,
+                          WindowMode::WM_FULLSCREEN, WindowMode::WM_WINDOWED);
+    uiDisplayMode = readEnum(settings, SER_UIDISPLAYMODE,
+                             settings.value(SER_STARTWINDOWED, true).toBool() ? UIDisplayMode::UI_WINDOWED : UIDisplayMode::UI_MAXIMIZED,
+                             UIDisplayMode::UI_WINDOWED, UIDisplayMode::UI_FULLSCREEN);
+    language = readEnum(settings, SER_LANGUAGE, Language::LANG_AUTO,
+                        Language::LANG_AUTO, Language::LANG_TA);
 
 
     // Perform default settings updates as required based on last default version

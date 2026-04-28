@@ -28,6 +28,16 @@ void AppModel::initialize(ComputerManager* computerManager, int computerIndex, b
     updateAppList(appList);
 }
 
+bool AppModel::isValidAppIndex(int appIndex, const char* operation) const
+{
+    if (appIndex >= 0 && appIndex < m_VisibleApps.count()) {
+        return true;
+    }
+
+    qWarning() << operation << "called with invalid app index:" << appIndex;
+    return false;
+}
+
 int AppModel::getRunningAppId()
 {
     return m_CurrentGameId;
@@ -48,6 +58,9 @@ QString AppModel::getRunningAppName()
 
 Session* AppModel::createSessionForApp(int appIndex)
 {
+    if (!isValidAppIndex(appIndex, "AppModel::createSessionForApp")) {
+        return nullptr;
+    }
     Q_ASSERT(appIndex < m_VisibleApps.count());
     NvApp app = m_VisibleApps.at(appIndex);
 
@@ -80,6 +93,9 @@ QVariant AppModel::data(const QModelIndex &index, int role) const
     if (!index.isValid())
         return QVariant();
 
+    if (!isValidAppIndex(index.row(), "AppModel::data")) {
+        return QVariant();
+    }
     Q_ASSERT(index.row() < m_VisibleApps.count());
     NvApp app = m_VisibleApps.at(index.row());
 
@@ -214,6 +230,9 @@ void AppModel::updateAppList(QVector<NvApp> newList)
 
 void AppModel::setAppHidden(int appIndex, bool hidden)
 {
+    if (!isValidAppIndex(appIndex, "AppModel::setAppHidden")) {
+        return;
+    }
     Q_ASSERT(appIndex < m_VisibleApps.count());
     int appId = m_VisibleApps.at(appIndex).id;
 
@@ -233,6 +252,9 @@ void AppModel::setAppHidden(int appIndex, bool hidden)
 
 void AppModel::setAppDirectLaunch(int appIndex, bool directLaunch)
 {
+    if (!isValidAppIndex(appIndex, "AppModel::setAppDirectLaunch")) {
+        return;
+    }
     Q_ASSERT(appIndex < m_VisibleApps.count());
     int appId = m_VisibleApps.at(appIndex).id;
 

@@ -109,6 +109,12 @@ Item {
     }
 
     StackView.onActivated: {
+        if (!session) {
+            displayLaunchError(qsTr("Unable to start stream: session was not created."))
+            sessionFinished(0)
+            return
+        }
+
         // Hide the toolbar before we start loading
         toolBar.visible = false
 

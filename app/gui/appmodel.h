@@ -56,6 +56,8 @@ signals:
     void computerLost();
 
 private:
+    bool isValidAppIndex(int appIndex, const char* operation) const;
+
     void updateAppList(QVector<NvApp> newList);
 
     QVector<NvApp> getVisibleApps(const QVector<NvApp>& appList);

@@ -1,5 +1,6 @@
 #include "computermodel.h"
 
+#include <QDebug>
 #include <QThreadPool>
 
 ComputerModel::ComputerModel(QObject* object)
@@ -16,12 +17,25 @@ void ComputerModel::initialize(ComputerManager* computerManager)
     m_Computers = m_ComputerManager->getComputers();
 }
 
+bool ComputerModel::isValidComputerIndex(int computerIndex, const char* operation) const
+{
+    if (computerIndex >= 0 && computerIndex < m_Computers.count()) {
+        return true;
+    }
+
+    qWarning() << operation << "called with invalid computer index:" << computerIndex;
+    return false;
+}
+
 QVariant ComputerModel::data(const QModelIndex& index, int role) const
 {
     if (!index.isValid()) {
         return QVariant();
     }
 
+    if (!isValidComputerIndex(index.row(), "ComputerModel::data")) {
+        return QVariant();
+    }
     Q_ASSERT(index.row() < m_Computers.count());
 
     NvComputer* computer = m_Computers[index.row()];
@@ -116,26 +130,45 @@ QHash<int, QByteArray> ComputerModel::roleNames() const
 
 Session* ComputerModel::createSessionForCurrentGame(int computerIndex)
 {
+    if (!isValidComputerIndex(computerIndex, "ComputerModel::createSessionForCurrentGame")) {
+        return nullptr;
+    }
     Q_ASSERT(computerIndex < m_Computers.count());
 
     NvComputer* computer = m_Computers[computerIndex];
 
-    // We must currently be streaming a game to use this function
-    Q_ASSERT(computer->currentGameId != 0);
+    int currentGameId;
+    QVector<NvApp> appList;
+    {
+        QReadLocker lock(&computer->lock);
+        currentGameId = computer->currentGameId;
+        appList = computer->appList;
+    }
 
-    for (NvApp& app : computer->appList) {
-        if (app.id == computer->currentGameId) {
+    // We must currently be streaming a game to use this function
+    if (currentGameId == 0) {
+        Q_ASSERT(currentGameId != 0);
+        qWarning() << "Cannot resume stream without a running game";
+        return nullptr;
+    }
+
+    for (NvApp& app : appList) {
+        if (app.id == currentGameId) {
             return new Session(computer, app);
         }
     }
 
     // We have a current running app but it's not in our app list
     Q_ASSERT(false);
+    qWarning() << "Running game not found in app list:" << currentGameId;
     return nullptr;
 }
 
 void ComputerModel::deleteComputer(int computerIndex)
 {
+    if (!isValidComputerIndex(computerIndex, "ComputerModel::deleteComputer")) {
+        return;
+    }
     Q_ASSERT(computerIndex < m_Computers.count());
 
     beginRemoveRows(QModelIndex(), computerIndex, computerIndex);
@@ -166,6 +199,9 @@ private:
 
 void ComputerModel::wakeComputer(int computerIndex)
 {
+    if (!isValidComputerIndex(computerIndex, "ComputerModel::wakeComputer")) {
+        return;
+    }
     Q_ASSERT(computerIndex < m_Computers.count());
 
     DeferredWakeHostTask* wakeTask = new DeferredWakeHostTask(m_Computers[computerIndex]);
@@ -174,6 +210,9 @@ void ComputerModel::wakeComputer(int computerIndex)
 
 void ComputerModel::renameComputer(int computerIndex, QString name)
 {
+    if (!isValidComputerIndex(computerIndex, "ComputerModel::renameComputer")) {
+        return;
+    }
     Q_ASSERT(computerIndex < m_Computers.count());
 
     m_ComputerManager->renameHost(m_Computers[computerIndex], name);
@@ -215,6 +254,9 @@ void ComputerModel::testConnectionForComputer(int)
 
 void ComputerModel::pairComputer(int computerIndex, QString pin)
 {
+    if (!isValidComputerIndex(computerIndex, "ComputerModel::pairComputer")) {
+        return;
+    }
     Q_ASSERT(computerIndex < m_Computers.count());
 
     m_ComputerManager->pairHost(m_Computers[computerIndex], pin);
@@ -238,7 +280,9 @@ void ComputerModel::handleComputerStateChanged(NvComputer* computer)
     else {
         // Let the view know that this specific computer changed
         int index = m_Computers.indexOf(computer);
-        emit dataChanged(createIndex(index, 0), createIndex(index, 0));
+        if (index >= 0) {
+            emit dataChanged(createIndex(index, 0), createIndex(index, 0));
+        }
     }
 }
 
