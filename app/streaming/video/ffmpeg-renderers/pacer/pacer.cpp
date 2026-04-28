@@ -38,7 +38,8 @@ Pacer::Pacer(IFFmpegRenderer* renderer, PVIDEO_STATS videoStats) :
     m_VsyncRenderer(renderer),
     m_MaxVideoFps(0),
     m_DisplayFps(0),
-    m_VideoStats(videoStats)
+    m_VideoStats(videoStats),
+    m_PacingRequested(false)
 {
 
 }
@@ -264,6 +265,7 @@ bool Pacer::initialize(SDL_Window* window, int maxVideoFps, bool enablePacing)
     m_MaxVideoFps = maxVideoFps;
     m_DisplayFps = StreamUtils::getDisplayRefreshRate(window);
     m_RendererAttributes = m_VsyncRenderer->getRendererAttributes();
+    m_PacingRequested = enablePacing;
 
     if (enablePacing) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
@@ -322,6 +324,16 @@ bool Pacer::initialize(SDL_Window* window, int maxVideoFps, bool enablePacing)
     }
 
     return true;
+}
+
+QString Pacer::getDebugInfo() const
+{
+    return QString("requested: %1, active vsync source: %2, render thread: %3, display: %4 Hz, stream: %5 FPS")
+        .arg(m_PacingRequested ? "yes" : "no")
+        .arg(m_VsyncSource != nullptr ? "yes" : "no")
+        .arg(m_RenderThread != nullptr ? "yes" : "no")
+        .arg(m_DisplayFps)
+        .arg(m_MaxVideoFps);
 }
 
 void Pacer::signalVsync()

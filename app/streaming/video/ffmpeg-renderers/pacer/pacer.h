@@ -6,6 +6,7 @@
 #include <QQueue>
 #include <QMutex>
 #include <QWaitCondition>
+#include <QString>
 
 // The maximum number of frames pacer will ever hold is:
 // - 3 frames in the pacing queue
@@ -38,6 +39,7 @@ public:
     void submitFrame(AVFrame* frame);
 
     bool initialize(SDL_Window* window, int maxVideoFps, bool enablePacing);
+    QString getDebugInfo() const;
 
     void signalVsync();
 
@@ -75,4 +77,5 @@ private:
     int m_DisplayFps;
     PVIDEO_STATS m_VideoStats;
     int m_RendererAttributes;
+    bool m_PacingRequested;
 };

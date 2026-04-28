@@ -729,6 +729,11 @@ bool FFmpegVideoDecoder::completeInitialization(const AVCodec* decoder, enum AVP
         // Allow the renderer to perform final preparations for rendering
         m_FrontendRenderer->prepareToRender();
 
+        updateDecodePathSummary(decoder);
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "%s",
+                    m_DecodePathSummary.toUtf8().constData());
+
         // Only create the decoder thread when instantiating the decoder for real. It will use APIs from
         // moonlight-common-c that can only be legally called with an established connection.
         m_DecoderThread = SDL_CreateThread(FFmpegVideoDecoder::decoderThreadProcThunk, "FFDecoder", (void*)this);
@@ -766,6 +771,8 @@ void FFmpegVideoDecoder::addVideoStats(VIDEO_STATS& src, VIDEO_STATS& dst)
     dst.totalDecodeTimeUs += src.totalDecodeTimeUs;
     dst.totalPacerTimeUs += src.totalPacerTimeUs;
     dst.totalRenderTimeUs += src.totalRenderTimeUs;
+    dst.decoderEagainEvents += src.decoderEagainEvents;
+    dst.decoderWaitEvents += src.decoderWaitEvents;
 
     if (dst.minHostProcessingLatency == 0) {
         dst.minHostProcessingLatency = src.minHostProcessingLatency;
@@ -912,6 +919,20 @@ void FFmpegVideoDecoder::stringifyVideoStats(VIDEO_STATS& stats, char* output, i
             offset += ret;
         }
 
+        if (!m_DecodePathSummary.isEmpty()) {
+            QByteArray decodePathSummary = m_DecodePathSummary.toUtf8();
+            ret = snprintf(&output[offset],
+                           length - offset,
+                           "%s\n",
+                           decodePathSummary.constData());
+            if (ret < 0 || ret >= length - offset) {
+                SDL_assert(false);
+                return;
+            }
+
+            offset += ret;
+        }
+
         ret = snprintf(&output[offset],
                        length - offset,
                        "Incoming frame rate from network: %.2f FPS\n"
@@ -920,6 +941,20 @@ void FFmpegVideoDecoder::stringifyVideoStats(VIDEO_STATS& stats, char* output, i
                        stats.receivedFps,
                        stats.decodedFps,
                        stats.renderedFps);
+        if (ret < 0 || ret >= length - offset) {
+            SDL_assert(false);
+            return;
+        }
+
+        offset += ret;
+    }
+
+    if (stats.decoderEagainEvents != 0 || stats.decoderWaitEvents != 0) {
+        ret = snprintf(&output[offset],
+                       length - offset,
+                       "Decoder EAGAIN events: %u, empty-poll waits: %u\n",
+                       stats.decoderEagainEvents,
+                       stats.decoderWaitEvents);
         if (ret < 0 || ret >= length - offset) {
             SDL_assert(false);
             return;
@@ -979,12 +1014,49 @@ void FFmpegVideoDecoder::stringifyVideoStats(VIDEO_STATS& stats, char* output, i
 void FFmpegVideoDecoder::logVideoStats(VIDEO_STATS& stats, const char* title)
 {
     if (stats.renderedFps > 0 || stats.renderedFrames != 0) {
-        char videoStatsStr[512];
+        char videoStatsStr[1024];
         stringifyVideoStats(stats, videoStatsStr, sizeof(videoStatsStr));
 
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "\n%s\n------------------\n%s",
                     title, videoStatsStr);
+    }
+}
+
+void FFmpegVideoDecoder::updateDecodePathSummary(const AVCodec* decoder)
+{
+    const char* requiredFormat =
+        m_RequiredPixelFormat == AV_PIX_FMT_NONE ? "auto" : av_get_pix_fmt_name(m_RequiredPixelFormat);
+    if (requiredFormat == nullptr) {
+        requiredFormat = "unknown";
+    }
+
+    const char* codecPixelFormat = av_get_pix_fmt_name(m_VideoDecoderCtx->pix_fmt);
+    if (codecPixelFormat == nullptr) {
+        codecPixelFormat = "unknown";
+    }
+
+    QString acceleration = isHardwareAccelerated() ? "hardware" : "software";
+    QString rendererDetails = m_FrontendRenderer->getRendererDebugInfo();
+    if (m_FrontendRenderer != m_BackendRenderer) {
+        QString backendDetails = m_BackendRenderer->getRendererDebugInfo();
+        if (!backendDetails.isEmpty()) {
+            rendererDetails += QString("; backend details: %1").arg(backendDetails);
+        }
+    }
+    QString pacerDetails = m_Pacer != nullptr ? m_Pacer->getDebugInfo() : QString("disabled");
+
+    m_DecodePathSummary = QString("Decode path: decoder=%1, acceleration=%2, required format=%3, codec format=%4, frontend=%5, backend=%6, pacer=(%7)")
+        .arg(decoder->name)
+        .arg(acceleration)
+        .arg(requiredFormat)
+        .arg(codecPixelFormat)
+        .arg(m_FrontendRenderer->getRendererName())
+        .arg(m_BackendRenderer->getRendererName())
+        .arg(pacerDetails);
+
+    if (!rendererDetails.isEmpty()) {
+        m_DecodePathSummary += QString(", renderer=(%1)").arg(rendererDetails);
     }
 }
 
@@ -1935,6 +2007,7 @@ void FFmpegVideoDecoder::decoderThreadProc()
                 else if (err == AVERROR(EAGAIN)) {
                     VIDEO_FRAME_HANDLE handle;
                     PDECODE_UNIT du;
+                    m_ActiveWndVideoStats.decoderEagainEvents++;
 
                     // No output data, so let's try to submit more input data,
                     // while we're waiting for this to frame to come back.
@@ -1944,6 +2017,7 @@ void FFmpegVideoDecoder::decoderThreadProc()
                     }
                     else {
                         // No output data or input data. Let's wait a little bit.
+                        m_ActiveWndVideoStats.decoderWaitEvents++;
                         SDL_Delay(2);
                     }
                 }

@@ -67,6 +67,7 @@ public:
     virtual int getDecoderCapabilities() override;
     virtual void notifyOverlayUpdated(Overlay::OverlayType) override;
     virtual bool notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO) override;
+    virtual QString getRendererDebugInfo() override;
 
 #ifdef HAVE_EGL
     virtual bool canExportEGL() override;
@@ -99,6 +100,7 @@ private:
     bool m_BlacklistedForDirectRendering;
     bool m_HasRfiLatencyBug;
     bool m_RequiresExplicitPixelFormat;
+    bool m_DirectRenderingSupported;
 
     SDL_mutex* m_OverlayMutex;
     VAImageFormat m_OverlayFormat;

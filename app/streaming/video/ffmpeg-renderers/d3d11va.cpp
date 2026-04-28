@@ -1511,6 +1511,18 @@ IFFmpegRenderer::InitFailureReason D3D11VARenderer::getInitFailureReason()
     }
 }
 
+QString D3D11VARenderer::getRendererDebugInfo()
+{
+    const char* fenceType =
+        m_FenceType == SupportedFenceType::Monitored ? "monitored" :
+        (m_FenceType == SupportedFenceType::NonMonitored ? "non-monitored" : "unsupported");
+
+    return QString("texture access: %1, device mode: %2, fence: %3")
+        .arg(m_BindDecoderOutputTextures ? "bind" : "copy")
+        .arg(m_DecodeDevice == m_RenderDevice ? "shared" : "separate")
+        .arg(fenceType);
+}
+
 void D3D11VARenderer::lockContext(void *lock_ctx)
 {
     auto me = (D3D11VARenderer*)lock_ctx;

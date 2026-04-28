@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <QQueue>
+#include <QString>
 #include <set>
 
 #include "../bandwidth.h"
@@ -55,6 +56,8 @@ private:
     void logVideoStats(VIDEO_STATS& stats, const char* title);
 
     void addVideoStats(VIDEO_STATS& src, VIDEO_STATS& dst);
+
+    void updateDecodePathSummary(const AVCodec* decoder);
 
     bool createFrontendRenderer(PDECODER_PARAMETERS params, bool useAlternateFrontend);
 
@@ -117,6 +120,7 @@ private:
     VIDEO_STATS m_ActiveWndVideoStats;
     VIDEO_STATS m_LastWndVideoStats;
     VIDEO_STATS m_GlobalVideoStats;
+    QString m_DecodePathSummary;
     std::set<IFFmpegRenderer::RendererType> m_FailedRenderers;
 
     int m_FramesIn;

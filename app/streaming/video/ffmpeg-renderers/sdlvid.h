@@ -23,6 +23,7 @@ public:
     virtual bool isPixelFormatSupported(int videoFormat, enum AVPixelFormat pixelFormat) override;
     virtual bool testRenderFrame(AVFrame* frame) override;
     virtual bool notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO) override;
+    virtual QString getRendererDebugInfo() override;
 
 private:
     void renderOverlay(Overlay::OverlayType type);
@@ -37,6 +38,7 @@ private:
 
     // Used for CPU conversion of YUV to RGB if needed
     bool m_NeedsYuvToRgbConversion;
+    bool m_UsesHardwareReadback;
     SwsContext* m_SwsContext;
     AVFrame* m_RgbFrame;
 

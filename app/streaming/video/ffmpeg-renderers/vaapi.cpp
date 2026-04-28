@@ -24,6 +24,7 @@ VAAPIRenderer::VAAPIRenderer(int decoderSelectionPass)
       m_HwContext(nullptr),
       m_BlacklistedForDirectRendering(false),
       m_RequiresExplicitPixelFormat(false),
+      m_DirectRenderingSupported(false),
       m_OverlayMutex(nullptr)
 #ifdef HAVE_EGL
     , m_EglExportType(EglExportType::Unknown),
@@ -586,11 +587,13 @@ VAAPIRenderer::isDirectRenderingSupported()
     if (qgetenv("VAAPI_FORCE_DIRECT") == "1") {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Using direct rendering due to environment variable");
+        m_DirectRenderingSupported = true;
         return true;
     }
     else if (qgetenv("VAAPI_FORCE_INDIRECT") == "1") {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Using indirect rendering due to environment variable");
+        m_DirectRenderingSupported = false;
         return false;
     }
 
@@ -598,16 +601,19 @@ VAAPIRenderer::isDirectRenderingSupported()
     if (m_WindowSystem != SDL_SYSWM_X11 || m_BlacklistedForDirectRendering) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Using indirect rendering due to WM or blacklist");
+        m_DirectRenderingSupported = false;
         return false;
     }
     else if (m_VideoFormat & VIDEO_FORMAT_MASK_10BIT) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Using indirect rendering for 10-bit video");
+        m_DirectRenderingSupported = false;
         return false;
     }
     else if (m_VideoFormat & VIDEO_FORMAT_MASK_YUV444) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Using indirect rendering for YUV 4:4:4 video");
+        m_DirectRenderingSupported = false;
         return false;
     }
     else if (m_OverlayFormat.fourcc == 0) {
@@ -617,6 +623,7 @@ VAAPIRenderer::isDirectRenderingSupported()
         // also silently fail in vaPutSurface() too.
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Using indirect rendering due to lack of overlay support");
+        m_DirectRenderingSupported = false;
         return false;
     }
 
@@ -631,6 +638,7 @@ VAAPIRenderer::isDirectRenderingSupported()
             if (entrypoints[i] == VAEntrypointVideoProc) {
                 SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                             "Using direct rendering with VAEntrypointVideoProc");
+                m_DirectRenderingSupported = true;
                 return true;
             }
         }
@@ -638,7 +646,47 @@ VAAPIRenderer::isDirectRenderingSupported()
 
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "Using indirect rendering due to lack of VAEntrypointVideoProc");
+    m_DirectRenderingSupported = false;
     return false;
+}
+
+QString VAAPIRenderer::getRendererDebugInfo()
+{
+    const char* windowSystem = "other";
+    switch (m_WindowSystem) {
+    case SDL_SYSWM_X11:
+        windowSystem = "X11";
+        break;
+    case SDL_SYSWM_WAYLAND:
+        windowSystem = "Wayland";
+        break;
+    case SDL_SYSWM_KMSDRM:
+        windowSystem = "KMSDRM";
+        break;
+    default:
+        break;
+    }
+
+    QString details = QString("window system: %1, direct render: %2")
+        .arg(windowSystem)
+        .arg(m_DirectRenderingSupported ? "yes" : "no");
+
+#ifdef HAVE_EGL
+    const char* eglExport = "unknown";
+    switch (m_EglExportType) {
+    case EglExportType::Separate:
+        eglExport = "separate layers";
+        break;
+    case EglExportType::Composed:
+        eglExport = "composed layers";
+        break;
+    case EglExportType::Unknown:
+        break;
+    }
+    details += QString(", EGL export: %1").arg(eglExport);
+#endif
+
+    return details;
 }
 
 int VAAPIRenderer::getDecoderColorspace()

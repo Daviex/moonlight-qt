@@ -26,6 +26,7 @@ public:
     virtual int getRendererAttributes() override;
     virtual int getDecoderCapabilities() override;
     virtual InitFailureReason getInitFailureReason() override;
+    virtual QString getRendererDebugInfo() override;
 
     enum PixelShaders {
         GENERIC_YUV_420,

@@ -3,6 +3,7 @@
 #include "SDL_compat.h"
 
 #include <array>
+#include <QString>
 
 #include "streaming/video/decoder.h"
 #include "streaming/video/overlaymanager.h"
@@ -335,6 +336,10 @@ public:
         case RendererType::VTMetal:
             return "VideoToolbox (Metal)";
         }
+    }
+
+    virtual QString getRendererDebugInfo() {
+        return QString();
     }
 
     AVPixelFormat getFrameSwPixelFormat(const AVFrame* frame) {

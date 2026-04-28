@@ -18,6 +18,7 @@ SdlRenderer::SdlRenderer()
       m_Renderer(nullptr),
       m_Texture(nullptr),
       m_NeedsYuvToRgbConversion(false),
+      m_UsesHardwareReadback(false),
       m_SwsContext(nullptr),
       m_RgbFrame(av_frame_alloc()),
       m_SwFrameMapper(this)
@@ -277,6 +278,7 @@ void SdlRenderer::renderFrame(AVFrame* frame)
     AVFrame* swFrame = nullptr;
 
     if (frame->hw_frames_ctx != nullptr && frame->format != AV_PIX_FMT_CUDA) {
+        m_UsesHardwareReadback = true;
 #ifdef HAVE_CUDA
 ReadbackRetry:
 #endif
@@ -606,7 +608,8 @@ bool SdlRenderer::testRenderFrame(AVFrame* frame)
     // accelerated decoder, we'll need to read the frame
     // back to render it. Test that this can be done
     // for the given frame successfully.
-    if (frame->hw_frames_ctx != nullptr) {
+        if (frame->hw_frames_ctx != nullptr) {
+            m_UsesHardwareReadback = true;
 #ifdef HAVE_MMAL
         // FFmpeg for Raspberry Pi has NEON-optimized routines that allow
         // us to use av_hwframe_transfer_data() to convert from SAND frames
@@ -636,6 +639,20 @@ bool SdlRenderer::testRenderFrame(AVFrame* frame)
     }
 
     return true;
+}
+
+QString SdlRenderer::getRendererDebugInfo()
+{
+    SDL_RendererInfo info = {};
+    const char* backendName = "unknown";
+    if (m_Renderer != nullptr && SDL_GetRendererInfo(m_Renderer, &info) == 0) {
+        backendName = info.name;
+    }
+
+    return QString("backend: %1, CPU conversion: %2, hardware readback: %3")
+        .arg(backendName)
+        .arg(m_NeedsYuvToRgbConversion ? "yes" : "no")
+        .arg(m_UsesHardwareReadback ? "yes" : "no");
 }
 
 bool SdlRenderer::notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO info)
