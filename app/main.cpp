@@ -59,6 +59,7 @@
 #include "settings/streamingpreferences.h"
 #include "gui/sdlgamepadkeynavigation.h"
 #ifdef GUI_NEXT_WIDGETS
+#include "gui-next/clicontroller.h"
 #include "gui-next/widgetshell.h"
 #endif
 
@@ -965,6 +966,7 @@ int main(int argc, char *argv[])
 
 #ifdef GUI_NEXT_WIDGETS
     QScopedPointer<GuiNextWindow> guiNextWindow;
+    QScopedPointer<GuiNextCliController> guiNextCliController;
     if (commandLineParserResult == GlobalCommandLineParser::NormalStartRequested) {
         guiNextWindow.reset(new GuiNextWindow());
         guiNextWindow->show();
@@ -1007,6 +1009,13 @@ int main(int argc, char *argv[])
         break;
     case GlobalCommandLineParser::StreamRequested:
         {
+#ifdef GUI_NEXT_WIDGETS
+            guiNextCliController.reset(new GuiNextCliController(&app));
+            if (guiNextCliController->start(commandLineParserResult, app.arguments())) {
+                hasGUI = false;
+                break;
+            }
+#endif
             initialView = "qrc:/gui/CliStartStreamSegue.qml";
             StreamingPreferences* preferences = StreamingPreferences::get();
             StreamCommandLineParser streamParser;
@@ -1019,6 +1028,13 @@ int main(int argc, char *argv[])
         }
     case GlobalCommandLineParser::QuitRequested:
         {
+#ifdef GUI_NEXT_WIDGETS
+            guiNextCliController.reset(new GuiNextCliController(&app));
+            if (guiNextCliController->start(commandLineParserResult, app.arguments())) {
+                hasGUI = false;
+                break;
+            }
+#endif
             initialView = "qrc:/gui/CliQuitStreamSegue.qml";
             QuitCommandLineParser quitParser;
             quitParser.parse(app.arguments());
@@ -1028,6 +1044,13 @@ int main(int argc, char *argv[])
         }
     case GlobalCommandLineParser::PairRequested:
         {
+#ifdef GUI_NEXT_WIDGETS
+            guiNextCliController.reset(new GuiNextCliController(&app));
+            if (guiNextCliController->start(commandLineParserResult, app.arguments())) {
+                hasGUI = false;
+                break;
+            }
+#endif
             initialView = "qrc:/gui/CliPair.qml";
             PairCommandLineParser pairParser;
             pairParser.parse(app.arguments());

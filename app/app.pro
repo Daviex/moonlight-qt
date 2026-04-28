@@ -263,11 +263,13 @@ HEADERS += \
 
 gui-next {
     SOURCES += \
+        gui-next/clicontroller.cpp \
         gui-next/widgetscontrolleradapter.cpp \
         gui-next/widgetshell.cpp \
         streaming/qtwidgetwindowcontext.cpp
 
     HEADERS += \
+        gui-next/clicontroller.h \
         gui-next/widgetscontrolleradapter.h \
         gui-next/widgetshell.h \
         streaming/qtwidgetwindowcontext.h
