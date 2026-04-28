@@ -1,9 +1,12 @@
-QT += core quick network quickcontrols2 svg
+QT += core network svg
 CONFIG += c++17
 
 gui-next {
     QT += widgets
     DEFINES += GUI_NEXT_WIDGETS
+}
+!gui-next {
+    QT += quick quickcontrols2
 }
 
 unix:!macx {
@@ -19,7 +22,7 @@ include(../globaldefs.pri)
 # Since this binds the app against the Qt runtime version, we will only
 # do this for Windows and Mac (when disable-prebuilts is not defined),
 # since they always ship with the matching build of the Qt runtime.
-!disable-prebuilts {
+!gui-next:!disable-prebuilts {
     win32|macx {
         CONFIG(release, debug|release) {
             CONFIG += qtquickcompiler
@@ -195,19 +198,15 @@ SOURCES += \
     streaming/input/input.cpp \
     streaming/input/keyboard.cpp \
     streaming/input/mouse.cpp \
-    streaming/qtquickwindowcontext.cpp \
     streaming/input/reltouch.cpp \
     streaming/session.cpp \
     streaming/audio/audio.cpp \
     streaming/audio/renderers/sdlaud.cpp \
-    gui/computermodel.cpp \
-    gui/appmodel.cpp \
     streaming/bandwidth.cpp \
     streaming/streamutils.cpp \
     backend/autoupdatechecker.cpp \
     path.cpp \
     settings/mappingmanager.cpp \
-    gui/sdlgamepadkeynavigation.cpp \
     streaming/video/overlaymanager.cpp \
     backend/systemproperties.cpp \
     wm.cpp
@@ -244,22 +243,32 @@ HEADERS += \
     cli/startstream.h \
     settings/streamingpreferences.h \
     streaming/input/input.h \
-    streaming/qtquickwindowcontext.h \
     streaming/session.h \
     streaming/sessionwindowcontext.h \
     streaming/audio/renderers/renderer.h \
     streaming/audio/renderers/sdl.h \
-    gui/computermodel.h \
-    gui/appmodel.h \
     streaming/video/decoder.h \
     streaming/bandwidth.h \
     streaming/streamutils.h \
     backend/autoupdatechecker.h \
     path.h \
     settings/mappingmanager.h \
-    gui/sdlgamepadkeynavigation.h \
     streaming/video/overlaymanager.h \
     backend/systemproperties.h
+
+!gui-next {
+    SOURCES += \
+        gui/appmodel.cpp \
+        gui/computermodel.cpp \
+        gui/sdlgamepadkeynavigation.cpp \
+        streaming/qtquickwindowcontext.cpp
+
+    HEADERS += \
+        gui/appmodel.h \
+        gui/computermodel.h \
+        gui/sdlgamepadkeynavigation.h \
+        streaming/qtquickwindowcontext.h
+}
 
 gui-next {
     SOURCES += \
@@ -478,8 +487,12 @@ wayland {
 }
 
 RESOURCES += \
-    resources.qrc \
-    qml.qrc
+    resources.qrc
+
+!gui-next {
+    RESOURCES += \
+        qml.qrc
+}
 
 TRANSLATIONS += \
     languages/qml_zh_CN.ts \

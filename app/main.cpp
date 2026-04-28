@@ -1,11 +1,13 @@
 #include <QGuiApplication>
 #ifdef GUI_NEXT_WIDGETS
 #include <QApplication>
-#endif
+#else
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
-#include <QIcon>
 #include <QQuickStyle>
+#endif
+#include <QIcon>
+#include <QDir>
 #include <QMutex>
 #include <QtDebug>
 #include <QNetworkProxyFactory>
@@ -17,6 +19,7 @@
 #include <QRegularExpression>
 #include <QSurfaceFormat>
 #include <QScopedPointer>
+#include <QThreadPool>
 
 #ifdef Q_OS_UNIX
 #include <sys/socket.h>
@@ -50,17 +53,18 @@
 #include "cli/commandlineparser.h"
 #include "path.h"
 #include "utils.h"
-#include "gui/computermodel.h"
-#include "gui/appmodel.h"
 #include "backend/autoupdatechecker.h"
 #include "backend/computermanager.h"
 #include "backend/systemproperties.h"
 #include "streaming/session.h"
 #include "settings/streamingpreferences.h"
-#include "gui/sdlgamepadkeynavigation.h"
 #ifdef GUI_NEXT_WIDGETS
 #include "gui-next/clicontroller.h"
 #include "gui-next/widgetshell.h"
+#else
+#include "gui/appmodel.h"
+#include "gui/computermodel.h"
+#include "gui/sdlgamepadkeynavigation.h"
 #endif
 
 #if defined(Q_OS_WIN32)
@@ -931,6 +935,33 @@ int main(int argc, char *argv[])
     qputenv("SDL_VIDEO_WAYLAND_WMCLASS", "com.moonlight_stream.Moonlight");
     qputenv("SDL_VIDEO_X11_WMCLASS", "com.moonlight_stream.Moonlight");
 
+    // Create the identity manager on the main thread
+    IdentityManager::get();
+
+#ifdef GUI_NEXT_WIDGETS
+    QScopedPointer<GuiNextWindow> guiNextWindow;
+    QScopedPointer<GuiNextCliController> guiNextCliController;
+    switch (commandLineParserResult) {
+    case GlobalCommandLineParser::NormalStartRequested:
+        guiNextWindow.reset(new GuiNextWindow());
+        guiNextWindow->show();
+        break;
+    case GlobalCommandLineParser::StreamRequested:
+    case GlobalCommandLineParser::QuitRequested:
+    case GlobalCommandLineParser::PairRequested:
+        guiNextCliController.reset(new GuiNextCliController(&app));
+        guiNextCliController->start(commandLineParserResult, app.arguments());
+        break;
+    case GlobalCommandLineParser::ListRequested:
+        {
+            ListCommandLineParser listParser;
+            listParser.parse(app.arguments());
+            auto launcher = new CliListApps::Launcher(listParser.getHost(), listParser, &app);
+            launcher->execute(new ComputerManager(StreamingPreferences::get()));
+            break;
+        }
+    }
+#else
     // Register our C++ types for QML
     qmlRegisterType<ComputerModel>("ComputerModel", 1, 0, "ComputerModel");
     qmlRegisterType<AppModel>("AppModel", 1, 0, "AppModel");
@@ -961,18 +992,6 @@ int main(int argc, char *argv[])
                                                        return StreamingPreferences::get(qmlEngine);
                                                    });
 
-    // Create the identity manager on the main thread
-    IdentityManager::get();
-
-#ifdef GUI_NEXT_WIDGETS
-    QScopedPointer<GuiNextWindow> guiNextWindow;
-    QScopedPointer<GuiNextCliController> guiNextCliController;
-    if (commandLineParserResult == GlobalCommandLineParser::NormalStartRequested) {
-        guiNextWindow.reset(new GuiNextWindow());
-        guiNextWindow->show();
-    }
-#endif
-
     // We require the Material theme
     QQuickStyle::setStyle("Material");
 
@@ -999,23 +1018,10 @@ int main(int argc, char *argv[])
 
     switch (commandLineParserResult) {
     case GlobalCommandLineParser::NormalStartRequested:
-#ifdef GUI_NEXT_WIDGETS
-        if (guiNextWindow != nullptr) {
-            hasGUI = false;
-            break;
-        }
-#endif
         initialView = "qrc:/gui/PcView.qml";
         break;
     case GlobalCommandLineParser::StreamRequested:
         {
-#ifdef GUI_NEXT_WIDGETS
-            guiNextCliController.reset(new GuiNextCliController(&app));
-            if (guiNextCliController->start(commandLineParserResult, app.arguments())) {
-                hasGUI = false;
-                break;
-            }
-#endif
             initialView = "qrc:/gui/CliStartStreamSegue.qml";
             StreamingPreferences* preferences = StreamingPreferences::get();
             StreamCommandLineParser streamParser;
@@ -1028,13 +1034,6 @@ int main(int argc, char *argv[])
         }
     case GlobalCommandLineParser::QuitRequested:
         {
-#ifdef GUI_NEXT_WIDGETS
-            guiNextCliController.reset(new GuiNextCliController(&app));
-            if (guiNextCliController->start(commandLineParserResult, app.arguments())) {
-                hasGUI = false;
-                break;
-            }
-#endif
             initialView = "qrc:/gui/CliQuitStreamSegue.qml";
             QuitCommandLineParser quitParser;
             quitParser.parse(app.arguments());
@@ -1044,13 +1043,6 @@ int main(int argc, char *argv[])
         }
     case GlobalCommandLineParser::PairRequested:
         {
-#ifdef GUI_NEXT_WIDGETS
-            guiNextCliController.reset(new GuiNextCliController(&app));
-            if (guiNextCliController->start(commandLineParserResult, app.arguments())) {
-                hasGUI = false;
-                break;
-            }
-#endif
             initialView = "qrc:/gui/CliPair.qml";
             PairCommandLineParser pairParser;
             pairParser.parse(app.arguments());
@@ -1078,6 +1070,7 @@ int main(int argc, char *argv[])
         if (engine.rootObjects().isEmpty())
             return -1;
     }
+#endif
 
     int err = app.exec();
 

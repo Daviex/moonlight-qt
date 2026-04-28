@@ -1,7 +1,9 @@
 #include "session.h"
 #include "settings/streamingpreferences.h"
 #include "streaming/streamutils.h"
+#ifndef GUI_NEXT_WIDGETS
 #include "streaming/qtquickwindowcontext.h"
+#endif
 #include "backend/richpresencemanager.h"
 
 #include <Limelight.h>
@@ -638,11 +640,13 @@ Session::~Session()
     }
 }
 
+#ifndef GUI_NEXT_WIDGETS
 bool Session::initialize(QQuickWindow* qtWindow)
 {
     m_OwnedWindowContext.reset(new QtQuickWindowContext(qtWindow));
     return initialize(m_OwnedWindowContext.get());
 }
+#endif
 
 bool Session::initialize(SessionWindowContext* windowContext)
 {

@@ -2,7 +2,8 @@
 
 #include <QObject>
 #include <QRect>
-#include <QQmlEngine>
+
+class QQmlEngine;
 
 class StreamingPreferences : public QObject
 {

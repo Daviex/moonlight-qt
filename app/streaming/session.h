@@ -13,7 +13,9 @@
 #include "audio/renderers/renderer.h"
 #include "video/overlaymanager.h"
 
+#ifndef GUI_NEXT_WIDGETS
 class QQuickWindow;
+#endif
 
 class SupportedVideoFormatList : public QList<int>
 {
@@ -107,7 +109,9 @@ public:
 
     // The caller must keep windowContext alive until readyForDeletion() is emitted.
     bool initialize(SessionWindowContext* windowContext);
+#ifndef GUI_NEXT_WIDGETS
     Q_INVOKABLE bool initialize(QQuickWindow* qtWindow);
+#endif
     Q_INVOKABLE void start();
     Q_INVOKABLE void interrupt();
     Q_PROPERTY(QStringList launchWarnings MEMBER m_LaunchWarnings NOTIFY launchWarningsChanged);

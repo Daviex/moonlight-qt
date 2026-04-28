@@ -9,6 +9,9 @@
 #include <QtMath>
 
 #include <QtDebug>
+#ifndef GUI_NEXT_WIDGETS
+#include <QQmlEngine>
+#endif
 
 #define SER_STREAMSETTINGS "streamsettings"
 #define SER_WIDTH "width"
@@ -259,6 +262,7 @@ bool StreamingPreferences::retranslate()
         delete newTranslator;
     }
 
+#ifndef GUI_NEXT_WIDGETS
     if (m_QmlEngine != nullptr) {
 #if QT_VERSION >= QT_VERSION_CHECK(5, 10, 0)
         // This is a dynamic retranslation from the settings page.
@@ -270,9 +274,12 @@ bool StreamingPreferences::retranslate()
 #endif
     }
     else {
+#endif
         // This is a translation from a non-QML context, which means
         // it is probably app startup. There's nothing to refresh.
+#ifndef GUI_NEXT_WIDGETS
     }
+#endif
 
     return true;
 }
