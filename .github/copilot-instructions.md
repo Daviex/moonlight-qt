@@ -14,6 +14,7 @@
   exit $LASTEXITCODE
   ```
 - Successful Windows x64 release artifacts are produced at `build\deploy-x64-release\Moonlight.exe`, `build\build-x64-release\Moonlight.msi`, `build\installer-x64-release\MoonlightPortable-x64-<version>.zip`, and `build\symbols-x64-release\MoonlightDebuggingSymbols-x64-<version>.zip`.
+- The opt-in no-QML `gui-next` Windows package can be built with the same script by setting `$env:QMAKE_EXTRA_ARGS = 'CONFIG+=gui-next'` before `cmd /c "scripts\build-arch.bat release"`; validated log path: `build\build-script-extra-args-gui-next.log`.
 - If the Windows build compiles but fails during symbol or portable packaging with `7z` not recognized, add 7-Zip to `PATH` and rerun the same script. Do not use MSYS2/MinGW for the normal Windows package build; the bundled Windows libraries and `AntiHooking`/Detours dependency are MSVC-built.
 - macOS package build: `scripts/generate-dmg.sh Release`.
 - Linux AppImage package build: `scripts/build-appimage.sh`.
