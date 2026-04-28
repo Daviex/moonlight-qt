@@ -235,12 +235,14 @@ FFmpegVideoDecoder::FFmpegVideoDecoder(bool testOnly)
       m_VideoFormat(0),
       m_NeedsSpsFixup(false),
       m_TestOnly(testOnly),
+      m_HasPendingDecodeUnit(false),
       m_CurrentTestMode(TestMode::TestFrameOnly),
       m_DecoderThread(nullptr)
 {
     SDL_zero(m_ActiveWndVideoStats);
     SDL_zero(m_LastWndVideoStats);
     SDL_zero(m_GlobalVideoStats);
+    SDL_zero(m_PendingDecodeUnit);
 
     SDL_AtomicSet(&m_DecoderThreadShouldQuit, 0);
 }
@@ -277,6 +279,8 @@ void FFmpegVideoDecoder::reset()
 
     m_FramesIn = m_FramesOut = 0;
     m_FrameInfoQueue.clear();
+    m_HasPendingDecodeUnit = false;
+    SDL_zero(m_PendingDecodeUnit);
 
     delete m_Pacer;
     m_Pacer = nullptr;
@@ -1096,17 +1100,20 @@ IFFmpegRenderer* FFmpegVideoDecoder::createHwAccelRenderer(const AVCodecHWConfig
         case AV_HWDEVICE_TYPE_VULKAN:
             return new PlVkRenderer(true);
 #endif
+#ifdef HAVE_DRM
         default:
             switch (hwDecodeCfg->pix_fmt) {
-#ifdef HAVE_DRM
             case AV_PIX_FMT_DRM_PRIME:
                 // Support out-of-tree non-DRM hwaccels that output DRM_PRIME frames
                 // https://patchwork.ffmpeg.org/project/ffmpeg/list/?series=12604
                 return new DrmRenderer(hwDecodeCfg->device_type);
-#endif
             default:
                 return nullptr;
             }
+#else
+        default:
+            return nullptr;
+#endif
         }
     }
     // Second pass for our second-tier hwaccel implementations
@@ -1882,7 +1889,19 @@ int FFmpegVideoDecoder::decoderThreadProcThunk(void *context)
 void FFmpegVideoDecoder::decoderThreadProc()
 {
     while (!SDL_AtomicGet(&m_DecoderThreadShouldQuit)) {
-        if (m_FramesIn == m_FramesOut) {
+        if (m_HasPendingDecodeUnit && m_FramesIn == m_FramesOut) {
+            SubmitDecodeUnitResult result = submitPendingDecodeUnit();
+            if (result == SubmitDecodeUnitResult::NeedIdr) {
+                LiRequestIdrFrame();
+            }
+            else if (result == SubmitDecodeUnitResult::TryAgain) {
+                m_ActiveWndVideoStats.decoderWaitEvents++;
+                SDL_Delay(1);
+            }
+            continue;
+        }
+
+        if (!m_HasPendingDecodeUnit && m_FramesIn == m_FramesOut) {
             VIDEO_FRAME_HANDLE handle;
             PDECODE_UNIT du;
 
@@ -2005,20 +2024,32 @@ void FFmpegVideoDecoder::decoderThreadProc()
                     m_Pacer->submitFrame(frame);
                 }
                 else if (err == AVERROR(EAGAIN)) {
-                    VIDEO_FRAME_HANDLE handle;
-                    PDECODE_UNIT du;
                     m_ActiveWndVideoStats.decoderEagainEvents++;
 
-                    // No output data, so let's try to submit more input data,
-                    // while we're waiting for this to frame to come back.
-                    if (LiPollNextVideoFrame(&handle, &du)) {
-                        // FIXME: Handle EAGAIN on avcodec_send_packet() properly?
-                        LiCompleteVideoFrame(handle, submitDecodeUnit(du));
+                    if (m_HasPendingDecodeUnit) {
+                        SubmitDecodeUnitResult result = submitPendingDecodeUnit();
+                        if (result == SubmitDecodeUnitResult::NeedIdr) {
+                            LiRequestIdrFrame();
+                        }
+                        else if (result == SubmitDecodeUnitResult::TryAgain) {
+                            m_ActiveWndVideoStats.decoderWaitEvents++;
+                            SDL_Delay(1);
+                        }
                     }
                     else {
-                        // No output data or input data. Let's wait a little bit.
-                        m_ActiveWndVideoStats.decoderWaitEvents++;
-                        SDL_Delay(2);
+                        VIDEO_FRAME_HANDLE handle;
+                        PDECODE_UNIT du;
+
+                        // No output data, so let's try to submit more input data,
+                        // while we're waiting for this to frame to come back.
+                        if (LiPollNextVideoFrame(&handle, &du)) {
+                            LiCompleteVideoFrame(handle, submitDecodeUnit(du));
+                        }
+                        else {
+                            // No output data or input data. Let's wait a little bit.
+                            m_ActiveWndVideoStats.decoderWaitEvents++;
+                            SDL_Delay(1);
+                        }
                     }
                 }
                 else {
@@ -2058,12 +2089,69 @@ void FFmpegVideoDecoder::decoderThreadProc()
     }
 }
 
+FFmpegVideoDecoder::SubmitDecodeUnitResult FFmpegVideoDecoder::sendCurrentPacket(const DECODE_UNIT& du)
+{
+    int err = avcodec_send_packet(m_VideoDecoderCtx, m_Pkt);
+    if (err == AVERROR(EAGAIN)) {
+        m_ActiveWndVideoStats.decoderEagainEvents++;
+        if (!m_HasPendingDecodeUnit) {
+            m_PendingDecodeUnit = du;
+            m_PendingDecodeUnit.bufferList = nullptr;
+            m_HasPendingDecodeUnit = true;
+        }
+        return SubmitDecodeUnitResult::TryAgain;
+    }
+    else if (err < 0) {
+        char errorstring[512];
+        av_strerror(err, errorstring, sizeof(errorstring));
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "avcodec_send_packet() failed: %s (frame %d)",
+                    errorstring,
+                    du.frameNumber);
+
+        // If we've failed a bunch of decodes in a row, the decoder/renderer is
+        // clearly unhealthy, so let's generate a synthetic reset event to trigger
+        // the event loop to destroy and recreate the decoder.
+        if (++m_ConsecutiveFailedDecodes == FAILED_DECODES_RESET_THRESHOLD) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "Resetting decoder due to consistent failure");
+
+            SDL_Event event;
+            event.type = SDL_RENDER_DEVICE_RESET;
+            SDL_PushEvent(&event);
+
+            // Don't consume any additional data
+            SDL_AtomicSet(&m_DecoderThreadShouldQuit, 1);
+        }
+
+        m_HasPendingDecodeUnit = false;
+        SDL_zero(m_PendingDecodeUnit);
+        return SubmitDecodeUnitResult::NeedIdr;
+    }
+
+    if (m_HasPendingDecodeUnit) {
+        m_HasPendingDecodeUnit = false;
+        SDL_zero(m_PendingDecodeUnit);
+    }
+
+    m_FrameInfoQueue.enqueue(du);
+
+    m_FramesIn++;
+    return SubmitDecodeUnitResult::Ok;
+}
+
+FFmpegVideoDecoder::SubmitDecodeUnitResult FFmpegVideoDecoder::submitPendingDecodeUnit()
+{
+    SDL_assert(m_HasPendingDecodeUnit);
+    return sendCurrentPacket(m_PendingDecodeUnit);
+}
+
 int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
 {
     PLENTRY entry = du->bufferList;
-    int err;
 
     SDL_assert(m_CurrentTestMode != TestMode::TestFrameOnly);
+    SDL_assert(!m_HasPendingDecodeUnit);
 
     // If this is the first frame, reject anything that's not an IDR frame
     if (m_FramesIn == 0 && du->frameType != FRAME_TYPE_IDR) {
@@ -2083,8 +2171,10 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
 
     m_BwTracker.AddBytes(du->fullLength);
 
+    uint64_t nowUs = LiGetMicroseconds();
+
     // Flip stats windows roughly every second
-    if (LiGetMicroseconds() > m_ActiveWndVideoStats.measurementStartUs + 1000000) {
+    if (nowUs > m_ActiveWndVideoStats.measurementStartUs + 1000000) {
         // Update overlay stats if it's enabled
         if (Session::get()->getOverlayManager().isOverlayEnabled(Overlay::OverlayDebug)) {
             VIDEO_STATS lastTwoWndStats = {};
@@ -2103,7 +2193,7 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
         // Move this window into the last window slot and clear it for next window
         SDL_memcpy(&m_LastWndVideoStats, &m_ActiveWndVideoStats, sizeof(m_ActiveWndVideoStats));
         SDL_zero(m_ActiveWndVideoStats);
-        m_ActiveWndVideoStats.measurementStartUs = LiGetMicroseconds();
+        m_ActiveWndVideoStats.measurementStartUs = nowUs;
     }
 
     if (du->frameHostProcessingLatency != 0) {
@@ -2127,14 +2217,17 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
         requiredBufferSize += MAX_SPS_EXTRA_SIZE;
     }
 
-    // Ensure the decoder buffer is large enough
-    m_DecodeBuffer.reserve(requiredBufferSize + AV_INPUT_BUFFER_PADDING_SIZE);
+    // Ensure the decoder buffer is large enough before writes below.
+    if (m_DecodeBuffer.size() < requiredBufferSize + AV_INPUT_BUFFER_PADDING_SIZE) {
+        m_DecodeBuffer.resize(requiredBufferSize + AV_INPUT_BUFFER_PADDING_SIZE);
+    }
 
     int offset = 0;
     while (entry != nullptr) {
         writeBuffer(entry, offset);
         entry = entry->next;
     }
+    SDL_memset(&m_DecodeBuffer.data()[offset], 0, AV_INPUT_BUFFER_PADDING_SIZE);
 
     m_Pkt->data = reinterpret_cast<uint8_t*>(m_DecodeBuffer.data());
     m_Pkt->size = offset;
@@ -2148,36 +2241,10 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
 
     m_ActiveWndVideoStats.totalReassemblyTimeUs += (du->enqueueTimeUs - du->receiveTimeUs);
 
-    err = avcodec_send_packet(m_VideoDecoderCtx, m_Pkt);
-    if (err < 0) {
-        char errorstring[512];
-        av_strerror(err, errorstring, sizeof(errorstring));
-        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                    "avcodec_send_packet() failed: %s (frame %d)",
-                    errorstring,
-                    du->frameNumber);
-
-        // If we've failed a bunch of decodes in a row, the decoder/renderer is
-        // clearly unhealthy, so let's generate a synthetic reset event to trigger
-        // the event loop to destroy and recreate the decoder.
-        if (++m_ConsecutiveFailedDecodes == FAILED_DECODES_RESET_THRESHOLD) {
-            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                         "Resetting decoder due to consistent failure");
-
-            SDL_Event event;
-            event.type = SDL_RENDER_DEVICE_RESET;
-            SDL_PushEvent(&event);
-
-            // Don't consume any additional data
-            SDL_AtomicSet(&m_DecoderThreadShouldQuit, 1);
-        }
-
+    SubmitDecodeUnitResult result = sendCurrentPacket(*du);
+    if (result == SubmitDecodeUnitResult::NeedIdr) {
         return DR_NEED_IDR;
     }
-
-    m_FrameInfoQueue.enqueue(*du);
-
-    m_FramesIn++;
     return DR_OK;
 }
 

@@ -45,6 +45,12 @@ private:
         TestFrame
     };
 
+    enum class SubmitDecodeUnitResult {
+        Ok,
+        NeedIdr,
+        TryAgain
+    };
+
     bool completeInitialization(const AVCodec* decoder,
                                 enum AVPixelFormat requiredFormat,
                                 PDECODER_PARAMETERS params,
@@ -99,6 +105,10 @@ private:
 
     void writeBuffer(PLENTRY entry, int& offset);
 
+    SubmitDecodeUnitResult sendCurrentPacket(const DECODE_UNIT& du);
+
+    SubmitDecodeUnitResult submitPendingDecodeUnit();
+
     static
     enum AVPixelFormat ffGetFormat(AVCodecContext* context,
                                    const enum AVPixelFormat* pixFmts);
@@ -125,6 +135,7 @@ private:
 
     int m_FramesIn;
     int m_FramesOut;
+    DECODE_UNIT m_PendingDecodeUnit;
 
     int m_LastFrameNumber;
     int m_StreamFps;
@@ -133,6 +144,7 @@ private:
     int m_VideoFormat;
     bool m_NeedsSpsFixup;
     bool m_TestOnly;
+    bool m_HasPendingDecodeUnit;
     TestMode m_CurrentTestMode;
     SDL_Thread* m_DecoderThread;
     SDL_atomic_t m_DecoderThreadShouldQuit;
