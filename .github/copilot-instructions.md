@@ -36,7 +36,7 @@ flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flath
 
 Do not replace `/usr/bin/appstream-compose` with `/usr/libexec/appstreamcli-compose`. They are not CLI-compatible: `flatpak-builder` may pass old `appstream-compose` options such as `--basename`, which `appstreamcli-compose` rejects.
 
-The `PKG_CONFIG_PATH` override in the generated local manifest is required because libplacebo installs `libplacebo.pc` under `/app/lib64/pkgconfig` in the KDE SDK. Without it, qmake may miss libplacebo and build Moonlight without the Vulkan renderer, which disables the HDR toggle on Steam Deck. The `QMAKE_RPATHDIR+=/app/lib64` option is also required because the libplacebo shared library is installed under `/app/lib64`; without it, the Flatpak can fail at launch with `libplacebo.so.360: cannot open shared object file`.
+The `PKG_CONFIG_PATH` override in the generated local manifest is required because libplacebo installs `libplacebo.pc` under `/app/lib64/pkgconfig` in the KDE SDK. Without it, qmake may miss libplacebo and build Moonlight without the Vulkan renderer, which disables the HDR toggle on Steam Deck. The `QMAKE_RPATHDIR+=/app/lib64` option is also required because the libplacebo shared library is installed under `/app/lib64`; without it, the Flatpak can fail at launch with `libplacebo.so.360: cannot open shared object file`. Force `SDL_AUDIODRIVER=pulseaudio` in the Flatpak environment because this manifest grants the PulseAudio socket, and SteamOS exposes PulseAudio-compatible audio through pipewire-pulse; otherwise SDL may select a backend that is not available inside the sandbox.
 
 Build the current checkout with the Flathub manifest:
 
@@ -90,6 +90,7 @@ rm -rf build-dir repo .flatpak-builder/build/moonlight
         --device=all \
         --talk-name=org.freedesktop.ScreenSaver \
         --env=IGNORE_RFI_LATENCY_BUG=1 \
+        --env=SDL_AUDIODRIVER=pulseaudio \
         --env=QT_QUICK_CONTROLS_STYLE=Material \
         --env=LIBVA_DRIVER_NAME= \
         --unset-env=LIBVA_DRIVER_NAME \
