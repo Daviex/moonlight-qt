@@ -1,7 +1,9 @@
 #include "nvpairingmanager.h"
 #include "utils.h"
 
+#include <memory>
 #include <stdexcept>
+#include <string>
 
 #include <openssl/bio.h>
 #include <openssl/rand.h>
@@ -10,6 +12,57 @@
 #include <openssl/evp.h>
 
 #define REQUEST_TIMEOUT_MS 5000
+
+namespace {
+    void checkOpenSslResult(int result, const char* operation)
+    {
+        if (result != 1) {
+            throw std::runtime_error(std::string(operation) + " failed");
+        }
+    }
+
+    void checkOpenSslLength(int actualLength, int expectedLength, const char* operation)
+    {
+        if (actualLength != expectedLength) {
+            throw std::runtime_error(std::string(operation) + " produced unexpected length");
+        }
+    }
+
+    void checkMinimumSize(const QByteArray& data, int minimumLength, const char* fieldName)
+    {
+        if (data.length() < minimumLength) {
+            throw std::runtime_error(std::string(fieldName) + " is shorter than expected");
+        }
+    }
+
+    struct EvpCipherCtxDeleter {
+        void operator()(EVP_CIPHER_CTX* ctx) const
+        {
+            EVP_CIPHER_CTX_free(ctx);
+        }
+    };
+
+    struct EvpMdCtxDeleter {
+        void operator()(EVP_MD_CTX* ctx) const
+        {
+            EVP_MD_CTX_destroy(ctx);
+        }
+    };
+
+    struct EvpPkeyDeleter {
+        void operator()(EVP_PKEY* key) const
+        {
+            EVP_PKEY_free(key);
+        }
+    };
+
+    struct X509Deleter {
+        void operator()(X509* cert) const
+        {
+            X509_free(cert);
+        }
+    };
+}
 
 NvPairingManager::NvPairingManager(NvComputer* computer) :
     m_Http(computer)
@@ -46,32 +99,34 @@ NvPairingManager::~NvPairingManager()
 QByteArray
 NvPairingManager::generateRandomBytes(int length)
 {
-    char* data = static_cast<char*>(alloca(length));
-    RAND_bytes(reinterpret_cast<unsigned char*>(data), length);
-    return QByteArray(data, length);
+    QByteArray data(length, 0);
+    checkOpenSslResult(RAND_bytes(reinterpret_cast<unsigned char*>(data.data()), data.length()),
+                       "RAND_bytes");
+    return data;
 }
 
 QByteArray
 NvPairingManager::encrypt(const QByteArray& plaintext, const QByteArray& key)
 {
     QByteArray ciphertext(plaintext.size(), 0);
-    EVP_CIPHER_CTX* cipher;
     int ciphertextLen;
 
-    cipher = EVP_CIPHER_CTX_new();
-    THROW_BAD_ALLOC_IF_NULL(cipher);
+    std::unique_ptr<EVP_CIPHER_CTX, EvpCipherCtxDeleter> cipher(EVP_CIPHER_CTX_new());
+    THROW_BAD_ALLOC_IF_NULL(cipher.get());
 
-    EVP_EncryptInit(cipher, EVP_aes_128_ecb(), reinterpret_cast<const unsigned char*>(key.data()), NULL);
-    EVP_CIPHER_CTX_set_padding(cipher, 0);
+    checkOpenSslResult(EVP_EncryptInit(cipher.get(), EVP_aes_128_ecb(), reinterpret_cast<const unsigned char*>(key.data()), NULL),
+                       "EVP_EncryptInit");
+    checkOpenSslResult(EVP_CIPHER_CTX_set_padding(cipher.get(), 0),
+                       "EVP_CIPHER_CTX_set_padding");
 
-    EVP_EncryptUpdate(cipher,
-                      reinterpret_cast<unsigned char*>(ciphertext.data()),
-                      &ciphertextLen,
-                      reinterpret_cast<const unsigned char*>(plaintext.data()),
-                      plaintext.length());
+    checkOpenSslResult(EVP_EncryptUpdate(cipher.get(),
+                       reinterpret_cast<unsigned char*>(ciphertext.data()),
+                       &ciphertextLen,
+                       reinterpret_cast<const unsigned char*>(plaintext.data()),
+                       plaintext.length()),
+                       "EVP_EncryptUpdate");
+    checkOpenSslLength(ciphertextLen, ciphertext.length(), "EVP_EncryptUpdate");
     Q_ASSERT(ciphertextLen == ciphertext.length());
-
-    EVP_CIPHER_CTX_free(cipher);
 
     return ciphertext;
 }
@@ -80,23 +135,24 @@ QByteArray
 NvPairingManager::decrypt(const QByteArray& ciphertext, const QByteArray& key)
 {
     QByteArray plaintext(ciphertext.size(), 0);
-    EVP_CIPHER_CTX* cipher;
     int plaintextLen;
 
-    cipher = EVP_CIPHER_CTX_new();
-    THROW_BAD_ALLOC_IF_NULL(cipher);
+    std::unique_ptr<EVP_CIPHER_CTX, EvpCipherCtxDeleter> cipher(EVP_CIPHER_CTX_new());
+    THROW_BAD_ALLOC_IF_NULL(cipher.get());
 
-    EVP_DecryptInit(cipher, EVP_aes_128_ecb(), reinterpret_cast<const unsigned char*>(key.data()), NULL);
-    EVP_CIPHER_CTX_set_padding(cipher, 0);
+    checkOpenSslResult(EVP_DecryptInit(cipher.get(), EVP_aes_128_ecb(), reinterpret_cast<const unsigned char*>(key.data()), NULL),
+                       "EVP_DecryptInit");
+    checkOpenSslResult(EVP_CIPHER_CTX_set_padding(cipher.get(), 0),
+                       "EVP_CIPHER_CTX_set_padding");
 
-    EVP_DecryptUpdate(cipher,
-                      reinterpret_cast<unsigned char*>(plaintext.data()),
-                      &plaintextLen,
-                      reinterpret_cast<const unsigned char*>(ciphertext.data()),
-                      ciphertext.length());
+    checkOpenSslResult(EVP_DecryptUpdate(cipher.get(),
+                       reinterpret_cast<unsigned char*>(plaintext.data()),
+                       &plaintextLen,
+                       reinterpret_cast<const unsigned char*>(ciphertext.data()),
+                       ciphertext.length()),
+                       "EVP_DecryptUpdate");
+    checkOpenSslLength(plaintextLen, plaintext.length(), "EVP_DecryptUpdate");
     Q_ASSERT(plaintextLen == plaintext.length());
-
-    EVP_CIPHER_CTX_free(cipher);
 
     return plaintext;
 }
@@ -104,6 +160,10 @@ NvPairingManager::decrypt(const QByteArray& ciphertext, const QByteArray& key)
 QByteArray
 NvPairingManager::getSignatureFromCert(X509* cert)
 {
+    if (cert == nullptr) {
+        throw std::runtime_error("Certificate is unreadable");
+    }
+
 #if (OPENSSL_VERSION_NUMBER < 0x10002000L)
     ASN1_BIT_STRING *asnSignature = cert->signature;
 #elif (OPENSSL_VERSION_NUMBER < 0x10100000L)
@@ -113,6 +173,9 @@ NvPairingManager::getSignatureFromCert(X509* cert)
     const ASN1_BIT_STRING *asnSignature;
     X509_get0_signature(&asnSignature, NULL, cert);
 #endif
+    if (asnSignature == nullptr) {
+        throw std::runtime_error("Certificate signature is unreadable");
+    }
 
     return QByteArray(
 #if (OPENSSL_VERSION_NUMBER < 0x10100000L)
@@ -134,13 +197,10 @@ NvPairingManager::getSignatureFromPemCert(const QByteArray& certificate)
 #endif
     THROW_BAD_ALLOC_IF_NULL(bio);
 
-    X509* cert = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr);
+    std::unique_ptr<X509, X509Deleter> cert(PEM_read_bio_X509(bio, nullptr, nullptr, nullptr));
     BIO_free_all(bio);
 
-    QByteArray signature = getSignatureFromCert(cert);
-    X509_free(cert);
-
-    return signature;
+    return getSignatureFromCert(cert.get());
 }
 
 bool
@@ -153,22 +213,26 @@ NvPairingManager::verifySignature(const QByteArray& data, const QByteArray& sign
 #endif
     THROW_BAD_ALLOC_IF_NULL(bio);
 
-    X509* cert = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr);
+    std::unique_ptr<X509, X509Deleter> cert(PEM_read_bio_X509(bio, nullptr, nullptr, nullptr));
     BIO_free_all(bio);
+    if (cert == nullptr) {
+        return false;
+    }
 
-    EVP_PKEY* pubKey = X509_get_pubkey(cert);
-    THROW_BAD_ALLOC_IF_NULL(pubKey);
+    std::unique_ptr<EVP_PKEY, EvpPkeyDeleter> pubKey(X509_get_pubkey(cert.get()));
+    THROW_BAD_ALLOC_IF_NULL(pubKey.get());
 
-    EVP_MD_CTX* mdctx = EVP_MD_CTX_create();
-    THROW_BAD_ALLOC_IF_NULL(mdctx);
+    std::unique_ptr<EVP_MD_CTX, EvpMdCtxDeleter> mdctx(EVP_MD_CTX_create());
+    THROW_BAD_ALLOC_IF_NULL(mdctx.get());
 
-    EVP_DigestVerifyInit(mdctx, nullptr, EVP_sha256(), nullptr, pubKey);
-    EVP_DigestVerifyUpdate(mdctx, data.data(), data.length());
-    int result = EVP_DigestVerifyFinal(mdctx, reinterpret_cast<unsigned char*>(const_cast<char*>(signature.data())), signature.length());
-
-    EVP_PKEY_free(pubKey);
-    EVP_MD_CTX_destroy(mdctx);
-    X509_free(cert);
+    checkOpenSslResult(EVP_DigestVerifyInit(mdctx.get(), nullptr, EVP_sha256(), nullptr, pubKey.get()),
+                       "EVP_DigestVerifyInit");
+    checkOpenSslResult(EVP_DigestVerifyUpdate(mdctx.get(), data.data(), data.length()),
+                       "EVP_DigestVerifyUpdate");
+    int result = EVP_DigestVerifyFinal(mdctx.get(), reinterpret_cast<unsigned char*>(const_cast<char*>(signature.data())), signature.length());
+    if (result < 0) {
+        throw std::runtime_error("EVP_DigestVerifyFinal failed");
+    }
 
     return result > 0;
 }
@@ -176,19 +240,22 @@ NvPairingManager::verifySignature(const QByteArray& data, const QByteArray& sign
 QByteArray
 NvPairingManager::signMessage(const QByteArray& message)
 {
-    EVP_MD_CTX *ctx = EVP_MD_CTX_create();
-    THROW_BAD_ALLOC_IF_NULL(ctx);
+    std::unique_ptr<EVP_MD_CTX, EvpMdCtxDeleter> ctx(EVP_MD_CTX_create());
+    THROW_BAD_ALLOC_IF_NULL(ctx.get());
 
-    EVP_DigestSignInit(ctx, NULL, EVP_sha256(), NULL, m_PrivateKey);
-    EVP_DigestSignUpdate(ctx, reinterpret_cast<unsigned char*>(const_cast<char*>(message.data())), message.length());
+    checkOpenSslResult(EVP_DigestSignInit(ctx.get(), NULL, EVP_sha256(), NULL, m_PrivateKey),
+                       "EVP_DigestSignInit");
+    checkOpenSslResult(EVP_DigestSignUpdate(ctx.get(), reinterpret_cast<unsigned char*>(const_cast<char*>(message.data())), message.length()),
+                       "EVP_DigestSignUpdate");
 
     size_t signatureLength = 0;
-    EVP_DigestSignFinal(ctx, NULL, &signatureLength);
+    checkOpenSslResult(EVP_DigestSignFinal(ctx.get(), NULL, &signatureLength),
+                       "EVP_DigestSignFinal");
 
     QByteArray signature((int)signatureLength, 0);
-    EVP_DigestSignFinal(ctx, reinterpret_cast<unsigned char*>(signature.data()), &signatureLength);
-
-    EVP_MD_CTX_destroy(ctx);
+    checkOpenSslResult(EVP_DigestSignFinal(ctx.get(), reinterpret_cast<unsigned char*>(signature.data()), &signatureLength),
+                       "EVP_DigestSignFinal");
+    signature.resize((int)signatureLength);
 
     return signature;
 }
@@ -274,7 +341,10 @@ NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverC
         return PairState::FAILED;
     }
 
-    QByteArray challengeResponseData = decrypt(m_Http.getXmlStringFromHex(challengeXml, "challengeresponse"), aesKey);
+    QByteArray encryptedChallengeResponse = m_Http.getXmlStringFromHex(challengeXml, "challengeresponse");
+    checkMinimumSize(encryptedChallengeResponse, hashLength + 16, "challengeresponse");
+    QByteArray challengeResponseData = decrypt(encryptedChallengeResponse, aesKey);
+    checkMinimumSize(challengeResponseData, hashLength + 16, "decrypted challengeresponse");
     QByteArray clientSecretData = generateRandomBytes(16);
     QByteArray challengeResponse;
     QByteArray serverResponse(challengeResponseData.data(), hashLength);
@@ -300,6 +370,7 @@ NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverC
     }
 
     QByteArray pairingSecret = NvHTTP::getXmlStringFromHex(respXml, "pairingsecret");
+    checkMinimumSize(pairingSecret, 16, "pairingsecret");
     QByteArray serverSecret = pairingSecret.left(16);
     QByteArray serverSignature = pairingSecret.mid(16);
 

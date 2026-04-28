@@ -625,6 +625,9 @@ private:
             emit pairingCompleted(m_Computer, tr("GeForce Experience returned error: %1").arg(e.toQString()));
         } catch (const QtNetworkReplyException& e) {
             emit pairingCompleted(m_Computer, e.toQString());
+        } catch (const std::exception& e) {
+            qWarning() << "Pairing failed:" << e.what();
+            emit pairingCompleted(m_Computer, tr("Pairing failed. Please try again."));
         }
     }
 

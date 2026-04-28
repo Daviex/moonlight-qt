@@ -421,6 +421,7 @@ void NvHTTP::handleSslErrors(QNetworkReply* reply, const QList<QSslError>& error
     if (m_ServerCert.isNull()) {
         // We should never make an HTTPS request without a cert
         Q_ASSERT(!m_ServerCert.isNull());
+        qWarning() << "Refusing to ignore SSL errors without a pinned certificate";
         return;
     }
 
@@ -468,7 +469,12 @@ NvHTTP::openConnection(QUrl baseUrl,
                        NvLogLevel logLevel)
 {
     // Port must be set
-    Q_ASSERT(baseUrl.port(0) != 0);
+    if (baseUrl.port(0) == 0) {
+        Q_ASSERT(baseUrl.port(0) != 0);
+        qWarning() << "Refusing to make request without a port:" << command;
+        throw QtNetworkReplyException(QNetworkReply::ProtocolInvalidOperationError,
+                                      tr("Missing port in request URL"));
+    }
 
     // Build a URL for the request
     QUrl url(baseUrl);
