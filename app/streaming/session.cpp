@@ -263,6 +263,12 @@ void Session::clSetAdaptiveTriggers(uint16_t controllerNumber, uint8_t eventFlag
     // Based on the following SDL code:
     // https://github.com/libsdl-org/SDL/blob/120c76c84bbce4c1bfed4e9eb74e10678bd83120/test/testgamecontroller.c#L286-L307
     DualSenseOutputReport *state = (DualSenseOutputReport *) SDL_malloc(sizeof(DualSenseOutputReport));
+    if (state == nullptr) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "Failed to allocate adaptive trigger state");
+        return;
+    }
+
     SDL_zero(*state);
     state->validFlag0 = (eventFlags & DS_EFFECT_RIGHT_TRIGGER) | (eventFlags & DS_EFFECT_LEFT_TRIGGER);
     state->rightTriggerEffectType = typeRight;
@@ -271,7 +277,9 @@ void Session::clSetAdaptiveTriggers(uint16_t controllerNumber, uint8_t eventFlag
     SDL_memcpy(state->leftTriggerEffect, left, sizeof(state->leftTriggerEffect));
 
     setControllerLEDEvent.user.data2 = (void *) state;
-    SDL_PushEvent(&setControllerLEDEvent);
+    if (SDL_PushEvent(&setControllerLEDEvent) != 1) {
+        SDL_free(state);
+    }
 }
 
 

@@ -155,7 +155,7 @@ NvHTTP::getServerInfo(NvLogLevel logLevel, bool fastFail)
             else
             {
                 // Rethrow real errors
-                throw e;
+                throw;
             }
         }
     }

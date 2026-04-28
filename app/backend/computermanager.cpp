@@ -810,7 +810,7 @@ private:
                 }
                 else {
                     // Rethrow other errors
-                    throw e;
+                    throw;
                 }
             }
             return serverInfo;

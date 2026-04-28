@@ -249,7 +249,7 @@ void SdlInputHandler::handleKeyEvent(SDL_KeyboardEvent* event)
             case SDL_SCANCODE_CLEAR:
                 keyCode = 0x0C;
                 break;
-            case SDL_SCANCODE_KP_ENTER: // FIXME: Is this correct?
+            case SDL_SCANCODE_KP_ENTER: // FIXME: Preserve keypad-enter separately if the protocol gains extended-key metadata.
             case SDL_SCANCODE_RETURN:
                 keyCode = 0x0D;
                 break;

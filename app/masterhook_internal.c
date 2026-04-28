@@ -177,13 +177,14 @@ int openHook(typeof(open) *real_open, typeof(close) *real_close, const char *pat
                 // Get a free index for us to put the new entry
                 freeFdIndex = getSdlFdEntryIndex(true);
                 if (freeFdIndex < 0) {
+                    real_close(fd);
                     pthread_mutex_unlock(&g_FdTableLock);
                     unlockDrmMaster();
                     SDL_assert(freeFdIndex >= 0);
                     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                                 "No unused SDL FD table entries!");
-                    // Hope for the best
-                    return fd;
+                                  "No unused SDL FD table entries!");
+                    errno = EMFILE;
+                    return -1;
                 }
 
                 // Check if we have an allocated entry already
@@ -198,13 +199,15 @@ int openHook(typeof(open) *real_open, typeof(close) *real_close, const char *pat
                 else {
                     // Drop master on Qt's FD so we can pick it up for SDL.
                     if (drmDropMaster(g_QtDrmMasterFd) < 0) {
+                        int savedErrno = errno;
+                        real_close(fd);
                         pthread_mutex_unlock(&g_FdTableLock);
                         unlockDrmMaster();
                         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                                      "Failed to drop master on Qt DRM FD: %d",
-                                     errno);
-                        // Hope for the best
-                        return fd;
+                                     savedErrno);
+                        errno = savedErrno;
+                        return -1;
                     }
 
                     // Close fd that we opened earlier (skipping our close() hook)
@@ -221,14 +224,39 @@ int openHook(typeof(open) *real_open, typeof(close) *real_close, const char *pat
                     }
                 }
 
-                if (fd >= 0) {
-                    // Start with DRM master on the new FD
-                    drmSetMaster(fd);
-
-                    // Insert the FD into the table
-                    g_SdlDrmMasterFds[freeFdIndex] = fd;
-                    g_SdlDrmMasterFdCount++;
+                if (fd < 0) {
+                    int savedErrno = errno;
+                    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                                 "Failed to open tracked SDL DRM FD: %d",
+                                 savedErrno);
+                    if (allocatedFdIndex < 0) {
+                        drmSetMaster(g_QtDrmMasterFd);
+                    }
+                    pthread_mutex_unlock(&g_FdTableLock);
+                    unlockDrmMaster();
+                    errno = savedErrno;
+                    return -1;
                 }
+
+                // Start with DRM master on the new FD
+                if (drmSetMaster(fd) < 0) {
+                    int savedErrno = errno;
+                    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                                 "Failed to set master on SDL DRM FD: %d",
+                                 savedErrno);
+                    real_close(fd);
+                    if (allocatedFdIndex < 0) {
+                        drmSetMaster(g_QtDrmMasterFd);
+                    }
+                    pthread_mutex_unlock(&g_FdTableLock);
+                    unlockDrmMaster();
+                    errno = savedErrno;
+                    return -1;
+                }
+
+                // Insert the FD into the table
+                g_SdlDrmMasterFds[freeFdIndex] = fd;
+                g_SdlDrmMasterFdCount++;
 
                 pthread_mutex_unlock(&g_FdTableLock);
 
