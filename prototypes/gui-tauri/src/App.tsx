@@ -271,6 +271,9 @@ function boxArtSrc(app: AppEntry) {
   if (!app.boxArtUrl || app.boxArtUrl.startsWith('qrc:')) {
     return '';
   }
+  if (app.boxArtUrl.startsWith('data:image/')) {
+    return app.boxArtUrl;
+  }
 
   try {
     const url = new URL(app.boxArtUrl);

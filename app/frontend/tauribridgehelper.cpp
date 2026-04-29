@@ -8,6 +8,7 @@
 #include <QDesktopServices>
 #include <QCoreApplication>
 #include <QEventLoop>
+#include <QFile>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -217,6 +218,22 @@ static bool validateDefaultBitratePayload(const QJsonObject& payload, QString& e
     }
 
     return true;
+}
+
+static QString boxArtUrlForTauri(const QUrl& boxArtUrl)
+{
+    if (!boxArtUrl.isLocalFile()) {
+        return boxArtUrl.toString();
+    }
+
+    QFile boxArtFile(boxArtUrl.toLocalFile());
+    if (!boxArtFile.open(QIODevice::ReadOnly)) {
+        qWarning() << "Failed to open box art file for Tauri:" << boxArtFile.fileName();
+        return QString();
+    }
+
+    return QStringLiteral("data:image/png;base64,") +
+           QString::fromLatin1(boxArtFile.readAll().toBase64());
 }
 
 #ifdef Q_OS_WIN
@@ -1299,7 +1316,7 @@ QJsonObject TauriBridgeHelper::appToJson(const FrontendApp& app) const
     return {
         {"id", QString::number(app.appId)},
         {"name", app.name},
-        {"boxArtUrl", app.boxArt.toString()},
+        {"boxArtUrl", boxArtUrlForTauri(app.boxArt)},
         {"hidden", app.hidden},
         {"directLaunch", app.directLaunch},
         {"running", app.running},
