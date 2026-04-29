@@ -18,6 +18,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSize>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStringList>
 #include <QTimer>
@@ -271,6 +272,7 @@ void GuiNextWindow::buildSettingsPage()
     m_BitrateSpinBox = new QSpinBox(page);
     m_BitrateSpinBox->setRange(500, 500000);
     m_BitrateSpinBox->setSuffix(tr(" Kbps"));
+    m_DefaultBitrateButton = new QPushButton(page);
     m_PacketSizeSpinBox = new QSpinBox(page);
     m_PacketSizeSpinBox->setRange(0, 9000);
     m_PacketSizeSpinBox->setSpecialValueText(tr("Automatic"));
@@ -354,6 +356,7 @@ void GuiNextWindow::buildSettingsPage()
     form->addRow(tr("Height"), m_HeightSpinBox);
     form->addRow(tr("FPS"), m_FpsSpinBox);
     form->addRow(tr("Bitrate"), m_BitrateSpinBox);
+    form->addRow(QString(), m_DefaultBitrateButton);
     form->addRow(tr("Packet size"), m_PacketSizeSpinBox);
     form->addRow(tr("Audio"), m_AudioConfigComboBox);
     form->addRow(tr("Video codec"), m_VideoCodecComboBox);
@@ -400,6 +403,20 @@ void GuiNextWindow::buildSettingsPage()
 
     connect(backButton, &QPushButton::clicked, this, &GuiNextWindow::showHostsPage);
     connect(saveButton, &QPushButton::clicked, this, &GuiNextWindow::saveSettings);
+    connect(m_DefaultBitrateButton, &QPushButton::clicked, this, &GuiNextWindow::resetBitrateToDefault);
+    connect(m_BitrateSpinBox, qOverload<int>(&QSpinBox::valueChanged), this, &GuiNextWindow::handleBitrateEdited);
+    connect(m_WidthSpinBox, qOverload<int>(&QSpinBox::valueChanged), this, &GuiNextWindow::handleStreamingShapeChanged);
+    connect(m_HeightSpinBox, qOverload<int>(&QSpinBox::valueChanged), this, &GuiNextWindow::handleStreamingShapeChanged);
+    connect(m_FpsSpinBox, qOverload<int>(&QSpinBox::valueChanged), this, &GuiNextWindow::handleStreamingShapeChanged);
+    connect(m_Yuv444CheckBox, &QCheckBox::toggled, this, &GuiNextWindow::handleStreamingShapeChanged);
+    connect(m_AutoAdjustBitrateCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
+        if (!m_LoadingSettings && checked) {
+            resetBitrateToDefault();
+        }
+        else {
+            updateDefaultBitrateButton();
+        }
+    });
 
     m_Stack->addWidget(page);
 }
@@ -752,6 +769,7 @@ void GuiNextWindow::addHost()
 void GuiNextWindow::showSettings()
 {
     FrontendStreamingPreferences preferences = m_Facade.preferences()->preferences();
+    m_LoadingSettings = true;
     m_WidthSpinBox->setValue(preferences.width);
     m_HeightSpinBox->setValue(preferences.height);
     m_FpsSpinBox->setValue(preferences.fps);
@@ -789,6 +807,8 @@ void GuiNextWindow::showSettings()
     m_KeepAwakeCheckBox->setChecked(preferences.keepAwake);
     m_HdrCheckBox->setChecked(preferences.enableHdr);
     m_Yuv444CheckBox->setChecked(preferences.enableYUV444);
+    m_LoadingSettings = false;
+    updateDefaultBitrateButton();
     m_ControllerAdapter.setUiNavMode(true);
     m_Stack->setCurrentIndex(SettingsPageIndex);
 }
@@ -868,6 +888,64 @@ void GuiNextWindow::saveSettings()
                                  tr("Restart Moonlight for the language change to fully take effect."));
     }
     showHostsPage();
+}
+
+void GuiNextWindow::handleStreamingShapeChanged()
+{
+    if (m_LoadingSettings) {
+        return;
+    }
+
+    if (m_AutoAdjustBitrateCheckBox->isChecked()) {
+        resetBitrateToDefault();
+        return;
+    }
+
+    updateDefaultBitrateButton();
+}
+
+void GuiNextWindow::handleBitrateEdited()
+{
+    if (m_LoadingSettings) {
+        return;
+    }
+
+    const int defaultBitrate = defaultBitrateForCurrentSettings();
+    if (m_BitrateSpinBox->value() != defaultBitrate && m_AutoAdjustBitrateCheckBox->isChecked()) {
+        QSignalBlocker blocker(m_AutoAdjustBitrateCheckBox);
+        m_AutoAdjustBitrateCheckBox->setChecked(false);
+    }
+    updateDefaultBitrateButton();
+}
+
+void GuiNextWindow::resetBitrateToDefault()
+{
+    const int defaultBitrate = defaultBitrateForCurrentSettings();
+    {
+        QSignalBlocker blocker(m_BitrateSpinBox);
+        m_BitrateSpinBox->setValue(defaultBitrate);
+    }
+    if (!m_AutoAdjustBitrateCheckBox->isChecked()) {
+        QSignalBlocker blocker(m_AutoAdjustBitrateCheckBox);
+        m_AutoAdjustBitrateCheckBox->setChecked(true);
+    }
+    updateDefaultBitrateButton();
+}
+
+int GuiNextWindow::defaultBitrateForCurrentSettings()
+{
+    return m_Facade.preferences()->getDefaultBitrate(m_WidthSpinBox->value(),
+                                                     m_HeightSpinBox->value(),
+                                                     m_FpsSpinBox->value(),
+                                                     m_Yuv444CheckBox->isChecked());
+}
+
+void GuiNextWindow::updateDefaultBitrateButton()
+{
+    const int defaultBitrate = defaultBitrateForCurrentSettings();
+    m_DefaultBitrateButton->setText(tr("Use Default (%1 Mbps)").arg(defaultBitrate / 1000.0));
+    m_DefaultBitrateButton->setEnabled(m_BitrateSpinBox->value() != defaultBitrate ||
+                                       !m_AutoAdjustBitrateCheckBox->isChecked());
 }
 
 void GuiNextWindow::showHostsPage()

@@ -55,6 +55,9 @@ private slots:
     void launchSelectedApp();
     void quitRunningApp();
     void handleQuitAppCompleted(const QString& error);
+    void handleStreamingShapeChanged();
+    void handleBitrateEdited();
+    void resetBitrateToDefault();
     void toggleSelectedAppHidden();
     void toggleSelectedAppDirectLaunch();
     void runStartupChecks();
@@ -73,6 +76,8 @@ private:
     void buildAppPage();
     void buildSettingsPage();
     void launchSession(Session* session, const QString& appName, bool isResume);
+    int defaultBitrateForCurrentSettings();
+    void updateDefaultBitrateButton();
     void setStatusText(const QString& text);
 
     QScopedPointer<ComputerManager> m_ComputerManager;
@@ -93,6 +98,7 @@ private:
     QSpinBox* m_HeightSpinBox = nullptr;
     QSpinBox* m_FpsSpinBox = nullptr;
     QSpinBox* m_BitrateSpinBox = nullptr;
+    QPushButton* m_DefaultBitrateButton = nullptr;
     QSpinBox* m_PacketSizeSpinBox = nullptr;
     QComboBox* m_AudioConfigComboBox = nullptr;
     QComboBox* m_VideoCodecComboBox = nullptr;
@@ -132,6 +138,7 @@ private:
     bool m_ConnectionTestInProgress = false;
     bool m_QuitInProgress = false;
     bool m_LaunchAfterQuit = false;
+    bool m_LoadingSettings = false;
     bool m_StartupChecksStarted = false;
     bool m_HardwareWarningShown = false;
     bool m_UnmappedGamepadWarningShown = false;
