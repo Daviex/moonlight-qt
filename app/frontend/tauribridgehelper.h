@@ -4,6 +4,7 @@
 #include "frontend/applicationfacade.h"
 
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QCoreApplication>
 
 class AppListFacade;
@@ -33,6 +34,8 @@ private:
     QJsonObject saveSettings(const QJsonObject& payload);
 
     QJsonObject status(const QString& message) const;
+    QJsonObject resultWithEvent(const QJsonValue& result, const QJsonObject& event) const;
+    QJsonObject bridgeEvent(const QString& kind, const QString& message, const QString& hostId = QString(), const QString& appId = QString()) const;
     QJsonObject hostToJson(const FrontendComputer& computer, int index) const;
     QJsonObject appToJson(const FrontendApp& app) const;
     QString hostStatus(const FrontendComputer& computer) const;

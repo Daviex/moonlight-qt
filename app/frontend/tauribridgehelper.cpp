@@ -49,7 +49,7 @@ TauriBridgeHelper::TauriBridgeHelper()
 
 int TauriBridgeHelper::run()
 {
-    auto processLine = [this](const QByteArray& rawLine) -> QByteArray {
+    auto processLine = [this](const QByteArray& rawLine) -> QVector<QByteArray> {
         const QString line = QString::fromUtf8(rawLine).trimmed();
         if (line.isEmpty()) {
             return {};
@@ -61,6 +61,7 @@ int TauriBridgeHelper::run()
         const int requestId = request.value("id").toInt();
         response.insert("id", requestId);
 
+        QJsonArray events;
         if (!requestDocument.isObject() || !request.value("command").isObject()) {
             response.insert("error", "Invalid bridge request.");
         }
@@ -72,10 +73,18 @@ int TauriBridgeHelper::run()
             }
             else {
                 response.insert("result", result.value("result"));
+                events = result.value("events").toArray();
             }
         }
 
-        return QJsonDocument(response).toJson(QJsonDocument::Compact);
+        QVector<QByteArray> lines;
+        lines.append(QJsonDocument(response).toJson(QJsonDocument::Compact));
+        for (const QJsonValue& event : events) {
+            if (event.isObject()) {
+                lines.append(QJsonDocument(QJsonObject{{"event", event.toObject()}}).toJson(QJsonDocument::Compact));
+            }
+        }
+        return lines;
     };
 
 #ifdef Q_OS_WIN
@@ -88,9 +97,11 @@ int TauriBridgeHelper::run()
 
     QByteArray line;
     while (readBridgeLine(inputHandle, line)) {
-        const QByteArray response = processLine(line);
-        if (!response.isEmpty() && !writeBridgeLine(outputHandle, response)) {
-            return 1;
+        const QVector<QByteArray> responses = processLine(line);
+        for (const QByteArray& response : responses) {
+            if (!response.isEmpty() && !writeBridgeLine(outputHandle, response)) {
+                return 1;
+            }
         }
     }
 #else
@@ -98,10 +109,12 @@ int TauriBridgeHelper::run()
     QTextStream output(stdout, QIODevice::WriteOnly);
 
     while (!input.atEnd()) {
-        const QByteArray response = processLine(input.readLine().toUtf8());
-        if (!response.isEmpty()) {
-            output << QString::fromUtf8(response) << Qt::endl;
-            output.flush();
+        const QVector<QByteArray> responses = processLine(input.readLine().toUtf8());
+        for (const QByteArray& response : responses) {
+            if (!response.isEmpty()) {
+                output << QString::fromUtf8(response) << Qt::endl;
+                output.flush();
+            }
         }
     }
 #endif
@@ -123,7 +136,10 @@ QJsonObject TauriBridgeHelper::handleCommand(const QJsonObject& command)
             return {{"error", "Host address is required."}};
         }
         m_ComputerManager.addNewHostManually(address);
-        return {{"result", QJsonObject{{"status", status(tr("Host add requested."))}, {"hostId", address}}}};
+        const QString message = tr("Host add requested.");
+        return resultWithEvent(
+            QJsonObject{{"status", status(message)}, {"hostId", address}},
+            bridgeEvent("hostChanged", message, address));
     }
     if (commandName == "pair_host") {
         return pairHost(payload);
@@ -226,10 +242,10 @@ QJsonObject TauriBridgeHelper::pairHost(const QJsonObject& payload)
 
     const QString pin = m_Facade.computers()->generatePinString();
     m_Facade.computers()->pairComputer(hostIndex, pin);
-    return {{"result", QJsonObject{
-                           {"pin", pin},
-                           {"message", tr("Enter PIN %1 on the host to complete pairing.").arg(pin)},
-                       }}};
+    const QString message = tr("Enter PIN %1 on the host to complete pairing.").arg(pin);
+    return resultWithEvent(
+        QJsonObject{{"pin", pin}, {"message", message}},
+        bridgeEvent("hostChanged", message, QString::number(hostIndex)));
 }
 
 QJsonObject TauriBridgeHelper::wakeHost(const QJsonObject& payload)
@@ -240,7 +256,8 @@ QJsonObject TauriBridgeHelper::wakeHost(const QJsonObject& payload)
     }
 
     m_Facade.computers()->wakeComputer(hostIndex);
-    return {{"result", status(tr("Wake requested."))}};
+    const QString message = tr("Wake requested.");
+    return resultWithEvent(status(message), bridgeEvent("hostChanged", message, QString::number(hostIndex)));
 }
 
 QJsonObject TauriBridgeHelper::renameHost(const QJsonObject& payload)
@@ -255,7 +272,8 @@ QJsonObject TauriBridgeHelper::renameHost(const QJsonObject& payload)
     }
 
     m_Facade.computers()->renameComputer(hostIndex, name);
-    return {{"result", status(tr("Host renamed."))}};
+    const QString message = tr("Host renamed.");
+    return resultWithEvent(status(message), bridgeEvent("hostChanged", message, QString::number(hostIndex)));
 }
 
 QJsonObject TauriBridgeHelper::deleteHost(const QJsonObject& payload)
@@ -266,7 +284,8 @@ QJsonObject TauriBridgeHelper::deleteHost(const QJsonObject& payload)
     }
 
     m_Facade.computers()->deleteComputer(hostIndex);
-    return {{"result", status(tr("Host deleted."))}};
+    const QString message = tr("Host deleted.");
+    return resultWithEvent(status(message), bridgeEvent("hostChanged", message, QString::number(hostIndex)));
 }
 
 QJsonObject TauriBridgeHelper::quitRunningApp(const QJsonObject& payload)
@@ -282,7 +301,8 @@ QJsonObject TauriBridgeHelper::quitRunningApp(const QJsonObject& payload)
     }
 
     appList->quitRunningApp();
-    return {{"result", status(tr("Quit requested for the running app."))}};
+    const QString message = tr("Quit requested for the running app.");
+    return resultWithEvent(status(message), bridgeEvent("sessionChanged", message, QString::number(hostIndex)));
 }
 
 QJsonObject TauriBridgeHelper::setAppHidden(const QJsonObject& payload)
@@ -299,7 +319,8 @@ QJsonObject TauriBridgeHelper::setAppHidden(const QJsonObject& payload)
     }
 
     appList->setAppHidden(appIndex, payload.value("hidden").toBool());
-    return {{"result", status(tr("App visibility updated."))}};
+    const QString message = tr("App visibility updated.");
+    return resultWithEvent(status(message), bridgeEvent("appChanged", message, QString::number(hostIndex), payload.value("app_id").toString()));
 }
 
 QJsonObject TauriBridgeHelper::setAppDirectLaunch(const QJsonObject& payload)
@@ -316,7 +337,8 @@ QJsonObject TauriBridgeHelper::setAppDirectLaunch(const QJsonObject& payload)
     }
 
     appList->setAppDirectLaunch(appIndex, payload.value("direct_launch").toBool());
-    return {{"result", status(tr("Direct-launch app updated."))}};
+    const QString message = tr("Direct-launch app updated.");
+    return resultWithEvent(status(message), bridgeEvent("appChanged", message, QString::number(hostIndex), payload.value("app_id").toString()));
 }
 
 QJsonObject TauriBridgeHelper::loadSettings()
@@ -344,12 +366,35 @@ QJsonObject TauriBridgeHelper::saveSettings(const QJsonObject& payload)
     preferences.gamepadMouse = settings.value("gamepadMouse").toBool(preferences.gamepadMouse);
 
     m_Facade.preferences()->applyPreferences(preferences, true);
-    return {{"result", status(tr("Settings saved."))}};
+    const QString message = tr("Settings saved.");
+    return resultWithEvent(status(message), bridgeEvent("settingsChanged", message));
 }
 
 QJsonObject TauriBridgeHelper::status(const QString& message) const
 {
     return {{"message", message}};
+}
+
+QJsonObject TauriBridgeHelper::resultWithEvent(const QJsonValue& result, const QJsonObject& event) const
+{
+    return {{"result", result}, {"events", QJsonArray{event}}};
+}
+
+QJsonObject TauriBridgeHelper::bridgeEvent(const QString& kind, const QString& message, const QString& hostId, const QString& appId) const
+{
+    QJsonObject event{
+        {"kind", kind},
+        {"message", message},
+    };
+
+    if (!hostId.isEmpty()) {
+        event.insert("hostId", hostId);
+    }
+    if (!appId.isEmpty()) {
+        event.insert("appId", appId);
+    }
+
+    return event;
 }
 
 QJsonObject TauriBridgeHelper::hostToJson(const FrontendComputer& computer, int index) const

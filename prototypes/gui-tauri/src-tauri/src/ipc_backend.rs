@@ -78,25 +78,33 @@ impl IpcBackend {
             .and_then(|_| self.stdin.flush())
             .map_err(|error| format!("Failed to send native helper request: {error}"))?;
 
-        let mut line = String::new();
-        let bytes_read = self
-            .stdout
-            .read_line(&mut line)
-            .map_err(|error| format!("Failed to read native helper response: {error}"))?;
-        if bytes_read == 0 {
-            return Err("Native helper exited before sending a response.".into());
-        }
+        loop {
+            let mut line = String::new();
+            let bytes_read = self
+                .stdout
+                .read_line(&mut line)
+                .map_err(|error| format!("Failed to read native helper response: {error}"))?;
+            if bytes_read == 0 {
+                return Err("Native helper exited before sending a response.".into());
+            }
 
-        let response: IpcResponse<R> = serde_json::from_str(&line)
-            .map_err(|error| format!("Failed to parse native helper response: {error}"))?;
-        if response.id != request_id {
-            return Err(format!(
-                "Native helper response ID mismatch: expected {request_id}, got {}.",
-                response.id
-            ));
-        }
+            let frame: serde_json::Value = serde_json::from_str(&line)
+                .map_err(|error| format!("Failed to parse native helper frame: {error}"))?;
+            if frame.get("event").is_some() {
+                continue;
+            }
 
-        response.into_result()
+            let response: IpcResponse<R> = serde_json::from_value(frame)
+                .map_err(|error| format!("Failed to parse native helper response: {error}"))?;
+            if response.id != request_id {
+                return Err(format!(
+                    "Native helper response ID mismatch: expected {request_id}, got {}.",
+                    response.id
+                ));
+            }
+
+            return response.into_result();
+        }
     }
 }
 
