@@ -10,13 +10,16 @@
 #include <QDesktopServices>
 #include <QFormLayout>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QInputDialog>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSize>
 #include <QSpinBox>
+#include <QStringList>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -42,6 +45,19 @@ namespace {
     int comboValue(QComboBox* comboBox)
     {
         return comboBox->currentData().toInt();
+    }
+
+    QString iconPathForUrl(const QUrl& url)
+    {
+        if (url.isLocalFile()) {
+            return url.toLocalFile();
+        }
+
+        if (url.scheme() == QStringLiteral("qrc")) {
+            return QStringLiteral(":") + url.path();
+        }
+
+        return url.toString();
     }
 }
 
@@ -132,6 +148,7 @@ void GuiNextWindow::buildHostPage()
     auto refreshButton = new QPushButton(tr("Refresh"), page);
     auto addButton = new QPushButton(tr("Add Host"), page);
     auto appsButton = new QPushButton(tr("Apps / Resume"), page);
+    auto allAppsButton = new QPushButton(tr("View All Apps"), page);
     auto pairButton = new QPushButton(tr("Pair"), page);
     auto wakeButton = new QPushButton(tr("Wake"), page);
     auto renameButton = new QPushButton(tr("Rename"), page);
@@ -140,6 +157,7 @@ void GuiNextWindow::buildHostPage()
     buttons->addWidget(refreshButton);
     buttons->addWidget(addButton);
     buttons->addWidget(appsButton);
+    buttons->addWidget(allAppsButton);
     buttons->addWidget(pairButton);
     buttons->addWidget(wakeButton);
     buttons->addWidget(renameButton);
@@ -154,6 +172,7 @@ void GuiNextWindow::buildHostPage()
     connect(refreshButton, &QPushButton::clicked, this, &GuiNextWindow::refreshHosts);
     connect(addButton, &QPushButton::clicked, this, &GuiNextWindow::addHost);
     connect(appsButton, &QPushButton::clicked, this, &GuiNextWindow::openSelectedHost);
+    connect(allAppsButton, &QPushButton::clicked, this, &GuiNextWindow::openSelectedHostAllApps);
     connect(pairButton, &QPushButton::clicked, this, &GuiNextWindow::pairSelectedHost);
     connect(wakeButton, &QPushButton::clicked, this, &GuiNextWindow::wakeSelectedHost);
     connect(renameButton, &QPushButton::clicked, this, &GuiNextWindow::renameSelectedHost);
@@ -172,6 +191,7 @@ void GuiNextWindow::buildAppPage()
     layout->addWidget(m_AppHeaderLabel);
 
     m_AppListWidget = new QListWidget(page);
+    m_AppListWidget->setIconSize(QSize(75, 100));
     connect(m_AppListWidget, &QListWidget::itemActivated,
             this, &GuiNextWindow::launchSelectedApp);
     connect(m_AppListWidget, &QListWidget::itemDoubleClicked,
@@ -182,8 +202,12 @@ void GuiNextWindow::buildAppPage()
     auto backButton = new QPushButton(tr("Back"), page);
     auto launchButton = new QPushButton(tr("Launch"), page);
     auto quitButton = new QPushButton(tr("Quit Running App"), page);
+    auto directLaunchButton = new QPushButton(tr("Toggle Direct Launch"), page);
+    auto hideButton = new QPushButton(tr("Hide / Unhide"), page);
     buttons->addWidget(backButton);
     buttons->addStretch();
+    buttons->addWidget(hideButton);
+    buttons->addWidget(directLaunchButton);
     buttons->addWidget(quitButton);
     buttons->addWidget(launchButton);
     layout->addLayout(buttons);
@@ -191,6 +215,8 @@ void GuiNextWindow::buildAppPage()
     connect(backButton, &QPushButton::clicked, this, &GuiNextWindow::showHostsPage);
     connect(launchButton, &QPushButton::clicked, this, &GuiNextWindow::launchSelectedApp);
     connect(quitButton, &QPushButton::clicked, this, &GuiNextWindow::quitRunningApp);
+    connect(hideButton, &QPushButton::clicked, this, &GuiNextWindow::toggleSelectedAppHidden);
+    connect(directLaunchButton, &QPushButton::clicked, this, &GuiNextWindow::toggleSelectedAppDirectLaunch);
 
     m_Stack->addWidget(page);
 }
@@ -377,6 +403,25 @@ void GuiNextWindow::openSelectedHost()
         return;
     }
 
+    openHost(index, false, true);
+}
+
+void GuiNextWindow::openSelectedHostAllApps()
+{
+    int index = selectedHostIndex();
+    if (index < 0) {
+        return;
+    }
+
+    openHost(index, true, false);
+}
+
+void GuiNextWindow::openHost(int index, bool showHiddenGames, bool allowDirectLaunch)
+{
+    if (index < 0) {
+        return;
+    }
+
     FrontendComputer computer = m_Facade.computers()->computerAt(index);
     if (computer.busy) {
         Session* session = m_Facade.computers()->createSessionForCurrentGame(index);
@@ -393,7 +438,7 @@ void GuiNextWindow::openSelectedHost()
     }
 
     m_CurrentComputerIndex = index;
-    m_AppList.reset(m_Facade.createAppList(index, false, this));
+    m_AppList.reset(m_Facade.createAppList(index, showHiddenGames, this));
     if (m_AppList == nullptr) {
         return;
     }
@@ -405,7 +450,17 @@ void GuiNextWindow::openSelectedHost()
         showHostsPage();
     });
 
-    m_AppHeaderLabel->setText(computer.name);
+    if (allowDirectLaunch) {
+        int directLaunchIndex = m_AppList->getDirectLaunchAppIndex();
+        if (directLaunchIndex >= 0 && m_AppList->getRunningAppId() == 0) {
+            FrontendApp app = m_AppList->appAt(directLaunchIndex);
+            Session* session = m_AppList->createSessionForApp(directLaunchIndex);
+            launchSession(session, app.name, false);
+            return;
+        }
+    }
+
+    m_AppHeaderLabel->setText(showHiddenGames ? tr("%1 - All Apps").arg(computer.name) : computer.name);
     refreshApps();
     m_ControllerAdapter.setUiNavMode(false);
     m_Stack->setCurrentIndex(AppPageIndex);
@@ -422,9 +477,25 @@ void GuiNextWindow::refreshApps()
     QVector<FrontendApp> apps = m_AppList->apps();
     for (int i = 0; i < apps.count(); i++) {
         const FrontendApp& app = apps.at(i);
-        QString suffix = app.running ? tr(" (running)") : QString();
+        QStringList tags;
+        if (app.running) {
+            tags.append(tr("running"));
+        }
+        if (app.hidden) {
+            tags.append(tr("hidden"));
+        }
+        if (app.directLaunch) {
+            tags.append(tr("direct launch"));
+        }
+        QString suffix = tags.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(tags.join(QStringLiteral(", ")));
         auto item = new QListWidgetItem(app.name + suffix);
+        if (!app.boxArt.isEmpty()) {
+            item->setIcon(QIcon(iconPathForUrl(app.boxArt)));
+        }
         item->setData(Qt::UserRole, i);
+        if (app.hidden) {
+            item->setForeground(Qt::gray);
+        }
         m_AppListWidget->addItem(item);
         if (i == selected) {
             m_AppListWidget->setCurrentItem(item);
@@ -634,6 +705,50 @@ void GuiNextWindow::quitRunningApp()
     if (m_AppList != nullptr) {
         m_AppList->quitRunningApp();
     }
+}
+
+void GuiNextWindow::toggleSelectedAppHidden()
+{
+    if (m_AppList == nullptr) {
+        return;
+    }
+
+    int appIndex = selectedAppIndex();
+    if (appIndex < 0) {
+        return;
+    }
+
+    FrontendApp app = m_AppList->appAt(appIndex);
+    if (!app.hidden && (app.running || app.directLaunch)) {
+        QMessageBox::information(this,
+                                 tr("Hide Game"),
+                                 tr("Running or direct-launch games cannot be hidden."));
+        return;
+    }
+
+    m_AppList->setAppHidden(appIndex, !app.hidden);
+}
+
+void GuiNextWindow::toggleSelectedAppDirectLaunch()
+{
+    if (m_AppList == nullptr) {
+        return;
+    }
+
+    int appIndex = selectedAppIndex();
+    if (appIndex < 0) {
+        return;
+    }
+
+    FrontendApp app = m_AppList->appAt(appIndex);
+    if (app.hidden) {
+        QMessageBox::information(this,
+                                 tr("Direct Launch"),
+                                 tr("Hidden games cannot be used for direct launch."));
+        return;
+    }
+
+    m_AppList->setAppDirectLaunch(appIndex, !app.directLaunch);
 }
 
 void GuiNextWindow::runStartupChecks()

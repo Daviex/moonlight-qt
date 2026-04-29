@@ -37,6 +37,7 @@ protected:
 private slots:
     void refreshHosts();
     void openSelectedHost();
+    void openSelectedHostAllApps();
     void pairSelectedHost();
     void wakeSelectedHost();
     void deleteSelectedHost();
@@ -48,6 +49,8 @@ private slots:
     void refreshApps();
     void launchSelectedApp();
     void quitRunningApp();
+    void toggleSelectedAppHidden();
+    void toggleSelectedAppDirectLaunch();
     void runStartupChecks();
     void handleHardwareAccelerationChanged();
     void handleUnmappedGamepadsChanged();
@@ -56,6 +59,7 @@ private slots:
 private:
     int selectedHostIndex() const;
     int selectedAppIndex() const;
+    void openHost(int index, bool showHiddenGames, bool allowDirectLaunch);
     void buildHostPage();
     void buildAppPage();
     void buildSettingsPage();
