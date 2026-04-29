@@ -141,8 +141,18 @@ TauriBridgeHelper::TauriBridgeHelper()
         setControllerNavigationEnabled(true);
         writeEventFrame(bridgeEvent("sessionChanged", tr("Stream session cleanup completed.")));
     });
+    QObject::connect(m_Facade.updates(), &UpdateFacade::updateAvailable,
+                     [this](const QString& newVersion, const QString& url) {
+        QJsonObject event = bridgeEvent(
+            "updateAvailable",
+            tr("Update available for Moonlight: Version %1").arg(newVersion));
+        event.insert("updateVersion", newVersion);
+        event.insert("updateUrl", url);
+        writeEventFrame(event);
+    });
 
     m_ComputerManager.startPolling();
+    m_Facade.updates()->start();
 }
 
 int TauriBridgeHelper::run()

@@ -104,7 +104,8 @@ export type BridgeEventKind =
   | 'sessionChanged'
   | 'settingsChanged'
   | 'status'
-  | 'controllerAction';
+  | 'controllerAction'
+  | 'updateAvailable';
 
 export interface BridgeEvent {
   kind: BridgeEventKind;
@@ -112,6 +113,8 @@ export interface BridgeEvent {
   hostId?: string;
   appId?: string;
   controllerAction?: ControllerAction;
+  updateVersion?: string;
+  updateUrl?: string;
 }
 
 export const BRIDGE_EVENT = 'moonlight-bridge-event';

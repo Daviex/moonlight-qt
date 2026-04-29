@@ -55,6 +55,8 @@ fn emit_bridge_event(
                 host_id,
                 app_id,
                 controller_action: None,
+                update_version: None,
+                update_url: None,
             },
         )
         .map_err(|error| error.to_string())
@@ -100,6 +102,8 @@ fn emit_controller_action(
                 host_id: None,
                 app_id: None,
                 controller_action: Some(action),
+                update_version: None,
+                update_url: None,
             },
         )
         .map_err(|error| error.to_string())?;

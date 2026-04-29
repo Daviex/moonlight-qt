@@ -27,6 +27,12 @@ interface StreamUiState {
   uiHiddenRequested: boolean;
 }
 
+interface UpdateInfo {
+  version: string;
+  url: string;
+  message: string;
+}
+
 type DialogState =
   | { kind: 'none' }
   | { kind: 'addHost'; address: string; error: string; submitting: boolean }
@@ -108,6 +114,7 @@ export default function App() {
   const [streamState, setStreamState] = useState<StreamUiState>(idleStreamState);
   const [backendInfo, setBackendInfo] = useState<BackendInfo | null>(null);
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [dialog, setDialog] = useState<DialogState>({ kind: 'none' });
   const [hostRefreshDiagnostics, setHostRefreshDiagnostics] = useState({
     attempts: 0,
@@ -653,6 +660,14 @@ export default function App() {
         handleStatusEvent(event);
       }
 
+      if (event.kind === 'updateAvailable') {
+        setUpdateInfo({
+          version: event.updateVersion ?? '',
+          url: event.updateUrl ?? '',
+          message: event.message,
+        });
+      }
+
       try {
         await syncWindowForSessionEvent(event);
       }
@@ -938,6 +953,23 @@ export default function App() {
           </button>
         ))}
       </section>
+
+      {updateInfo && (
+        <section className="update-banner" aria-label="Moonlight update available">
+          <div>
+            <h2>Update available</h2>
+            <p>{updateInfo.message}</p>
+          </div>
+          <div className="button-row">
+            {updateInfo.url && (
+              <a href={updateInfo.url} target="_blank" rel="noreferrer">
+                Download {updateInfo.version || 'update'}
+              </a>
+            )}
+            <button type="button" onClick={() => setUpdateInfo(null)}>Dismiss</button>
+          </div>
+        </section>
+      )}
 
       {streamState.phase !== 'idle' && (
         <section className={`stream-panel ${streamState.phase}`} aria-label="Native stream state">

@@ -26,8 +26,18 @@ button {
   cursor: pointer;
 }
 
+a {
+  color: #f5f7fb;
+  background: #238636;
+  border-radius: 10px;
+  padding: 0.7rem 1rem;
+  text-decoration: none;
+}
+
 button:hover,
-button:focus-visible {
+button:focus-visible,
+a:hover,
+a:focus-visible {
   background: #388bfd;
   outline: 3px solid #79c0ff;
   outline-offset: 2px;
@@ -111,6 +121,26 @@ nav {
   border: 1px solid #1f6feb;
   border-radius: 14px;
   padding: 1rem;
+}
+
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  background: #172a1a;
+  border: 1px solid #3fb950;
+  border-radius: 14px;
+  padding: 1rem;
+}
+
+.update-banner h2,
+.update-banner p {
+  margin: 0;
+}
+
+.update-banner p {
+  color: #c9d1d9;
 }
 
 .stream-panel h2,

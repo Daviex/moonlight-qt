@@ -48,6 +48,8 @@ The bridge also emits `moonlight-bridge-event` events for native-side host, app,
 
 Host management flows use in-app React dialogs instead of browser prompts for add, rename, delete confirmation, pairing PIN display, host details, and help. The Help/About dialog also reads native system information through the bridge so diagnostics like HDR support, hardware acceleration, display mode, and unmapped gamepads are visible in the web UI. This keeps the prototype on the same focus/navigation path as the rest of the shell so keyboard, touch, and controller input can exercise these core dialogs.
 
+The helper starts the native update checker during IPC startup and forwards `updateAvailable` bridge events with the available version and download URL. The React shell shows those events as a dismissible update banner, matching the Widgets UI's update notification path without implementing update-check networking in TypeScript.
+
 For mock-backend runs, the prototype exposes a small "Controller event test" toolbar that asks the Rust side to emit controller actions. IPC-backend runs now also receive real controller events from Moonlight's existing SDL controller navigation source in the native helper. The helper disables its GUI controller polling while a native stream owns SDL input, then re-enables it when session lifecycle events return control to the UI.
 
 The Rust side now separates the production command surface from the in-memory mock implementation:

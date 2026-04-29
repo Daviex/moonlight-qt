@@ -110,6 +110,8 @@ pub struct BridgeEvent {
     pub host_id: Option<String>,
     pub app_id: Option<String>,
     pub controller_action: Option<ControllerAction>,
+    pub update_version: Option<String>,
+    pub update_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -121,6 +123,7 @@ pub enum BridgeEventKind {
     SettingsChanged,
     Status,
     ControllerAction,
+    UpdateAvailable,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
