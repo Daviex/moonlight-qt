@@ -59,6 +59,42 @@ TauriBridgeHelper::TauriBridgeHelper()
     : m_ComputerManager(StreamingPreferences::get())
 {
     m_Facade.initialize(&m_ComputerManager);
+    QObject::connect(m_Facade.sessions(), &FrontendSessionCoordinator::stageTextChanged,
+                     [this](const QString& stageText) {
+        writeEventFrame(bridgeEvent("sessionChanged", stageText));
+    });
+    QObject::connect(m_Facade.sessions(), &FrontendSessionCoordinator::errorTextChanged,
+                     [this](const QString& errorText) {
+        if (!errorText.isEmpty()) {
+            writeEventFrame(bridgeEvent("status", errorText));
+        }
+    });
+    QObject::connect(m_Facade.sessions(), &FrontendSessionCoordinator::launchWarningsChanged,
+                     [this](const QStringList& warnings) {
+        for (const QString& warning : warnings) {
+            writeEventFrame(bridgeEvent("status", warning));
+        }
+    });
+    QObject::connect(m_Facade.sessions(), &FrontendSessionCoordinator::hideUiRequested,
+                     [this]() {
+        writeEventFrame(bridgeEvent("sessionChanged", tr("Stream connected; hide UI requested.")));
+    });
+    QObject::connect(m_Facade.sessions(), &FrontendSessionCoordinator::showUiRequested,
+                     [this]() {
+        writeEventFrame(bridgeEvent("sessionChanged", tr("Stream UI can be shown.")));
+    });
+    QObject::connect(m_Facade.sessions(), &FrontendSessionCoordinator::quitSegueRequested,
+                     [this](const QString& appName) {
+        writeEventFrame(bridgeEvent("sessionChanged", tr("Quitting %1...").arg(appName)));
+    });
+    QObject::connect(m_Facade.sessions(), &FrontendSessionCoordinator::sessionFinished,
+                     [this](int portTestResult) {
+        writeEventFrame(bridgeEvent("sessionChanged", tr("Stream finished with port test result %1.").arg(portTestResult)));
+    });
+    QObject::connect(m_Facade.sessions(), &FrontendSessionCoordinator::sessionReadyForDeletion,
+                     [this]() {
+        writeEventFrame(bridgeEvent("sessionChanged", tr("Stream session cleanup completed.")));
+    });
 }
 
 int TauriBridgeHelper::run()
@@ -461,6 +497,21 @@ QJsonObject TauriBridgeHelper::bridgeEvent(const QString& kind, const QString& m
     }
 
     return event;
+}
+
+void TauriBridgeHelper::writeEventFrame(const QJsonObject& event) const
+{
+    const QByteArray frame = QJsonDocument(QJsonObject{{"event", event}}).toJson(QJsonDocument::Compact);
+#ifdef Q_OS_WIN
+    HANDLE outputHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (outputHandle != INVALID_HANDLE_VALUE && outputHandle != nullptr) {
+        writeBridgeLine(outputHandle, frame);
+    }
+#else
+    QTextStream output(stdout, QIODevice::WriteOnly);
+    output << QString::fromUtf8(frame) << Qt::endl;
+    output.flush();
+#endif
 }
 
 QJsonObject TauriBridgeHelper::hostToJson(const FrontendComputer& computer, int index) const

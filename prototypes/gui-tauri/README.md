@@ -66,7 +66,7 @@ Responses must echo the request ID and include either `result` or `error`:
 {"id":1,"result":[{"id":"gaming-pc","name":"Gaming PC","address":"192.168.1.20","status":"Online","paired":true,"running":false}]}
 ```
 
-The helper can also write event frames after command responses:
+The helper can also write event frames at any point on stdout:
 
 ```json
 {"event":{"kind":"settingsChanged","message":"Settings saved."}}
@@ -74,6 +74,6 @@ The helper can also write event frames after command responses:
 
 This process boundary is the chosen production direction because it avoids mixing Tauri/Rust and Qt/C++ event loops in one process, keeps the existing C++ backend and SDL streaming ownership intact, and prevents TypeScript from reimplementing Moonlight backend logic.
 
-Current helper coverage is intentionally incremental: it can return real settings and host snapshots through the existing frontend facades, update the subset of settings used by the prototype, route basic host/app mutations that already have facade methods, and emit request-scoped event frames for those native mutations. The Rust IPC backend reads helper stdout on a dedicated thread, correlates response frames by request ID, and forwards helper event frames to the existing `moonlight-bridge-event` Tauri channel. Command handlers still synthesize events for the mock backend, but skip those synthetic events when the active backend already forwards native helper events.
+Current helper coverage is intentionally incremental: it can return real settings and host snapshots through the existing frontend facades, update the subset of settings used by the prototype, route basic host/app mutations that already have facade methods, and emit native event frames for those mutations. It also forwards `FrontendSessionCoordinator` lifecycle signals as session/status events, including stage text, launch warnings, asynchronous errors, UI hide/show requests, quit segue requests, session finish, and cleanup readiness. The Rust IPC backend reads helper stdout on a dedicated thread, correlates response frames by request ID, and forwards helper event frames to the existing `moonlight-bridge-event` Tauri channel. Command handlers still synthesize events for the mock backend, but skip those synthetic events when the active backend already forwards native helper events.
 
-`launch_app` now routes through the native helper's `AppListFacade`, `FrontendSessionCoordinator`, `QtWidgetWindowContext`, and `Session` path. The helper pumps the Qt event loop while waiting for IPC so native session startup can progress after the command response. This keeps stream rendering in the native SDL/window path instead of the webview. The remaining production work is broader session lifecycle coverage: hiding/showing the webview at stream boundaries, exposing asynchronous session errors/warnings, and handling quit/resume UI around an active native stream.
+`launch_app` now routes through the native helper's `AppListFacade`, `FrontendSessionCoordinator`, `QtWidgetWindowContext`, and `Session` path. The helper pumps the Qt event loop while waiting for IPC so native session startup can progress after the command response. This keeps stream rendering in the native SDL/window path instead of the webview. The remaining production work is Tauri-side active-stream UX: hiding/showing the webview at stream boundaries, presenting forwarded warnings/errors, and handling quit/resume UI around an active native stream.
