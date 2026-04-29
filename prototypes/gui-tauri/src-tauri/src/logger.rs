@@ -28,7 +28,7 @@ pub fn init() {
 }
 
 pub fn log(message: impl AsRef<str>) {
-    let Some(file) = log_file() else {
+    if !enabled() {
         return;
     };
 
@@ -36,14 +36,19 @@ pub fn log(message: impl AsRef<str>) {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default();
+    let line = format!(
+        "[{timestamp_ms}] pid={} {}",
+        std::process::id(),
+        message.as_ref()
+    );
 
+    eprintln!("{line}");
+
+    let Some(file) = log_file() else {
+        return;
+    };
     if let Ok(mut file) = file.lock() {
-        let _ = writeln!(
-            file,
-            "[{timestamp_ms}] pid={} {}",
-            std::process::id(),
-            message.as_ref()
-        );
+        let _ = writeln!(file, "{line}");
         let _ = file.flush();
     }
 }

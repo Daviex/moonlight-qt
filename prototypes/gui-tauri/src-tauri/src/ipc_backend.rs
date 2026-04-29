@@ -485,7 +485,7 @@ struct IpcRequest {
 }
 
 #[derive(Serialize)]
-#[serde(tag = "command", content = "payload", rename_all = "snake_case")]
+#[serde(tag = "name", content = "payload", rename_all = "snake_case")]
 enum IpcCommand {
     ListHosts,
     AddHost {

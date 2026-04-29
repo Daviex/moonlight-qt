@@ -456,14 +456,14 @@ int TauriBridgeHelper::run()
 
 QJsonObject TauriBridgeHelper::handleCommand(const QJsonObject& command)
 {
-    if (!command.value("command").isString() || command.value("command").toString().isEmpty()) {
+    if (!command.value("name").isString() || command.value("name").toString().isEmpty()) {
         return {{"error", "Bridge command name is required."}};
     }
     if (command.contains("payload") && !command.value("payload").isObject()) {
         return {{"error", "Bridge command payload must be an object."}};
     }
 
-    const QString commandName = command.value("command").toString();
+    const QString commandName = command.value("name").toString();
     const QJsonObject payload = command.value("payload").toObject();
 
     if (commandName == "list_hosts") {
