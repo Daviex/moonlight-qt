@@ -758,7 +758,11 @@ void GuiNextWindow::keyPressEvent(QKeyEvent* event)
             event->accept();
             return;
         }
-        break;
+        if (QMessageBox::question(this, tr("Quit Moonlight"), tr("Are you sure you want to quit?")) == QMessageBox::Yes) {
+            qApp->quit();
+        }
+        event->accept();
+        return;
     default:
         break;
     }
