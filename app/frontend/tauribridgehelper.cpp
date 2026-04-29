@@ -122,6 +122,32 @@ static bool parseRequiredNumericString(const QJsonObject& payload,
     return true;
 }
 
+static bool parseRequiredString(const QJsonObject& payload,
+                                const QString& key,
+                                const QString& label,
+                                QString& value,
+                                QString& error)
+{
+    if (!payload.contains(key)) {
+        error = QStringLiteral("%1 is required.").arg(label);
+        return false;
+    }
+
+    const QJsonValue jsonValue = payload.value(key);
+    if (!jsonValue.isString()) {
+        error = QStringLiteral("%1 must be a string.").arg(label);
+        return false;
+    }
+
+    value = jsonValue.toString();
+    if (value.isEmpty()) {
+        error = QStringLiteral("%1 is required.").arg(label);
+        return false;
+    }
+
+    return true;
+}
+
 static bool validateStreamingBooleanSettings(const QJsonObject& settings, QString& error)
 {
     return validateBooleanSetting(settings, QStringLiteral("unlockBitrate"), QStringLiteral("Unlock bitrate"), error) &&
@@ -441,9 +467,10 @@ QJsonObject TauriBridgeHelper::handleCommand(const QJsonObject& command)
         return listHosts();
     }
     if (commandName == "add_host") {
-        const QString address = payload.value("address").toString();
-        if (address.isEmpty()) {
-            return {{"error", "Host address is required."}};
+        QString validationError;
+        QString address;
+        if (!parseRequiredString(payload, QStringLiteral("address"), QStringLiteral("Host address"), address, validationError)) {
+            return {{"error", validationError}};
         }
         m_ComputerManager.addNewHostManually(address);
         const QString message = tr("Host add requested.");
@@ -752,12 +779,12 @@ QJsonObject TauriBridgeHelper::renameHost(const QJsonObject& payload)
 {
     QString validationError;
     const int hostIndex = hostIndexFromPayload(payload, &validationError);
-    const QString name = payload.value("name").toString();
     if (hostIndex < 0) {
         return {{"error", validationError}};
     }
-    if (name.isEmpty()) {
-        return {{"error", "Host name is required."}};
+    QString name;
+    if (!parseRequiredString(payload, QStringLiteral("name"), QStringLiteral("Host name"), name, validationError)) {
+        return {{"error", validationError}};
     }
 
     m_Facade.computers()->renameComputer(hostIndex, name);
@@ -1014,9 +1041,10 @@ QJsonObject TauriBridgeHelper::systemInfo()
 
 QJsonObject TauriBridgeHelper::openUrl(const QJsonObject& payload)
 {
-    const QString url = payload.value("url").toString();
-    if (url.isEmpty()) {
-        return {{"error", "URL is required."}};
+    QString validationError;
+    QString url;
+    if (!parseRequiredString(payload, QStringLiteral("url"), QStringLiteral("URL"), url, validationError)) {
+        return {{"error", validationError}};
     }
 
     const QUrl targetUrl(url, QUrl::StrictMode);
