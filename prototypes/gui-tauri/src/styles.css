@@ -1,0 +1,145 @@
+:root {
+  color: #f5f7fb;
+  background: #10141c;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  color: #f5f7fb;
+  background: #1f6feb;
+  border: 0;
+  border-radius: 10px;
+  padding: 0.7rem 1rem;
+  cursor: pointer;
+}
+
+button:hover,
+button:focus-visible {
+  background: #388bfd;
+  outline: 3px solid #79c0ff;
+  outline-offset: 2px;
+}
+
+.shell {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 100vh;
+  padding: 1.5rem;
+  gap: 1rem;
+}
+
+.toolbar,
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.toolbar h1,
+.panel h2 {
+  margin: 0;
+}
+
+.toolbar p,
+.panel p {
+  color: #9fb1c7;
+  margin: 0.25rem 0 0;
+}
+
+nav {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.panel {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 18px;
+  padding: 1.25rem;
+  overflow: auto;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.host-card,
+.app-card {
+  display: flex;
+  min-height: 130px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  text-align: left;
+  background: #21262d;
+  border: 1px solid #30363d;
+}
+
+.host-card.selected {
+  border-color: #79c0ff;
+}
+
+.title {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.tag {
+  color: #79c0ff;
+  font-weight: 600;
+}
+
+.tag.muted {
+  color: #a5a5a5;
+}
+
+.settings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+}
+
+.settings .panel-heading {
+  grid-column: 1 / -1;
+}
+
+.settings label {
+  display: grid;
+  gap: 0.4rem;
+  color: #c9d1d9;
+}
+
+.settings input {
+  color: #f5f7fb;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 0.55rem;
+}
+
+.settings .checkbox {
+  display: flex;
+  align-items: center;
+}
+
+.status {
+  min-height: 1.5rem;
+  color: #9fb1c7;
+}
