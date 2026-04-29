@@ -26,6 +26,8 @@ public:
     explicit GuiNextWindow(QWidget* parent = nullptr);
     ~GuiNextWindow() override;
 
+    void showPreferredWindowState();
+
 protected:
     void changeEvent(QEvent* event) override;
     void closeEvent(QCloseEvent* event) override;

@@ -944,7 +944,7 @@ int main(int argc, char *argv[])
     switch (commandLineParserResult) {
     case GlobalCommandLineParser::NormalStartRequested:
         guiNextWindow.reset(new GuiNextWindow());
-        guiNextWindow->show();
+        guiNextWindow->showPreferredWindowState();
         break;
     case GlobalCommandLineParser::StreamRequested:
     case GlobalCommandLineParser::QuitRequested:

@@ -107,7 +107,7 @@ void GuiNextWindow::buildHostPage()
 {
     auto page = new QWidget(this);
     auto layout = new QVBoxLayout(page);
-    auto title = new QLabel(tr("Moonlight - GUI Next"), page);
+    auto title = new QLabel(tr("Moonlight"), page);
     title->setStyleSheet(QStringLiteral("font-size: 28px; font-weight: bold;"));
     layout->addWidget(title);
 
@@ -184,6 +184,29 @@ void GuiNextWindow::buildAppPage()
     connect(quitButton, &QPushButton::clicked, this, &GuiNextWindow::quitRunningApp);
 
     m_Stack->addWidget(page);
+}
+
+void GuiNextWindow::showPreferredWindowState()
+{
+    const FrontendSystemProperties system = m_Facade.system()->properties();
+    if (!system.hasDesktopEnvironment) {
+        showFullScreen();
+        return;
+    }
+
+    const FrontendStreamingPreferences preferences = m_Facade.preferences()->preferences();
+    switch (preferences.uiDisplayMode) {
+    case StreamingPreferences::UI_MAXIMIZED:
+        showMaximized();
+        break;
+    case StreamingPreferences::UI_FULLSCREEN:
+        showFullScreen();
+        break;
+    case StreamingPreferences::UI_WINDOWED:
+    default:
+        show();
+        break;
+    }
 }
 
 void GuiNextWindow::buildSettingsPage()
