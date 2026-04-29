@@ -54,6 +54,7 @@ private slots:
     void refreshApps();
     void launchSelectedApp();
     void quitRunningApp();
+    void handleQuitAppCompleted(const QString& error);
     void toggleSelectedAppHidden();
     void toggleSelectedAppDirectLaunch();
     void runStartupChecks();
@@ -126,8 +127,11 @@ private:
     QCheckBox* m_HdrCheckBox = nullptr;
     QCheckBox* m_Yuv444CheckBox = nullptr;
     int m_CurrentComputerIndex = -1;
+    int m_PendingLaunchAfterQuitIndex = -1;
     bool m_PairingInProgress = false;
     bool m_ConnectionTestInProgress = false;
+    bool m_QuitInProgress = false;
+    bool m_LaunchAfterQuit = false;
     bool m_StartupChecksStarted = false;
     bool m_HardwareWarningShown = false;
     bool m_UnmappedGamepadWarningShown = false;

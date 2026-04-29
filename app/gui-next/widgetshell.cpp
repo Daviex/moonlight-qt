@@ -482,6 +482,7 @@ void GuiNextWindow::openHost(int index, bool showHiddenGames, bool allowDirectLa
 
     connect(m_AppList.data(), &AppListFacade::appsReset, this, &GuiNextWindow::refreshApps);
     connect(m_AppList.data(), &AppListFacade::appChanged, this, &GuiNextWindow::refreshApps);
+    connect(m_AppList.data(), &AppListFacade::quitAppCompleted, this, &GuiNextWindow::handleQuitAppCompleted);
     connect(m_AppList.data(), &AppListFacade::computerLost, this, [this]() {
         QMessageBox::warning(this, tr("Host Lost"), tr("The selected host is no longer available."));
         showHostsPage();
@@ -554,10 +555,35 @@ void GuiNextWindow::launchSelectedApp()
     if (appIndex < 0) {
         return;
     }
+    if (m_QuitInProgress) {
+        QMessageBox::information(this,
+                                 tr("Quit Running App"),
+                                 tr("A quit request is already in progress."));
+        return;
+    }
 
     FrontendApp app = m_AppList->appAt(appIndex);
+    const int runningAppId = m_AppList->getRunningAppId();
+    if (runningAppId != 0 && runningAppId != app.appId) {
+        const QString runningAppName = m_AppList->getRunningAppName();
+        const QMessageBox::StandardButton result = QMessageBox::question(
+            this,
+            tr("Quit Running App"),
+            tr("Are you sure you want to quit %1? Any unsaved progress will be lost.").arg(runningAppName));
+        if (result != QMessageBox::Yes) {
+            return;
+        }
+
+        m_PendingLaunchAfterQuitIndex = appIndex;
+        m_LaunchAfterQuit = true;
+        m_QuitInProgress = true;
+        setStatusText(tr("Quitting %1...").arg(runningAppName));
+        m_AppList->quitRunningApp();
+        return;
+    }
+
     Session* session = m_AppList->createSessionForApp(appIndex);
-    launchSession(session, app.name, false);
+    launchSession(session, app.name, runningAppId == app.appId);
 }
 
 void GuiNextWindow::launchSession(Session* session, const QString& appName, bool isResume)
@@ -853,9 +879,74 @@ void GuiNextWindow::showHostsPage()
 
 void GuiNextWindow::quitRunningApp()
 {
-    if (m_AppList != nullptr) {
-        m_AppList->quitRunningApp();
+    if (m_AppList == nullptr) {
+        return;
     }
+
+    if (m_QuitInProgress) {
+        QMessageBox::information(this,
+                                 tr("Quit Running App"),
+                                 tr("A quit request is already in progress."));
+        return;
+    }
+
+    const int runningAppId = m_AppList->getRunningAppId();
+    if (runningAppId == 0) {
+        QMessageBox::information(this,
+                                 tr("Quit Running App"),
+                                 tr("No app is currently running on this host."));
+        return;
+    }
+
+    const QString runningAppName = m_AppList->getRunningAppName();
+    const QMessageBox::StandardButton result = QMessageBox::question(
+        this,
+        tr("Quit Running App"),
+        tr("Are you sure you want to quit %1? Any unsaved progress will be lost.").arg(runningAppName));
+    if (result != QMessageBox::Yes) {
+        return;
+    }
+
+    m_PendingLaunchAfterQuitIndex = -1;
+    m_LaunchAfterQuit = false;
+    m_QuitInProgress = true;
+    setStatusText(tr("Quitting %1...").arg(runningAppName));
+    m_AppList->quitRunningApp();
+}
+
+void GuiNextWindow::handleQuitAppCompleted(const QString& error)
+{
+    m_QuitInProgress = false;
+
+    if (!error.isEmpty()) {
+        m_LaunchAfterQuit = false;
+        m_PendingLaunchAfterQuitIndex = -1;
+        QMessageBox::warning(this, tr("Quit Running App"), error);
+        refreshApps();
+        return;
+    }
+
+    setStatusText(tr("App quit successfully."));
+    refreshApps();
+
+    if (!m_LaunchAfterQuit) {
+        return;
+    }
+
+    const int appIndex = m_PendingLaunchAfterQuitIndex;
+    m_LaunchAfterQuit = false;
+    m_PendingLaunchAfterQuitIndex = -1;
+
+    if (m_AppList == nullptr || appIndex < 0 || appIndex >= m_AppList->count()) {
+        QMessageBox::warning(this,
+                             tr("Stream Error"),
+                             tr("Unable to start stream: the selected app is no longer available."));
+        return;
+    }
+
+    FrontendApp app = m_AppList->appAt(appIndex);
+    Session* session = m_AppList->createSessionForApp(appIndex);
+    launchSession(session, app.name, false);
 }
 
 void GuiNextWindow::handlePairingCompleted(const QString& error)

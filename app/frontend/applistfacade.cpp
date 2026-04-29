@@ -16,6 +16,8 @@ void AppListFacade::initialize(ComputerManager* computerManager, int computerInd
     m_ComputerManager = computerManager;
     connect(m_ComputerManager, &ComputerManager::computerStateChanged,
             this, &AppListFacade::handleComputerStateChanged);
+    connect(m_ComputerManager, &ComputerManager::quitAppCompleted,
+            this, &AppListFacade::handleQuitAppCompleted);
 
     QVector<NvComputer*> computers = m_ComputerManager->getComputers();
     if (computerIndex < 0 || computerIndex >= computers.count()) {
@@ -255,4 +257,9 @@ void AppListFacade::handleBoxArtLoaded(QString computerUuid, NvApp app, QUrl ima
             return;
         }
     }
+}
+
+void AppListFacade::handleQuitAppCompleted(QVariant error)
+{
+    emit quitAppCompleted(error.toString());
 }

@@ -6,6 +6,7 @@
 #include "streaming/session.h"
 
 #include <QObject>
+#include <QVariant>
 #include <QVector>
 
 class AppListFacade : public QObject
@@ -33,11 +34,13 @@ signals:
     void appsReset();
     void appChanged(int appIndex);
     void appBoxArtChanged(int appIndex, QUrl image);
+    void quitAppCompleted(QString error);
     void computerLost();
 
 private slots:
     void handleComputerStateChanged(NvComputer* computer);
     void handleBoxArtLoaded(QString computerUuid, NvApp app, QUrl image);
+    void handleQuitAppCompleted(QVariant error);
 
 private:
     bool isValidAppIndex(int appIndex, const char* operation) const;
