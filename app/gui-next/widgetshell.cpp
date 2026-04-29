@@ -557,9 +557,9 @@ void GuiNextWindow::pairSelectedHost()
     }
 
     QString pin = m_Facade.computers()->generatePinString();
+    m_Facade.computers()->pairComputer(index, pin);
     QMessageBox::information(this, tr("Pair Host"),
                              tr("Enter this PIN on your host PC when prompted: %1").arg(pin));
-    m_Facade.computers()->pairComputer(index, pin);
 }
 
 void GuiNextWindow::wakeSelectedHost()
