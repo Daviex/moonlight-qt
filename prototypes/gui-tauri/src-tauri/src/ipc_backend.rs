@@ -423,6 +423,10 @@ impl MoonlightBackend for IpcBackend {
     fn system_info(&mut self) -> Result<SystemInfo, String> {
         self.request(IpcCommand::SystemInfo)
     }
+
+    fn open_url(&mut self, url: &str) -> Result<CommandStatus, String> {
+        self.request(IpcCommand::OpenUrl { url: url.into() })
+    }
 }
 
 #[derive(Serialize)]
@@ -486,6 +490,9 @@ enum IpcCommand {
         settings: StreamingSettings,
     },
     SystemInfo,
+    OpenUrl {
+        url: String,
+    },
 }
 
 impl IpcCommand {
@@ -508,6 +515,7 @@ impl IpcCommand {
             Self::LoadSettings => "load_settings",
             Self::SaveSettings { .. } => "save_settings",
             Self::SystemInfo => "system_info",
+            Self::OpenUrl { .. } => "open_url",
         }
     }
 }

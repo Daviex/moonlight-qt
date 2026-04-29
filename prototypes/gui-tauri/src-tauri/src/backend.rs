@@ -184,4 +184,5 @@ pub trait MoonlightBackend: Send {
     fn load_settings(&mut self) -> Result<StreamingSettings, String>;
     fn save_settings(&mut self, settings: StreamingSettings) -> Result<CommandStatus, String>;
     fn system_info(&mut self) -> Result<SystemInfo, String>;
+    fn open_url(&mut self, url: &str) -> Result<CommandStatus, String>;
 }

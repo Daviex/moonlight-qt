@@ -555,6 +555,23 @@ fn system_info(backend: tauri::State<'_, BackendState>) -> Result<SystemInfo, St
 }
 
 #[tauri::command]
+fn open_url(url: String, backend: tauri::State<'_, BackendState>) -> Result<CommandStatus, String> {
+    logger::log(format!("command open_url begin; url={url}"));
+    let result = backend
+        .lock()
+        .map_err(|error| error.to_string())?
+        .open_url(&url);
+    match &result {
+        Ok(status) => logger::log(format!(
+            "command open_url complete; message={}",
+            status.message
+        )),
+        Err(error) => logger::log(format!("command open_url failed; error={error}")),
+    }
+    result
+}
+
+#[tauri::command]
 fn save_settings(
     settings: StreamingSettings,
     backend: tauri::State<'_, BackendState>,
@@ -624,6 +641,7 @@ fn main() {
             set_app_direct_launch,
             load_settings,
             system_info,
+            open_url,
             save_settings,
             emit_controller_action
         ])

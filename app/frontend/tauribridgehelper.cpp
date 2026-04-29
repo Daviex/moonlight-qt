@@ -5,6 +5,7 @@
 #include "settings/streamingpreferences.h"
 #include "streaming/qtwidgetwindowcontext.h"
 
+#include <QDesktopServices>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -12,6 +13,7 @@
 #include <QStringList>
 #include <QTextStream>
 #include <QThread>
+#include <QUrl>
 #include <QWidget>
 
 #ifdef Q_OS_WIN
@@ -295,6 +297,9 @@ QJsonObject TauriBridgeHelper::handleCommand(const QJsonObject& command)
     }
     if (commandName == "system_info") {
         return systemInfo();
+    }
+    if (commandName == "open_url") {
+        return openUrl(payload);
     }
 
     return {{"error", QString("Unknown bridge command: %1").arg(commandName)}};
@@ -681,6 +686,32 @@ QJsonObject TauriBridgeHelper::systemInfo()
         {"unmappedGamepads", system.unmappedGamepads},
         {"displays", displays},
     }}};
+}
+
+QJsonObject TauriBridgeHelper::openUrl(const QJsonObject& payload)
+{
+    const QString url = payload.value("url").toString();
+    if (url.isEmpty()) {
+        return {{"error", "URL is required."}};
+    }
+
+    const QUrl targetUrl(url, QUrl::StrictMode);
+    const QString scheme = targetUrl.scheme().toLower();
+    if (!targetUrl.isValid() || (scheme != QStringLiteral("http") && scheme != QStringLiteral("https"))) {
+        return {{"error", tr("Only HTTP and HTTPS URLs can be opened from the Tauri bridge.")}};
+    }
+
+    m_Facade.system()->startAsyncLoad();
+    m_Facade.system()->waitForAsyncLoad();
+    if (!m_Facade.system()->properties().hasBrowser) {
+        return {{"error", tr("No web browser is available to open %1.").arg(targetUrl.toString())}};
+    }
+
+    if (!QDesktopServices::openUrl(targetUrl)) {
+        return {{"error", tr("Failed to open %1.").arg(targetUrl.toString())}};
+    }
+
+    return {{"message", tr("Opened %1.").arg(targetUrl.toString())}};
 }
 
 void TauriBridgeHelper::handleControllerNavigation(ControllerNavigationAction action, bool pressed)

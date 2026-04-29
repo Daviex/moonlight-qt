@@ -141,6 +141,7 @@ export const bridge = {
   loadSettings: () => invoke<StreamingSettings>('load_settings'),
   saveSettings: (settings: StreamingSettings) => invoke<CommandStatus>('save_settings', { settings }),
   systemInfo: () => invoke<SystemInfo>('system_info'),
+  openUrl: (url: string) => invoke<CommandStatus>('open_url', { url }),
   emitControllerAction: (action: ControllerAction) =>
     invoke<CommandStatus>('emit_controller_action', { action }),
   listen: (handler: (event: BridgeEvent) => void) =>

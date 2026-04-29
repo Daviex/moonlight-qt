@@ -311,4 +311,14 @@ impl MoonlightBackend for MockBackend {
             }],
         })
     }
+
+    fn open_url(&mut self, url: &str) -> Result<CommandStatus, String> {
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            return Err("Only HTTP and HTTPS URLs can be opened from the Tauri bridge.".into());
+        }
+
+        Ok(CommandStatus {
+            message: format!("Open URL requested: {url}"),
+        })
+    }
 }

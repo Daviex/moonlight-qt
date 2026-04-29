@@ -72,6 +72,10 @@ const idleStreamState: StreamUiState = {
 };
 
 const appWindow = getCurrentWindow();
+const setupGuideUrl = 'https://github.com/moonlight-stream/moonlight-docs/wiki/Setup-Guide';
+const discordUrl = 'https://moonlight-stream.org/discord';
+const hardwareDecodingHelpUrl = 'https://github.com/moonlight-stream/moonlight-docs/wiki/Fixing-Hardware-Decoding-Problems';
+const gamepadMappingHelpUrl = 'https://github.com/moonlight-stream/moonlight-docs/wiki/Gamepad-Mapping';
 
 function writeDebugLog(message: string) {
   void bridge.debugLog(message).catch(() => undefined);
@@ -346,6 +350,16 @@ export default function App() {
     setDialog({ kind: 'help' });
     void loadSystemInfo();
   }, [loadSystemInfo]);
+
+  const openExternalUrl = useCallback(async (url: string, label: string) => {
+    try {
+      const result = await bridge.openUrl(url);
+      setStatus(result.message || `Opened ${label}.`);
+    }
+    catch (error) {
+      setStatus(`Failed to open ${label}: ${String(error)}`);
+    }
+  }, []);
 
   const loadSettings = useCallback(async () => {
     try {
@@ -916,6 +930,26 @@ export default function App() {
               )}
               <div className="button-row">
                 <button type="button" onClick={() => {
+                  void openExternalUrl(setupGuideUrl, 'setup guide');
+                }}>
+                  Setup Guide
+                </button>
+                <button type="button" onClick={() => {
+                  void openExternalUrl(discordUrl, 'Discord');
+                }}>
+                  Discord
+                </button>
+                <button type="button" onClick={() => {
+                  void openExternalUrl(hardwareDecodingHelpUrl, 'hardware decoding help');
+                }}>
+                  Hardware Help
+                </button>
+                <button type="button" onClick={() => {
+                  void openExternalUrl(gamepadMappingHelpUrl, 'gamepad mapping help');
+                }}>
+                  Gamepad Help
+                </button>
+                <button type="button" onClick={() => {
                   void loadSystemInfo();
                 }}>
                   Refresh System Info
@@ -962,9 +996,11 @@ export default function App() {
           </div>
           <div className="button-row">
             {updateInfo.url && (
-              <a href={updateInfo.url} target="_blank" rel="noreferrer">
+              <button type="button" onClick={() => {
+                void openExternalUrl(updateInfo.url, 'update download');
+              }}>
                 Download {updateInfo.version || 'update'}
-              </a>
+              </button>
             )}
             <button type="button" onClick={() => setUpdateInfo(null)}>Dismiss</button>
           </div>

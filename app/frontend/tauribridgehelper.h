@@ -43,6 +43,7 @@ private:
     QJsonObject loadSettings();
     QJsonObject saveSettings(const QJsonObject& payload);
     QJsonObject systemInfo();
+    QJsonObject openUrl(const QJsonObject& payload);
 
     void handleControllerNavigation(ControllerNavigationAction action, bool pressed) override;
     void handleControllerQuit() override;
