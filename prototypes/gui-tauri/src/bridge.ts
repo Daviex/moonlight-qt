@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 export type HostStatus = 'Online' | 'Offline' | 'Pairing required';
 
@@ -52,6 +53,17 @@ export interface PairingChallenge {
   message: string;
 }
 
+export type BridgeEventKind = 'hostChanged' | 'appChanged' | 'sessionChanged' | 'settingsChanged' | 'status';
+
+export interface BridgeEvent {
+  kind: BridgeEventKind;
+  message: string;
+  hostId?: string;
+  appId?: string;
+}
+
+export const BRIDGE_EVENT = 'moonlight-bridge-event';
+
 export const bridge = {
   listHosts: () => invoke<HostEntry[]>('list_hosts'),
   addHost: (address: string) => invoke<CommandStatus>('add_host', { address }),
@@ -70,4 +82,6 @@ export const bridge = {
     invoke<CommandStatus>('set_app_direct_launch', { hostId, appId, directLaunch }),
   loadSettings: () => invoke<StreamingSettings>('load_settings'),
   saveSettings: (settings: StreamingSettings) => invoke<CommandStatus>('save_settings', { settings }),
+  listen: (handler: (event: BridgeEvent) => void) =>
+    listen<BridgeEvent>(BRIDGE_EVENT, (event) => handler(event.payload)),
 };

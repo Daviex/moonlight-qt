@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AppEntry,
+  BridgeEvent,
   HostEntry,
   StreamingSettings,
   bridge,
@@ -25,6 +26,7 @@ export default function App() {
   const [settings, setSettings] = useState<StreamingSettings>(fallbackSettings);
   const [showHiddenApps, setShowHiddenApps] = useState(false);
   const [status, setStatus] = useState('Tauri shell ready.');
+  const [eventLog, setEventLog] = useState<BridgeEvent[]>([]);
 
   const selectedHost = useMemo(
     () => hosts.find((host) => host.id === selectedHostId),
@@ -136,6 +138,15 @@ export default function App() {
     }
   }, []);
 
+  const refreshSettingsSnapshot = useCallback(async () => {
+    try {
+      setSettings(await bridge.loadSettings());
+    }
+    catch (error) {
+      setStatus(String(error));
+    }
+  }, []);
+
   const saveSettings = useCallback(async () => {
     try {
       const result = await bridge.saveSettings(settings);
@@ -209,9 +220,51 @@ export default function App() {
     }
   }, [refreshApps, selectedHostId, showHiddenApps]);
 
+  const handleBridgeEvent = useCallback((event: BridgeEvent) => {
+    setEventLog((previousEvents) => [event, ...previousEvents].slice(0, 6));
+    void (async () => {
+      if (event.kind === 'hostChanged' || event.kind === 'sessionChanged') {
+        await refreshHosts();
+      }
+
+      if ((event.kind === 'appChanged' || event.kind === 'sessionChanged') && event.hostId === selectedHostId) {
+        await refreshApps(event.hostId, showHiddenApps);
+      }
+
+      if (event.kind === 'settingsChanged') {
+        await refreshSettingsSnapshot();
+      }
+
+      setStatus(event.message);
+    })();
+  }, [refreshApps, refreshHosts, refreshSettingsSnapshot, selectedHostId, showHiddenApps]);
+
   useEffect(() => {
     void refreshHosts();
   }, [refreshHosts]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    bridge.listen(handleBridgeEvent)
+      .then((nextUnlisten) => {
+        if (disposed) {
+          nextUnlisten();
+        }
+        else {
+          unlisten = nextUnlisten;
+        }
+      })
+      .catch((error) => {
+        setStatus(`Failed to subscribe to native events: ${String(error)}`);
+      });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [handleBridgeEvent]);
 
   return (
     <main className="shell">
@@ -336,6 +389,18 @@ export default function App() {
             Gamepad mouse
           </label>
         </section>
+      )}
+
+      {eventLog.length > 0 && (
+        <aside className="event-log" aria-label="Native event log">
+          {eventLog.map((event, index) => (
+            <p key={`${event.kind}-${index}`}>
+              <strong>{event.kind}</strong>
+              {': '}
+              {event.message}
+            </p>
+          ))}
+        </aside>
       )}
 
       <footer className="status" role="status">{status}</footer>

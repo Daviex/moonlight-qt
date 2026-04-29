@@ -35,4 +35,6 @@ The streaming video path should remain a native SDL/window path. Do not attempt 
 2. Apps: list, launch, quit running app, hide/unhide, and direct-launch toggle.
 3. Settings: load and save the current streaming settings snapshot.
 
+The bridge also emits `moonlight-bridge-event` events for native-side host, app, session, settings, and status changes. The React shell subscribes to those events, refreshes the affected state, and shows recent native events in the UI. This mirrors the production shape needed for host discovery updates, app list changes, stream lifecycle events, errors, warnings, and controller navigation events.
+
 The next production step is replacing the mock Rust state with a thin bridge into the existing C++ facades without moving backend behavior into TypeScript.

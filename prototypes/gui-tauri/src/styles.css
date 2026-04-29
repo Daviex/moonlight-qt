@@ -173,6 +173,24 @@ nav {
   align-items: center;
 }
 
+.event-log {
+  display: grid;
+  gap: 0.35rem;
+  color: #9fb1c7;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 12px;
+  padding: 0.75rem;
+}
+
+.event-log p {
+  margin: 0;
+}
+
+.event-log strong {
+  color: #79c0ff;
+}
+
 .status {
   min-height: 1.5rem;
   color: #9fb1c7;

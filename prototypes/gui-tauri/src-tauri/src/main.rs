@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
+use tauri::Emitter;
+
+const BRIDGE_EVENT: &str = "moonlight-bridge-event";
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,6 +64,25 @@ struct NetworkTestResult {
 struct PairingChallenge {
     pin: String,
     message: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeEvent {
+    kind: BridgeEventKind,
+    message: String,
+    host_id: Option<String>,
+    app_id: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum BridgeEventKind {
+    HostChanged,
+    AppChanged,
+    SessionChanged,
+    SettingsChanged,
+    Status,
 }
 
 #[derive(Clone, Serialize)]
@@ -166,71 +188,111 @@ impl MockBackend {
 
 type BackendState = Mutex<MockBackend>;
 
+fn emit_bridge_event(
+    app_handle: &tauri::AppHandle,
+    kind: BridgeEventKind,
+    message: String,
+    host_id: Option<String>,
+    app_id: Option<String>,
+) -> Result<(), String> {
+    app_handle
+        .emit(
+            BRIDGE_EVENT,
+            BridgeEvent {
+                kind,
+                message,
+                host_id,
+                app_id,
+            },
+        )
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 fn list_hosts(backend: tauri::State<'_, BackendState>) -> Result<Vec<HostEntry>, String> {
     Ok(backend.lock().map_err(|error| error.to_string())?.hosts.clone())
 }
 
 #[tauri::command]
-fn add_host(address: String, backend: tauri::State<'_, BackendState>) -> Result<CommandStatus, String> {
-    let mut backend = backend.lock().map_err(|error| error.to_string())?;
-    let id = format!("manual-host-{}", backend.next_host_number);
-    backend.next_host_number += 1;
-    backend.hosts.push(HostEntry {
-        id,
-        name: format!("Host {address}"),
-        address: address.clone(),
-        status: HostStatus::PairingRequired,
-        paired: false,
-        running: false,
-    });
+fn add_host(address: String, backend: tauri::State<'_, BackendState>, app_handle: tauri::AppHandle) -> Result<CommandStatus, String> {
+    let (id, message) = {
+        let mut backend = backend.lock().map_err(|error| error.to_string())?;
+        let id = format!("manual-host-{}", backend.next_host_number);
+        backend.next_host_number += 1;
+        backend.hosts.push(HostEntry {
+            id: id.clone(),
+            name: format!("Host {address}"),
+            address: address.clone(),
+            status: HostStatus::PairingRequired,
+            paired: false,
+            running: false,
+        });
+        (id, format!("Added host {address}."))
+    };
+    emit_bridge_event(&app_handle, BridgeEventKind::HostChanged, message.clone(), Some(id), None)?;
     Ok(CommandStatus {
-        message: format!("Added host {address}."),
+        message,
     })
 }
 
 #[tauri::command]
-fn pair_host(host_id: String, backend: tauri::State<'_, BackendState>) -> Result<PairingChallenge, String> {
-    let mut backend = backend.lock().map_err(|error| error.to_string())?;
-    let host = backend.host_mut(&host_id)?;
-    host.paired = true;
-    host.status = HostStatus::Online;
+fn pair_host(host_id: String, backend: tauri::State<'_, BackendState>, app_handle: tauri::AppHandle) -> Result<PairingChallenge, String> {
+    let message = {
+        let mut backend = backend.lock().map_err(|error| error.to_string())?;
+        let host = backend.host_mut(&host_id)?;
+        host.paired = true;
+        host.status = HostStatus::Online;
+        format!("Enter PIN 1234 on {} to complete pairing.", host.name)
+    };
+    emit_bridge_event(&app_handle, BridgeEventKind::HostChanged, message.clone(), Some(host_id), None)?;
     Ok(PairingChallenge {
         pin: "1234".into(),
-        message: format!("Enter PIN 1234 on {} to complete pairing.", host.name),
+        message,
     })
 }
 
 #[tauri::command]
-fn wake_host(host_id: String, backend: tauri::State<'_, BackendState>) -> Result<CommandStatus, String> {
-    let mut backend = backend.lock().map_err(|error| error.to_string())?;
-    let host = backend.host_mut(&host_id)?;
-    host.status = HostStatus::Online;
+fn wake_host(host_id: String, backend: tauri::State<'_, BackendState>, app_handle: tauri::AppHandle) -> Result<CommandStatus, String> {
+    let message = {
+        let mut backend = backend.lock().map_err(|error| error.to_string())?;
+        let host = backend.host_mut(&host_id)?;
+        host.status = HostStatus::Online;
+        format!("Wake requested for {}.", host.name)
+    };
+    emit_bridge_event(&app_handle, BridgeEventKind::HostChanged, message.clone(), Some(host_id), None)?;
     Ok(CommandStatus {
-        message: format!("Wake requested for {}.", host.name),
+        message,
     })
 }
 
 #[tauri::command]
-fn rename_host(host_id: String, name: String, backend: tauri::State<'_, BackendState>) -> Result<CommandStatus, String> {
-    let mut backend = backend.lock().map_err(|error| error.to_string())?;
-    let host = backend.host_mut(&host_id)?;
-    host.name = name.clone();
+fn rename_host(host_id: String, name: String, backend: tauri::State<'_, BackendState>, app_handle: tauri::AppHandle) -> Result<CommandStatus, String> {
+    let message = {
+        let mut backend = backend.lock().map_err(|error| error.to_string())?;
+        let host = backend.host_mut(&host_id)?;
+        host.name = name.clone();
+        format!("Renamed host to {name}.")
+    };
+    emit_bridge_event(&app_handle, BridgeEventKind::HostChanged, message.clone(), Some(host_id), None)?;
     Ok(CommandStatus {
-        message: format!("Renamed host to {name}."),
+        message,
     })
 }
 
 #[tauri::command]
-fn delete_host(host_id: String, backend: tauri::State<'_, BackendState>) -> Result<CommandStatus, String> {
-    let mut backend = backend.lock().map_err(|error| error.to_string())?;
-    let before = backend.hosts.len();
-    backend.hosts.retain(|host| host.id != host_id);
-    if backend.hosts.len() == before {
-        return Err(format!("Host '{host_id}' was not found."));
+fn delete_host(host_id: String, backend: tauri::State<'_, BackendState>, app_handle: tauri::AppHandle) -> Result<CommandStatus, String> {
+    {
+        let mut backend = backend.lock().map_err(|error| error.to_string())?;
+        let before = backend.hosts.len();
+        backend.hosts.retain(|host| host.id != host_id);
+        if backend.hosts.len() == before {
+            return Err(format!("Host '{host_id}' was not found."));
+        }
     }
+    let message = "Host deleted.".to_string();
+    emit_bridge_event(&app_handle, BridgeEventKind::HostChanged, message.clone(), Some(host_id), None)?;
     Ok(CommandStatus {
-        message: "Host deleted.".into(),
+        message,
     })
 }
 
@@ -249,13 +311,15 @@ fn host_details(host_id: String, backend: tauri::State<'_, BackendState>) -> Res
 }
 
 #[tauri::command]
-fn test_network(host_id: String, backend: tauri::State<'_, BackendState>) -> Result<NetworkTestResult, String> {
+fn test_network(host_id: String, backend: tauri::State<'_, BackendState>, app_handle: tauri::AppHandle) -> Result<NetworkTestResult, String> {
     let backend = backend.lock().map_err(|error| error.to_string())?;
     let host = backend.host(&host_id)?;
+    let message = format!("No blocked ports detected for {}.", host.name);
+    emit_bridge_event(&app_handle, BridgeEventKind::Status, message.clone(), Some(host_id), None)?;
     Ok(NetworkTestResult {
         result: "ok".into(),
         blocked_ports: Vec::new(),
-        message: format!("No blocked ports detected for {}.", host.name),
+        message,
     })
 }
 
@@ -272,63 +336,78 @@ fn list_apps(host_id: String, show_hidden: bool, backend: tauri::State<'_, Backe
 }
 
 #[tauri::command]
-fn launch_app(host_id: String, app_id: String, backend: tauri::State<'_, BackendState>) -> Result<CommandStatus, String> {
-    let mut backend = backend.lock().map_err(|error| error.to_string())?;
+fn launch_app(host_id: String, app_id: String, backend: tauri::State<'_, BackendState>, app_handle: tauri::AppHandle) -> Result<CommandStatus, String> {
     let app_name = {
-        let app = backend.app_mut(&app_id)?;
-        app.running = true;
-        app.name.clone()
+        let mut backend = backend.lock().map_err(|error| error.to_string())?;
+        let app_name = {
+            let app = backend.app_mut(&app_id)?;
+            app.running = true;
+            app.name.clone()
+        };
+        let host = backend.host_mut(&host_id)?;
+        host.running = true;
+        app_name
     };
-    let host = backend.host_mut(&host_id)?;
-    host.running = true;
+    let message = format!("Launch requested for {app_name}.");
+    emit_bridge_event(&app_handle, BridgeEventKind::SessionChanged, message.clone(), Some(host_id.clone()), Some(app_id.clone()))?;
+    emit_bridge_event(&app_handle, BridgeEventKind::AppChanged, message.clone(), Some(host_id), Some(app_id))?;
     Ok(CommandStatus {
-        message: format!("Launch requested for {app_name}."),
+        message,
     })
 }
 
 #[tauri::command]
-fn quit_running_app(host_id: String, backend: tauri::State<'_, BackendState>) -> Result<CommandStatus, String> {
-    let mut backend = backend.lock().map_err(|error| error.to_string())?;
-    backend.host_mut(&host_id)?.running = false;
-    for app in &mut backend.apps {
-        app.running = false;
+fn quit_running_app(host_id: String, backend: tauri::State<'_, BackendState>, app_handle: tauri::AppHandle) -> Result<CommandStatus, String> {
+    {
+        let mut backend = backend.lock().map_err(|error| error.to_string())?;
+        backend.host_mut(&host_id)?.running = false;
+        for app in &mut backend.apps {
+            app.running = false;
+        }
     }
+    let message = "Quit requested for the running app.".to_string();
+    emit_bridge_event(&app_handle, BridgeEventKind::SessionChanged, message.clone(), Some(host_id.clone()), None)?;
+    emit_bridge_event(&app_handle, BridgeEventKind::AppChanged, message.clone(), Some(host_id), None)?;
     Ok(CommandStatus {
-        message: "Quit requested for the running app.".into(),
+        message,
     })
 }
 
 #[tauri::command]
-fn set_app_hidden(host_id: String, app_id: String, hidden: bool, backend: tauri::State<'_, BackendState>) -> Result<CommandStatus, String> {
-    let mut backend = backend.lock().map_err(|error| error.to_string())?;
-    backend.host(&host_id)?;
-    let app = backend.app_mut(&app_id)?;
-    app.hidden = hidden;
-    Ok(CommandStatus {
-        message: if hidden {
+fn set_app_hidden(host_id: String, app_id: String, hidden: bool, backend: tauri::State<'_, BackendState>, app_handle: tauri::AppHandle) -> Result<CommandStatus, String> {
+    let message = {
+        let mut backend = backend.lock().map_err(|error| error.to_string())?;
+        backend.host(&host_id)?;
+        let app = backend.app_mut(&app_id)?;
+        app.hidden = hidden;
+        if hidden {
             format!("{} is now hidden.", app.name)
         } else {
             format!("{} is now visible.", app.name)
-        },
-    })
+        }
+    };
+    emit_bridge_event(&app_handle, BridgeEventKind::AppChanged, message.clone(), Some(host_id), Some(app_id))?;
+    Ok(CommandStatus { message })
 }
 
 #[tauri::command]
-fn set_app_direct_launch(host_id: String, app_id: String, direct_launch: bool, backend: tauri::State<'_, BackendState>) -> Result<CommandStatus, String> {
-    let mut backend = backend.lock().map_err(|error| error.to_string())?;
-    backend.host(&host_id)?;
-    for app in &mut backend.apps {
-        app.direct_launch = false;
-    }
-    let app = backend.app_mut(&app_id)?;
-    app.direct_launch = direct_launch;
-    Ok(CommandStatus {
-        message: if direct_launch {
+fn set_app_direct_launch(host_id: String, app_id: String, direct_launch: bool, backend: tauri::State<'_, BackendState>, app_handle: tauri::AppHandle) -> Result<CommandStatus, String> {
+    let message = {
+        let mut backend = backend.lock().map_err(|error| error.to_string())?;
+        backend.host(&host_id)?;
+        for app in &mut backend.apps {
+            app.direct_launch = false;
+        }
+        let app = backend.app_mut(&app_id)?;
+        app.direct_launch = direct_launch;
+        if direct_launch {
             format!("{} is now the direct-launch app.", app.name)
         } else {
             "Direct launch disabled.".into()
-        },
-    })
+        }
+    };
+    emit_bridge_event(&app_handle, BridgeEventKind::AppChanged, message.clone(), Some(host_id), Some(app_id))?;
+    Ok(CommandStatus { message })
 }
 
 #[tauri::command]
@@ -337,10 +416,12 @@ fn load_settings(backend: tauri::State<'_, BackendState>) -> Result<StreamingSet
 }
 
 #[tauri::command]
-fn save_settings(settings: StreamingSettings, backend: tauri::State<'_, BackendState>) -> Result<CommandStatus, String> {
+fn save_settings(settings: StreamingSettings, backend: tauri::State<'_, BackendState>, app_handle: tauri::AppHandle) -> Result<CommandStatus, String> {
     backend.lock().map_err(|error| error.to_string())?.settings = settings;
+    let message = "Settings saved.".to_string();
+    emit_bridge_event(&app_handle, BridgeEventKind::SettingsChanged, message.clone(), None, None)?;
     Ok(CommandStatus {
-        message: "Settings saved.".into(),
+        message,
     })
 }
 
