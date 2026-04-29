@@ -426,6 +426,7 @@ void GuiNextWindow::buildSettingsPage()
     connect(m_HeightSpinBox, qOverload<int>(&QSpinBox::valueChanged), this, &GuiNextWindow::handleStreamingShapeChanged);
     connect(m_FpsSpinBox, qOverload<int>(&QSpinBox::valueChanged), this, &GuiNextWindow::handleStreamingShapeChanged);
     connect(m_Yuv444CheckBox, &QCheckBox::toggled, this, &GuiNextWindow::handleStreamingShapeChanged);
+    connect(m_VsyncCheckBox, &QCheckBox::toggled, this, &GuiNextWindow::handleVsyncToggled);
     connect(m_AutoAdjustBitrateCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
         if (!m_LoadingSettings && checked) {
             resetBitrateToDefault();
@@ -866,6 +867,7 @@ void GuiNextWindow::addHost()
 void GuiNextWindow::showSettings()
 {
     FrontendStreamingPreferences preferences = m_Facade.preferences()->preferences();
+    FrontendSystemProperties system = m_Facade.system()->properties();
     m_LoadingSettings = true;
     m_WidthSpinBox->setValue(preferences.width);
     m_HeightSpinBox->setValue(preferences.height);
@@ -889,7 +891,7 @@ void GuiNextWindow::showSettings()
     m_QuitAppAfterCheckBox->setChecked(preferences.quitAppAfter);
     m_AbsoluteMouseCheckBox->setChecked(preferences.absoluteMouseMode);
     m_AbsoluteTouchCheckBox->setChecked(preferences.absoluteTouchMode);
-    m_FramePacingCheckBox->setChecked(preferences.framePacing);
+    m_FramePacingCheckBox->setChecked(preferences.enableVsync && preferences.framePacing);
     m_ConnectionWarningsCheckBox->setChecked(preferences.connectionWarnings);
     m_ConfigWarningsCheckBox->setChecked(preferences.configurationWarnings);
     m_RichPresenceCheckBox->setChecked(preferences.richPresence);
@@ -902,9 +904,14 @@ void GuiNextWindow::showSettings()
     m_ReverseScrollCheckBox->setChecked(preferences.reverseScrollDirection);
     m_SwapFaceButtonsCheckBox->setChecked(preferences.swapFaceButtons);
     m_KeepAwakeCheckBox->setChecked(preferences.keepAwake);
-    m_HdrCheckBox->setChecked(preferences.enableHdr);
+    m_HdrCheckBox->setChecked(system.supportsHdr && preferences.enableHdr);
     m_Yuv444CheckBox->setChecked(preferences.enableYUV444);
     m_LoadingSettings = false;
+    m_WindowModeComboBox->setEnabled(system.hasDesktopEnvironment && !system.rendererAlwaysFullScreen);
+    m_UiModeComboBox->setEnabled(system.hasDesktopEnvironment);
+    m_RichPresenceCheckBox->setEnabled(system.hasDiscordIntegration);
+    m_HdrCheckBox->setEnabled(system.supportsHdr);
+    handleVsyncToggled(m_VsyncCheckBox->isChecked());
     updateDefaultBitrateButton();
     m_ControllerAdapter.setUiNavMode(true);
     m_Stack->setCurrentIndex(SettingsPageIndex);
@@ -1013,6 +1020,14 @@ void GuiNextWindow::handleBitrateEdited()
         m_AutoAdjustBitrateCheckBox->setChecked(false);
     }
     updateDefaultBitrateButton();
+}
+
+void GuiNextWindow::handleVsyncToggled(bool checked)
+{
+    m_FramePacingCheckBox->setEnabled(checked);
+    if (!checked) {
+        m_FramePacingCheckBox->setChecked(false);
+    }
 }
 
 void GuiNextWindow::resetBitrateToDefault()

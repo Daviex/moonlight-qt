@@ -60,6 +60,7 @@ private slots:
     void handleQuitAppCompleted(const QString& error);
     void handleStreamingShapeChanged();
     void handleBitrateEdited();
+    void handleVsyncToggled(bool checked);
     void resetBitrateToDefault();
     void toggleSelectedAppHidden();
     void toggleSelectedAppDirectLaunch();
