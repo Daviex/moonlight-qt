@@ -43,6 +43,7 @@ export interface AppEntry {
   hidden: boolean;
   directLaunch: boolean;
   running: boolean;
+  appCollectorGame: boolean;
 }
 
 export interface StreamingSettings {

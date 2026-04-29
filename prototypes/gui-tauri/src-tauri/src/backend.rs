@@ -46,6 +46,7 @@ pub struct AppEntry {
     pub hidden: bool,
     pub direct_launch: bool,
     pub running: bool,
+    pub app_collector_game: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize)]

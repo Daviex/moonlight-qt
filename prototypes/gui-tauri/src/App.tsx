@@ -1287,6 +1287,7 @@ export default function App() {
                     <span className="title">{app.name}</span>
                     <span>{app.running ? 'Running' : 'Ready'}</span>
                     {app.directLaunch && <span className="tag">Direct Launch</span>}
+                    {app.appCollectorGame && <span className="tag">App Collector</span>}
                     {app.hidden && <span className="tag muted">Hidden</span>}
                   </button>
                   <div className="card-actions">

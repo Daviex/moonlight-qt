@@ -970,6 +970,7 @@ QJsonObject TauriBridgeHelper::appToJson(const FrontendApp& app) const
         {"hidden", app.hidden},
         {"directLaunch", app.directLaunch},
         {"running", app.running},
+        {"appCollectorGame", app.appCollectorGame},
     };
 }
 

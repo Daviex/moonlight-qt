@@ -47,6 +47,7 @@ impl MockBackend {
                     hidden: false,
                     direct_launch: true,
                     running: false,
+                    app_collector_game: false,
                 },
                 AppEntry {
                     id: "desktop".into(),
@@ -55,6 +56,7 @@ impl MockBackend {
                     hidden: false,
                     direct_launch: false,
                     running: false,
+                    app_collector_game: false,
                 },
                 AppEntry {
                     id: "game".into(),
@@ -63,6 +65,7 @@ impl MockBackend {
                     hidden: false,
                     direct_launch: false,
                     running: false,
+                    app_collector_game: true,
                 },
             ],
             settings: StreamingSettings {
