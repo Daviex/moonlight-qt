@@ -910,6 +910,22 @@ export default function App() {
         handleStatusEvent(event);
       }
 
+      if (event.kind === 'hostChanged' && /pairing completed/i.test(event.message)) {
+        setDialog((currentDialog) => currentDialog.kind === 'pairing' ? { kind: 'none' } : currentDialog);
+      }
+
+      if (event.kind === 'status' && /pair/i.test(event.message)) {
+        setDialog((currentDialog) => currentDialog.kind === 'pairing'
+          ? {
+            ...currentDialog,
+            challenge: {
+              ...currentDialog.challenge,
+              message: event.message,
+            },
+          }
+          : currentDialog);
+      }
+
       if (event.kind === 'updateAvailable') {
         setUpdateInfo({
           version: event.updateVersion ?? '',
