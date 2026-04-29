@@ -224,6 +224,10 @@ impl Drop for IpcBackend {
 }
 
 impl MoonlightBackend for IpcBackend {
+    fn emits_native_events(&self) -> bool {
+        true
+    }
+
     fn list_hosts(&mut self) -> Result<Vec<HostEntry>, String> {
         self.request(IpcCommand::ListHosts)
     }

@@ -110,6 +110,10 @@ pub enum HostStatus {
 }
 
 pub trait MoonlightBackend: Send {
+    fn emits_native_events(&self) -> bool {
+        false
+    }
+
     fn list_hosts(&mut self) -> Result<Vec<HostEntry>, String>;
     fn add_host(&mut self, address: String) -> Result<(CommandStatus, String), String>;
     fn pair_host(&mut self, host_id: &str) -> Result<PairingChallenge, String>;

@@ -81,17 +81,20 @@ fn add_host(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
-    let (status, host_id) = backend
-        .lock()
-        .map_err(|error| error.to_string())?
-        .add_host(address)?;
-    emit_bridge_event(
-        &app_handle,
-        BridgeEventKind::HostChanged,
-        status.message.clone(),
-        Some(host_id),
-        None,
-    )?;
+    let mut backend = backend.lock().map_err(|error| error.to_string())?;
+    let (status, host_id) = backend.add_host(address)?;
+    let emit_command_events = !backend.emits_native_events();
+    drop(backend);
+
+    if emit_command_events {
+        emit_bridge_event(
+            &app_handle,
+            BridgeEventKind::HostChanged,
+            status.message.clone(),
+            Some(host_id),
+            None,
+        )?;
+    }
     Ok(status)
 }
 
@@ -101,17 +104,20 @@ fn pair_host(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<PairingChallenge, String> {
-    let challenge = backend
-        .lock()
-        .map_err(|error| error.to_string())?
-        .pair_host(&host_id)?;
-    emit_bridge_event(
-        &app_handle,
-        BridgeEventKind::HostChanged,
-        challenge.message.clone(),
-        Some(host_id),
-        None,
-    )?;
+    let mut backend = backend.lock().map_err(|error| error.to_string())?;
+    let challenge = backend.pair_host(&host_id)?;
+    let emit_command_events = !backend.emits_native_events();
+    drop(backend);
+
+    if emit_command_events {
+        emit_bridge_event(
+            &app_handle,
+            BridgeEventKind::HostChanged,
+            challenge.message.clone(),
+            Some(host_id),
+            None,
+        )?;
+    }
     Ok(challenge)
 }
 
@@ -121,17 +127,20 @@ fn wake_host(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
-    let status = backend
-        .lock()
-        .map_err(|error| error.to_string())?
-        .wake_host(&host_id)?;
-    emit_bridge_event(
-        &app_handle,
-        BridgeEventKind::HostChanged,
-        status.message.clone(),
-        Some(host_id),
-        None,
-    )?;
+    let mut backend = backend.lock().map_err(|error| error.to_string())?;
+    let status = backend.wake_host(&host_id)?;
+    let emit_command_events = !backend.emits_native_events();
+    drop(backend);
+
+    if emit_command_events {
+        emit_bridge_event(
+            &app_handle,
+            BridgeEventKind::HostChanged,
+            status.message.clone(),
+            Some(host_id),
+            None,
+        )?;
+    }
     Ok(status)
 }
 
@@ -142,17 +151,20 @@ fn rename_host(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
-    let status = backend
-        .lock()
-        .map_err(|error| error.to_string())?
-        .rename_host(&host_id, name)?;
-    emit_bridge_event(
-        &app_handle,
-        BridgeEventKind::HostChanged,
-        status.message.clone(),
-        Some(host_id),
-        None,
-    )?;
+    let mut backend = backend.lock().map_err(|error| error.to_string())?;
+    let status = backend.rename_host(&host_id, name)?;
+    let emit_command_events = !backend.emits_native_events();
+    drop(backend);
+
+    if emit_command_events {
+        emit_bridge_event(
+            &app_handle,
+            BridgeEventKind::HostChanged,
+            status.message.clone(),
+            Some(host_id),
+            None,
+        )?;
+    }
     Ok(status)
 }
 
@@ -162,17 +174,20 @@ fn delete_host(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
-    let status = backend
-        .lock()
-        .map_err(|error| error.to_string())?
-        .delete_host(&host_id)?;
-    emit_bridge_event(
-        &app_handle,
-        BridgeEventKind::HostChanged,
-        status.message.clone(),
-        Some(host_id),
-        None,
-    )?;
+    let mut backend = backend.lock().map_err(|error| error.to_string())?;
+    let status = backend.delete_host(&host_id)?;
+    let emit_command_events = !backend.emits_native_events();
+    drop(backend);
+
+    if emit_command_events {
+        emit_bridge_event(
+            &app_handle,
+            BridgeEventKind::HostChanged,
+            status.message.clone(),
+            Some(host_id),
+            None,
+        )?;
+    }
     Ok(status)
 }
 
@@ -193,17 +208,20 @@ fn test_network(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<NetworkTestResult, String> {
-    let result = backend
-        .lock()
-        .map_err(|error| error.to_string())?
-        .test_network(&host_id)?;
-    emit_bridge_event(
-        &app_handle,
-        BridgeEventKind::Status,
-        result.message.clone(),
-        Some(host_id),
-        None,
-    )?;
+    let mut backend = backend.lock().map_err(|error| error.to_string())?;
+    let result = backend.test_network(&host_id)?;
+    let emit_command_events = !backend.emits_native_events();
+    drop(backend);
+
+    if emit_command_events {
+        emit_bridge_event(
+            &app_handle,
+            BridgeEventKind::Status,
+            result.message.clone(),
+            Some(host_id),
+            None,
+        )?;
+    }
     Ok(result)
 }
 
@@ -226,24 +244,27 @@ fn launch_app(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
-    let status = backend
-        .lock()
-        .map_err(|error| error.to_string())?
-        .launch_app(&host_id, &app_id)?;
-    emit_bridge_event(
-        &app_handle,
-        BridgeEventKind::SessionChanged,
-        status.message.clone(),
-        Some(host_id.clone()),
-        Some(app_id.clone()),
-    )?;
-    emit_bridge_event(
-        &app_handle,
-        BridgeEventKind::AppChanged,
-        status.message.clone(),
-        Some(host_id),
-        Some(app_id),
-    )?;
+    let mut backend = backend.lock().map_err(|error| error.to_string())?;
+    let status = backend.launch_app(&host_id, &app_id)?;
+    let emit_command_events = !backend.emits_native_events();
+    drop(backend);
+
+    if emit_command_events {
+        emit_bridge_event(
+            &app_handle,
+            BridgeEventKind::SessionChanged,
+            status.message.clone(),
+            Some(host_id.clone()),
+            Some(app_id.clone()),
+        )?;
+        emit_bridge_event(
+            &app_handle,
+            BridgeEventKind::AppChanged,
+            status.message.clone(),
+            Some(host_id),
+            Some(app_id),
+        )?;
+    }
     Ok(status)
 }
 
@@ -253,24 +274,27 @@ fn quit_running_app(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
-    let status = backend
-        .lock()
-        .map_err(|error| error.to_string())?
-        .quit_running_app(&host_id)?;
-    emit_bridge_event(
-        &app_handle,
-        BridgeEventKind::SessionChanged,
-        status.message.clone(),
-        Some(host_id.clone()),
-        None,
-    )?;
-    emit_bridge_event(
-        &app_handle,
-        BridgeEventKind::AppChanged,
-        status.message.clone(),
-        Some(host_id),
-        None,
-    )?;
+    let mut backend = backend.lock().map_err(|error| error.to_string())?;
+    let status = backend.quit_running_app(&host_id)?;
+    let emit_command_events = !backend.emits_native_events();
+    drop(backend);
+
+    if emit_command_events {
+        emit_bridge_event(
+            &app_handle,
+            BridgeEventKind::SessionChanged,
+            status.message.clone(),
+            Some(host_id.clone()),
+            None,
+        )?;
+        emit_bridge_event(
+            &app_handle,
+            BridgeEventKind::AppChanged,
+            status.message.clone(),
+            Some(host_id),
+            None,
+        )?;
+    }
     Ok(status)
 }
 
@@ -282,17 +306,20 @@ fn set_app_hidden(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
-    let status = backend
-        .lock()
-        .map_err(|error| error.to_string())?
-        .set_app_hidden(&host_id, &app_id, hidden)?;
-    emit_bridge_event(
-        &app_handle,
-        BridgeEventKind::AppChanged,
-        status.message.clone(),
-        Some(host_id),
-        Some(app_id),
-    )?;
+    let mut backend = backend.lock().map_err(|error| error.to_string())?;
+    let status = backend.set_app_hidden(&host_id, &app_id, hidden)?;
+    let emit_command_events = !backend.emits_native_events();
+    drop(backend);
+
+    if emit_command_events {
+        emit_bridge_event(
+            &app_handle,
+            BridgeEventKind::AppChanged,
+            status.message.clone(),
+            Some(host_id),
+            Some(app_id),
+        )?;
+    }
     Ok(status)
 }
 
@@ -304,17 +331,20 @@ fn set_app_direct_launch(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
-    let status = backend
-        .lock()
-        .map_err(|error| error.to_string())?
-        .set_app_direct_launch(&host_id, &app_id, direct_launch)?;
-    emit_bridge_event(
-        &app_handle,
-        BridgeEventKind::AppChanged,
-        status.message.clone(),
-        Some(host_id),
-        Some(app_id),
-    )?;
+    let mut backend = backend.lock().map_err(|error| error.to_string())?;
+    let status = backend.set_app_direct_launch(&host_id, &app_id, direct_launch)?;
+    let emit_command_events = !backend.emits_native_events();
+    drop(backend);
+
+    if emit_command_events {
+        emit_bridge_event(
+            &app_handle,
+            BridgeEventKind::AppChanged,
+            status.message.clone(),
+            Some(host_id),
+            Some(app_id),
+        )?;
+    }
     Ok(status)
 }
 
@@ -332,17 +362,20 @@ fn save_settings(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
-    let status = backend
-        .lock()
-        .map_err(|error| error.to_string())?
-        .save_settings(settings)?;
-    emit_bridge_event(
-        &app_handle,
-        BridgeEventKind::SettingsChanged,
-        status.message.clone(),
-        None,
-        None,
-    )?;
+    let mut backend = backend.lock().map_err(|error| error.to_string())?;
+    let status = backend.save_settings(settings)?;
+    let emit_command_events = !backend.emits_native_events();
+    drop(backend);
+
+    if emit_command_events {
+        emit_bridge_event(
+            &app_handle,
+            BridgeEventKind::SettingsChanged,
+            status.message.clone(),
+            None,
+            None,
+        )?;
+    }
     Ok(status)
 }
 
