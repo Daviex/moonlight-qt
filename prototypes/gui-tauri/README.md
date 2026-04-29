@@ -35,7 +35,7 @@ The streaming video path should remain a native SDL/window path. Do not attempt 
 2. Apps: list, launch, quit running app, hide/unhide, and direct-launch toggle.
 3. Settings: load and save the current streaming settings snapshot.
 
-The bridge also emits `moonlight-bridge-event` events for native-side host, app, session, settings, status, and controller navigation changes. The React shell subscribes to those events, refreshes the affected state, translates controller actions into web focus/activation/back/settings behavior, and shows recent native events in the UI. This mirrors the production shape needed for host discovery updates, app list changes, stream lifecycle events, errors, warnings, and SDL-derived controller navigation events.
+The bridge also emits `moonlight-bridge-event` events for native-side host, app, session, settings, status, and controller navigation changes. The React shell subscribes to those events, refreshes the affected state, translates controller actions into web focus/activation/back/settings behavior, and shows recent native events in the UI. This mirrors the production shape needed for host discovery updates, app list changes, stream lifecycle events, errors, warnings, and SDL-derived controller navigation events. `src-tauri\capabilities\default.json` grants the Tauri v2 `core:event:default` permission required for frontend event subscriptions.
 
 For now, the prototype exposes a small "Controller event test" toolbar that asks the native side to emit controller actions. Production should replace this mock command with events from Moonlight's existing SDL controller navigation source.
 

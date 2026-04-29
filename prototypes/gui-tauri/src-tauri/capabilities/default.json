@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Allow the main Moonlight prototype window to subscribe to native bridge events.",
+  "windows": ["*"],
+  "permissions": ["core:event:default"]
+}
