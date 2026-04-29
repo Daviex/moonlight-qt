@@ -931,6 +931,20 @@ export default function App() {
     }
   }, [closeDialog, dialog.kind, loadSettings, page]);
 
+  const handleRefreshShortcut = useCallback(() => {
+    if (page === 'apps' && selectedHostId) {
+      void refreshApps(selectedHostId, showHiddenApps);
+      return;
+    }
+
+    if (page === 'settings') {
+      void loadSettings();
+      return;
+    }
+
+    void refreshHosts();
+  }, [loadSettings, page, refreshApps, refreshHosts, selectedHostId, showHiddenApps]);
+
   const handleBridgeEvent = useCallback((event: BridgeEvent) => {
     writeDebugLog(`bridge event received; kind=${event.kind}; message=${event.message}`);
     setEventLog((previousEvents) => [event, ...previousEvents].slice(0, 6));
@@ -1012,6 +1026,39 @@ export default function App() {
 
     return () => window.clearTimeout(focusTimer);
   }, [dialog.kind]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      const editingText = target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement;
+
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        handleControllerAction('back');
+        return;
+      }
+
+      if (editingText) {
+        return;
+      }
+
+      if (event.key === 'F5') {
+        event.preventDefault();
+        handleRefreshShortcut();
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.key === ',') {
+        event.preventDefault();
+        void loadSettings();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleControllerAction, handleRefreshShortcut, loadSettings]);
 
   useEffect(() => {
     if (hosts.length > 0) {
@@ -1204,6 +1251,10 @@ export default function App() {
                 Use Hosts to refresh discovery, add/pair/wake/test machines, and open Apps. Use Settings to edit the
                 streaming snapshot exposed by the native helper. Controller actions move focus and activate the selected
                 control.
+              </p>
+              <p>
+                Keyboard shortcuts: Escape goes back or closes dialogs, F5 refreshes the current page, and Ctrl+Comma
+                opens Settings.
               </p>
               <h3>System</h3>
               {systemInfo ? (
