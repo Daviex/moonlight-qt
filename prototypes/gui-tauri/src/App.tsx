@@ -1009,11 +1009,10 @@ export default function App() {
   }, [handleControllerAction, handleSessionEvent, handleStatusEvent, refreshApps, refreshHosts, refreshSettingsSnapshot, selectedHostId, showHiddenApps, syncWindowForSessionEvent]);
 
   useEffect(() => {
-    writeDebugLog('frontend mounted; loading backend info, hosts, and system info');
+    writeDebugLog('frontend mounted; loading backend info and hosts');
     void refreshBackendInfo();
     void refreshHosts();
-    void loadSystemInfo();
-  }, [loadSystemInfo, refreshBackendInfo, refreshHosts]);
+  }, [refreshBackendInfo, refreshHosts]);
 
   useEffect(() => {
     if (dialog.kind === 'none') {
