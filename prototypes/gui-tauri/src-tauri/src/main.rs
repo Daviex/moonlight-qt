@@ -73,6 +73,7 @@ struct BridgeEvent {
     message: String,
     host_id: Option<String>,
     app_id: Option<String>,
+    controller_action: Option<ControllerAction>,
 }
 
 #[derive(Clone, Serialize)]
@@ -83,6 +84,23 @@ enum BridgeEventKind {
     SessionChanged,
     SettingsChanged,
     Status,
+    ControllerAction,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum ControllerAction {
+    Up,
+    Down,
+    Left,
+    Right,
+    Accept,
+    Back,
+    ContextMenu,
+    Settings,
+    NextControl,
+    PreviousControl,
+    ActivateControl,
 }
 
 #[derive(Clone, Serialize)]
@@ -203,9 +221,28 @@ fn emit_bridge_event(
                 message,
                 host_id,
                 app_id,
+                controller_action: None,
             },
         )
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn emit_controller_action(action: ControllerAction, app_handle: tauri::AppHandle) -> Result<CommandStatus, String> {
+    let message = format!("Controller action: {action:?}");
+    app_handle
+        .emit(
+            BRIDGE_EVENT,
+            BridgeEvent {
+                kind: BridgeEventKind::ControllerAction,
+                message: message.clone(),
+                host_id: None,
+                app_id: None,
+                controller_action: Some(action),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(CommandStatus { message })
 }
 
 #[tauri::command]
@@ -443,7 +480,8 @@ fn main() {
             set_app_hidden,
             set_app_direct_launch,
             load_settings,
-            save_settings
+            save_settings,
+            emit_controller_action
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Moonlight Tauri prototype");

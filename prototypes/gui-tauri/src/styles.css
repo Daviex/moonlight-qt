@@ -65,6 +65,19 @@ nav {
   gap: 0.75rem;
 }
 
+.controller-test {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  color: #9fb1c7;
+}
+
+.controller-test button {
+  background: #30363d;
+  padding: 0.45rem 0.65rem;
+}
+
 .button-row {
   display: flex;
   flex-wrap: wrap;

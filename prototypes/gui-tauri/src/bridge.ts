@@ -53,13 +53,33 @@ export interface PairingChallenge {
   message: string;
 }
 
-export type BridgeEventKind = 'hostChanged' | 'appChanged' | 'sessionChanged' | 'settingsChanged' | 'status';
+export type ControllerAction =
+  | 'up'
+  | 'down'
+  | 'left'
+  | 'right'
+  | 'accept'
+  | 'back'
+  | 'contextMenu'
+  | 'settings'
+  | 'nextControl'
+  | 'previousControl'
+  | 'activateControl';
+
+export type BridgeEventKind =
+  | 'hostChanged'
+  | 'appChanged'
+  | 'sessionChanged'
+  | 'settingsChanged'
+  | 'status'
+  | 'controllerAction';
 
 export interface BridgeEvent {
   kind: BridgeEventKind;
   message: string;
   hostId?: string;
   appId?: string;
+  controllerAction?: ControllerAction;
 }
 
 export const BRIDGE_EVENT = 'moonlight-bridge-event';
@@ -82,6 +102,8 @@ export const bridge = {
     invoke<CommandStatus>('set_app_direct_launch', { hostId, appId, directLaunch }),
   loadSettings: () => invoke<StreamingSettings>('load_settings'),
   saveSettings: (settings: StreamingSettings) => invoke<CommandStatus>('save_settings', { settings }),
+  emitControllerAction: (action: ControllerAction) =>
+    invoke<CommandStatus>('emit_controller_action', { action }),
   listen: (handler: (event: BridgeEvent) => void) =>
     listen<BridgeEvent>(BRIDGE_EVENT, (event) => handler(event.payload)),
 };

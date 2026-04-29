@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AppEntry,
   BridgeEvent,
+  ControllerAction,
   HostEntry,
   StreamingSettings,
   bridge,
@@ -17,6 +18,36 @@ const fallbackSettings: StreamingSettings = {
   enableHdr: false,
   gamepadMouse: true,
 };
+
+const controllerTestActions: ControllerAction[] = [
+  'previousControl',
+  'nextControl',
+  'accept',
+  'back',
+  'settings',
+  'contextMenu',
+];
+
+function focusableElements(): HTMLElement[] {
+  return Array.from(
+    document.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'),
+  ).filter((element) =>
+    !element.hasAttribute('disabled') &&
+    element.tabIndex !== -1 &&
+    element.offsetParent !== null,
+  );
+}
+
+function moveFocus(delta: number) {
+  const elements = focusableElements();
+  if (elements.length === 0) {
+    return;
+  }
+
+  const currentIndex = Math.max(0, elements.indexOf(document.activeElement as HTMLElement));
+  const nextIndex = (currentIndex + delta + elements.length) % elements.length;
+  elements[nextIndex].focus();
+}
 
 export default function App() {
   const [page, setPage] = useState<Page>('hosts');
@@ -220,9 +251,53 @@ export default function App() {
     }
   }, [refreshApps, selectedHostId, showHiddenApps]);
 
+  const handleControllerAction = useCallback((action: ControllerAction) => {
+    switch (action) {
+    case 'up':
+    case 'left':
+    case 'previousControl':
+      moveFocus(-1);
+      break;
+    case 'down':
+    case 'right':
+    case 'nextControl':
+      moveFocus(1);
+      break;
+    case 'accept':
+    case 'activateControl': {
+      const activeElement = document.activeElement;
+      if (activeElement instanceof HTMLElement) {
+        activeElement.click();
+      }
+      else {
+        focusableElements()[0]?.focus();
+      }
+      break;
+    }
+    case 'back':
+      if (page === 'apps' || page === 'settings') {
+        setPage('hosts');
+      }
+      else {
+        setStatus('Back requested from the host page.');
+      }
+      break;
+    case 'settings':
+      void loadSettings();
+      break;
+    case 'contextMenu':
+      setStatus('Context menu requested by controller navigation.');
+      break;
+    }
+  }, [loadSettings, page]);
+
   const handleBridgeEvent = useCallback((event: BridgeEvent) => {
     setEventLog((previousEvents) => [event, ...previousEvents].slice(0, 6));
     void (async () => {
+      if (event.kind === 'controllerAction' && event.controllerAction) {
+        handleControllerAction(event.controllerAction);
+      }
+
       if (event.kind === 'hostChanged' || event.kind === 'sessionChanged') {
         await refreshHosts();
       }
@@ -237,7 +312,7 @@ export default function App() {
 
       setStatus(event.message);
     })();
-  }, [refreshApps, refreshHosts, refreshSettingsSnapshot, selectedHostId, showHiddenApps]);
+  }, [handleControllerAction, refreshApps, refreshHosts, refreshSettingsSnapshot, selectedHostId, showHiddenApps]);
 
   useEffect(() => {
     void refreshHosts();
@@ -279,6 +354,17 @@ export default function App() {
           <button type="button" onClick={() => setStatus('Help will open Moonlight docs from the native bridge.')}>Help</button>
         </nav>
       </header>
+
+      <section className="controller-test" aria-label="Controller navigation test">
+        <span>Controller event test</span>
+        {controllerTestActions.map((action) => (
+          <button key={action} type="button" onClick={() => {
+            void bridge.emitControllerAction(action);
+          }}>
+            {action}
+          </button>
+        ))}
+      </section>
 
       {page === 'hosts' && (
         <section className="panel" aria-labelledby="hosts-title">
@@ -397,7 +483,7 @@ export default function App() {
             <p key={`${event.kind}-${index}`}>
               <strong>{event.kind}</strong>
               {': '}
-              {event.message}
+              {event.controllerAction ?? event.message}
             </p>
           ))}
         </aside>
