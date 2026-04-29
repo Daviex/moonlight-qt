@@ -80,6 +80,7 @@ private:
     void buildHostPage();
     void buildAppPage();
     void buildSettingsPage();
+    void buildShortcuts();
     void launchSession(Session* session, const QString& appName, bool isResume);
     void showSelectedHostMenu(const QPoint& globalPosition);
     void showSelectedAppMenu(const QPoint& globalPosition);

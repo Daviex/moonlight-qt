@@ -19,6 +19,7 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QShortcut>
 #include <QSize>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -93,6 +94,7 @@ GuiNextWindow::GuiNextWindow(QWidget* parent)
     buildHostPage();
     buildAppPage();
     buildSettingsPage();
+    buildShortcuts();
 
     connect(m_Facade.computers(), &ComputerListFacade::computersReset,
             this, &GuiNextWindow::refreshHosts);
@@ -444,6 +446,22 @@ void GuiNextWindow::buildSettingsPage()
     });
 
     m_Stack->addWidget(page);
+}
+
+void GuiNextWindow::buildShortcuts()
+{
+    auto addHostShortcut = new QShortcut(QKeySequence::New, this);
+    connect(addHostShortcut, &QShortcut::activated, this, [this]() {
+        if (m_Stack->currentIndex() == HostPageIndex) {
+            addHost();
+        }
+    });
+
+    auto helpShortcut = new QShortcut(QKeySequence::HelpContents, this);
+    connect(helpShortcut, &QShortcut::activated, this, &GuiNextWindow::openHelp);
+
+    auto settingsShortcut = new QShortcut(QKeySequence::Preferences, this);
+    connect(settingsShortcut, &QShortcut::activated, this, &GuiNextWindow::showSettings);
 }
 
 void GuiNextWindow::refreshHosts()
