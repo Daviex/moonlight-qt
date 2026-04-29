@@ -978,10 +978,13 @@ QJsonObject TauriBridgeHelper::appToJson(const FrontendApp& app) const
 
 QString TauriBridgeHelper::hostStatus(const FrontendComputer& computer) const
 {
+    if (!computer.online) {
+        return "Offline";
+    }
     if (!computer.paired) {
         return "Pairing required";
     }
-    return computer.online ? "Online" : "Offline";
+    return "Online";
 }
 
 QString TauriBridgeHelper::hostAddress(const FrontendComputer& computer) const

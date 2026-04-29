@@ -201,7 +201,7 @@ function validateSettings(settings: StreamingSettings) {
 }
 
 function canPairHost(host: HostEntry) {
-  return host.status === 'Online' && !host.paired && host.serverSupported;
+  return (host.status === 'Online' || host.status === 'Pairing required') && !host.paired && host.serverSupported;
 }
 
 function canWakeHost(host: HostEntry) {
