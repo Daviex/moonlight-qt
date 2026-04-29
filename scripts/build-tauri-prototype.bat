@@ -3,17 +3,25 @@ setlocal enableDelayedExpansion
 
 rem Build and stage the isolated Tauri prototype with the native Moonlight helper.
 rem Run from the repository root. Set SKIP_NATIVE_BUILD=1 to reuse an existing native build.
+rem Set TAURI_PACKAGE_ZIP=1 to also create a portable ZIP from the staged prototype.
 
 set SOURCE_ROOT=%cd%
 set BUILD_CONFIG=release
 set TAURI_ROOT=%SOURCE_ROOT%\prototypes\gui-tauri
 set TAURI_EXE=%TAURI_ROOT%\src-tauri\target\release\moonlight-gui-tauri-prototype.exe
 set PACKAGE_DIR=%SOURCE_ROOT%\build\tauri-prototype
+set INSTALLER_DIR=%SOURCE_ROOT%\build\installer-tauri-prototype-%BUILD_CONFIG%
 
 if not exist "%SOURCE_ROOT%\moonlight-qt.pro" (
     echo This script must be run from the moonlight-qt repository root.
     echo Current directory: %SOURCE_ROOT%
     exit /b 1
+)
+
+if defined CI_VERSION (
+    set VERSION=%CI_VERSION%
+) else (
+    set /p VERSION=<%SOURCE_ROOT%\app\version.txt
 )
 
 if not exist "%TAURI_ROOT%\package.json" (
@@ -36,6 +44,11 @@ if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
 
 call :RequireCommand rustc "Unable to find rustc. Install Rust with rustup first."
 if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
+
+if "%TAURI_PACKAGE_ZIP%"=="1" (
+    call :RequireCommand 7z "Unable to find 7-Zip. Add 7z to PATH or unset TAURI_PACKAGE_ZIP."
+    if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
+)
 
 for /F "delims=" %%V in ('npm --version') do set NPM_VERSION=%%V
 for /F "delims=" %%V in ('cargo --version') do set CARGO_VERSION=%%V
@@ -98,6 +111,7 @@ for %%A in (x64 arm64 x86) do (
         if exist "%SOURCE_ROOT%\build\deploy-%%A-%BUILD_CONFIG%\Moonlight.exe" (
             set HELPER_EXE=%SOURCE_ROOT%\build\deploy-%%A-%BUILD_CONFIG%\Moonlight.exe
             set HELPER_DIR=%SOURCE_ROOT%\build\deploy-%%A-%BUILD_CONFIG%
+            set HELPER_ARCH=%%A
         )
     )
 )
@@ -148,6 +162,19 @@ echo Tauri prototype package staged at:
 echo %PACKAGE_DIR%
 echo Run Launch-Moonlight-Tauri.bat to start the Tauri shell with the native helper.
 echo Run Launch-Moonlight-Tauri-Debug.bat to capture MoonlightTauri.log beside the staged executable.
+
+if "%TAURI_PACKAGE_ZIP%"=="1" (
+    rmdir /s /q "%INSTALLER_DIR%" >nul 2>nul
+    mkdir "%INSTALLER_DIR%"
+    if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
+
+    set TAURI_ZIP=%INSTALLER_DIR%\MoonlightTauriPrototype-!HELPER_ARCH!-%VERSION%.zip
+    7z a "!TAURI_ZIP!" "%PACKAGE_DIR%\*"
+    if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
+
+    echo Tauri prototype ZIP produced at:
+    echo !TAURI_ZIP!
+)
 exit /b 0
 
 :RequireCommand
