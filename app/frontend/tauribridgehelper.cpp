@@ -1,6 +1,7 @@
 #include "tauribridgehelper.h"
 
 #include "frontend/applistfacade.h"
+#include "frontend/sdlcontrollernavigation.h"
 #include "settings/streamingpreferences.h"
 #include "streaming/qtwidgetwindowcontext.h"
 
@@ -59,6 +60,11 @@ TauriBridgeHelper::TauriBridgeHelper()
     : m_ComputerManager(StreamingPreferences::get())
 {
     m_Facade.initialize(&m_ComputerManager);
+    m_ControllerNavigation.reset(new SdlControllerNavigation(StreamingPreferences::get()));
+    m_ControllerNavigation->setSink(this);
+    m_ControllerNavigation->notifyWindowFocus(true);
+    m_ControllerNavigation->enable();
+
     QObject::connect(m_Facade.sessions(), &FrontendSessionCoordinator::stageTextChanged,
                      [this](const QString& stageText) {
         writeEventFrame(bridgeEvent("sessionChanged", stageText));
@@ -77,10 +83,12 @@ TauriBridgeHelper::TauriBridgeHelper()
     });
     QObject::connect(m_Facade.sessions(), &FrontendSessionCoordinator::hideUiRequested,
                      [this]() {
+        setControllerNavigationEnabled(false);
         writeEventFrame(bridgeEvent("sessionChanged", tr("Stream connected; hide UI requested.")));
     });
     QObject::connect(m_Facade.sessions(), &FrontendSessionCoordinator::showUiRequested,
                      [this]() {
+        setControllerNavigationEnabled(true);
         writeEventFrame(bridgeEvent("sessionChanged", tr("Stream UI can be shown.")));
     });
     QObject::connect(m_Facade.sessions(), &FrontendSessionCoordinator::quitSegueRequested,
@@ -89,10 +97,12 @@ TauriBridgeHelper::TauriBridgeHelper()
     });
     QObject::connect(m_Facade.sessions(), &FrontendSessionCoordinator::sessionFinished,
                      [this](int portTestResult) {
+        setControllerNavigationEnabled(true);
         writeEventFrame(bridgeEvent("sessionChanged", tr("Stream finished with port test result %1.").arg(portTestResult)));
     });
     QObject::connect(m_Facade.sessions(), &FrontendSessionCoordinator::sessionReadyForDeletion,
                      [this]() {
+        setControllerNavigationEnabled(true);
         writeEventFrame(bridgeEvent("sessionChanged", tr("Stream session cleanup completed.")));
     });
 }
@@ -318,6 +328,7 @@ QJsonObject TauriBridgeHelper::launchApp(const QJsonObject& payload)
 
     m_Facade.system()->waitForAsyncLoad();
     m_Facade.sessions()->setSession(session, app.name, app.running, false);
+    setControllerNavigationEnabled(false);
     if (!m_Facade.sessions()->initialize(m_WindowContext.data())) {
         const QString error = m_Facade.sessions()->errorText().isEmpty() ?
             tr("Unable to start stream: session initialization failed.") :
@@ -325,6 +336,7 @@ QJsonObject TauriBridgeHelper::launchApp(const QJsonObject& payload)
         m_Facade.sessions()->clearSession();
         session->deleteLater();
         m_ActiveSession = nullptr;
+        setControllerNavigationEnabled(true);
         return {{"error", error}};
     }
 
@@ -472,6 +484,22 @@ QJsonObject TauriBridgeHelper::saveSettings(const QJsonObject& payload)
     return resultWithEvent(status(message), bridgeEvent("settingsChanged", message));
 }
 
+void TauriBridgeHelper::handleControllerNavigation(ControllerNavigationAction action, bool pressed)
+{
+    if (!pressed) {
+        return;
+    }
+
+    QJsonObject event = bridgeEvent("controllerAction", tr("Controller action received."));
+    event.insert("controllerAction", controllerActionName(action));
+    writeEventFrame(event);
+}
+
+void TauriBridgeHelper::handleControllerQuit()
+{
+    writeEventFrame(bridgeEvent("status", tr("Controller quit requested.")));
+}
+
 QJsonObject TauriBridgeHelper::status(const QString& message) const
 {
     return {{"message", message}};
@@ -512,6 +540,51 @@ void TauriBridgeHelper::writeEventFrame(const QJsonObject& event) const
     output << QString::fromUtf8(frame) << Qt::endl;
     output.flush();
 #endif
+}
+
+void TauriBridgeHelper::setControllerNavigationEnabled(bool enabled)
+{
+    if (m_ControllerNavigation.isNull()) {
+        return;
+    }
+
+    if (enabled) {
+        m_ControllerNavigation->notifyWindowFocus(true);
+        m_ControllerNavigation->enable();
+    }
+    else {
+        m_ControllerNavigation->disable();
+    }
+}
+
+QString TauriBridgeHelper::controllerActionName(ControllerNavigationAction action) const
+{
+    switch (action) {
+    case ControllerNavigationAction::Up:
+        return "up";
+    case ControllerNavigationAction::Down:
+        return "down";
+    case ControllerNavigationAction::Left:
+        return "left";
+    case ControllerNavigationAction::Right:
+        return "right";
+    case ControllerNavigationAction::Accept:
+        return "accept";
+    case ControllerNavigationAction::Back:
+        return "back";
+    case ControllerNavigationAction::ContextMenu:
+        return "contextMenu";
+    case ControllerNavigationAction::Settings:
+        return "settings";
+    case ControllerNavigationAction::NextControl:
+        return "nextControl";
+    case ControllerNavigationAction::PreviousControl:
+        return "previousControl";
+    case ControllerNavigationAction::ActivateControl:
+        return "activateControl";
+    }
+
+    return QString();
 }
 
 QJsonObject TauriBridgeHelper::hostToJson(const FrontendComputer& computer, int index) const

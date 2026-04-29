@@ -2,6 +2,7 @@
 
 #include "backend/computermanager.h"
 #include "frontend/applicationfacade.h"
+#include "frontend/controllernavigation.h"
 
 #include <QJsonObject>
 #include <QJsonValue>
@@ -11,10 +12,11 @@
 
 class AppListFacade;
 class QtWidgetWindowContext;
+class SdlControllerNavigation;
 class Session;
 class QWidget;
 
-class TauriBridgeHelper
+class TauriBridgeHelper : public IControllerNavigationSink
 {
     Q_DECLARE_TR_FUNCTIONS(TauriBridgeHelper)
 
@@ -39,10 +41,15 @@ private:
     QJsonObject loadSettings();
     QJsonObject saveSettings(const QJsonObject& payload);
 
+    void handleControllerNavigation(ControllerNavigationAction action, bool pressed) override;
+    void handleControllerQuit() override;
+
     QJsonObject status(const QString& message) const;
     QJsonObject resultWithEvent(const QJsonValue& result, const QJsonObject& event) const;
     QJsonObject bridgeEvent(const QString& kind, const QString& message, const QString& hostId = QString(), const QString& appId = QString()) const;
     void writeEventFrame(const QJsonObject& event) const;
+    void setControllerNavigationEnabled(bool enabled);
+    QString controllerActionName(ControllerNavigationAction action) const;
     QJsonObject hostToJson(const FrontendComputer& computer, int index) const;
     QJsonObject appToJson(const FrontendApp& app) const;
     QString hostStatus(const FrontendComputer& computer) const;
@@ -53,6 +60,7 @@ private:
 
     ComputerManager m_ComputerManager;
     FrontendApplicationFacade m_Facade;
+    QScopedPointer<SdlControllerNavigation> m_ControllerNavigation;
     QScopedPointer<QWidget> m_WindowContextSource;
     QScopedPointer<QtWidgetWindowContext> m_WindowContext;
     QPointer<Session> m_ActiveSession;
