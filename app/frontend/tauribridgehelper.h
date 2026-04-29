@@ -31,6 +31,7 @@ private:
     QJsonObject hostDetails(const QJsonObject& payload);
     QJsonObject listApps(const QJsonObject& payload);
     QJsonObject launchApp(const QJsonObject& payload);
+    QJsonObject resumeSession(const QJsonObject& payload);
     QJsonObject pairHost(const QJsonObject& payload);
     QJsonObject wakeHost(const QJsonObject& payload);
     QJsonObject renameHost(const QJsonObject& payload);
@@ -50,6 +51,7 @@ private:
     void writeEventFrame(const QJsonObject& event) const;
     void setControllerNavigationEnabled(bool enabled);
     void observeAppList(int hostIndex, bool showHiddenGames);
+    QJsonObject startSession(Session* session, const QString& appName, bool isResume, const QString& hostId, const QString& appId);
     QString controllerActionName(ControllerNavigationAction action) const;
     QJsonObject hostToJson(const FrontendComputer& computer, int index) const;
     QJsonObject appToJson(const FrontendApp& app) const;

@@ -201,6 +201,23 @@ impl MoonlightBackend for MockBackend {
         })
     }
 
+    fn resume_session(&mut self, host_id: &str) -> Result<CommandStatus, String> {
+        let host = self.host(host_id)?;
+        if !host.running {
+            return Err(format!("{} has no running session to resume.", host.name));
+        }
+
+        let app_name = self
+            .apps
+            .iter()
+            .find(|app| app.running)
+            .map(|app| app.name.clone())
+            .unwrap_or_else(|| "the running app".into());
+        Ok(CommandStatus {
+            message: format!("Resume requested for {app_name}."),
+        })
+    }
+
     fn quit_running_app(&mut self, host_id: &str) -> Result<CommandStatus, String> {
         self.host_mut(host_id)?.running = false;
         for app in &mut self.apps {

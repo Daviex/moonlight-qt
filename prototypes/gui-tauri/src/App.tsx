@@ -247,6 +247,35 @@ export default function App() {
     }
   }, [refreshApps, refreshHosts, selectedHost?.name, selectedHostId, showHiddenApps]);
 
+  const resumeSession = useCallback(async (host: HostEntry) => {
+    setSelectedHostId(host.id);
+    setStreamState({
+      phase: 'launching',
+      hostName: host.name,
+      appName: 'Running session',
+      message: `Resuming the running session on ${host.name}...`,
+      warnings: [],
+      errors: [],
+      uiHiddenRequested: false,
+    });
+
+    try {
+      const result = await bridge.resumeSession(host.id);
+      setStatus(result.message);
+      await refreshHosts();
+    }
+    catch (error) {
+      const message = String(error);
+      setStatus(message);
+      setStreamState((previousState) => ({
+        ...previousState,
+        phase: 'error',
+        message,
+        errors: [...previousState.errors, message],
+      }));
+    }
+  }, [refreshHosts]);
+
   const quitRunningApp = useCallback(async () => {
     if (!selectedHostId) {
       return;
@@ -576,6 +605,7 @@ export default function App() {
                 </button>
                 <div className="card-actions">
                   <button type="button" onClick={() => pairHost(host)}>Pair</button>
+                  {host.running && <button type="button" onClick={() => resumeSession(host)}>Resume</button>}
                   <button type="button" onClick={() => runHostCommand(() => bridge.wakeHost(host.id))}>Wake</button>
                   <button type="button" onClick={() => showDetails(host)}>Details</button>
                   <button type="button" onClick={() => testNetwork(host)}>Test</button>

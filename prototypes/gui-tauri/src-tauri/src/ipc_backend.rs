@@ -288,6 +288,12 @@ impl MoonlightBackend for IpcBackend {
         })
     }
 
+    fn resume_session(&mut self, host_id: &str) -> Result<CommandStatus, String> {
+        self.request(IpcCommand::ResumeSession {
+            host_id: host_id.into(),
+        })
+    }
+
     fn quit_running_app(&mut self, host_id: &str) -> Result<CommandStatus, String> {
         self.request(IpcCommand::QuitRunningApp {
             host_id: host_id.into(),
@@ -368,6 +374,9 @@ enum IpcCommand {
     LaunchApp {
         host_id: String,
         app_id: String,
+    },
+    ResumeSession {
+        host_id: String,
     },
     QuitRunningApp {
         host_id: String,

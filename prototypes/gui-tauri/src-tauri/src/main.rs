@@ -269,6 +269,36 @@ fn launch_app(
 }
 
 #[tauri::command]
+fn resume_session(
+    host_id: String,
+    backend: tauri::State<'_, BackendState>,
+    app_handle: tauri::AppHandle,
+) -> Result<CommandStatus, String> {
+    let mut backend = backend.lock().map_err(|error| error.to_string())?;
+    let status = backend.resume_session(&host_id)?;
+    let emit_command_events = !backend.emits_native_events();
+    drop(backend);
+
+    if emit_command_events {
+        emit_bridge_event(
+            &app_handle,
+            BridgeEventKind::SessionChanged,
+            status.message.clone(),
+            Some(host_id.clone()),
+            None,
+        )?;
+        emit_bridge_event(
+            &app_handle,
+            BridgeEventKind::HostChanged,
+            status.message.clone(),
+            Some(host_id),
+            None,
+        )?;
+    }
+    Ok(status)
+}
+
+#[tauri::command]
 fn quit_running_app(
     host_id: String,
     backend: tauri::State<'_, BackendState>,
@@ -397,6 +427,7 @@ fn main() {
             test_network,
             list_apps,
             launch_app,
+            resume_session,
             quit_running_app,
             set_app_hidden,
             set_app_direct_launch,

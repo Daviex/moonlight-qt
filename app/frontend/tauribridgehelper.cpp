@@ -260,6 +260,9 @@ QJsonObject TauriBridgeHelper::handleCommand(const QJsonObject& command)
     if (commandName == "launch_app") {
         return launchApp(payload);
     }
+    if (commandName == "resume_session") {
+        return resumeSession(payload);
+    }
     if (commandName == "quit_running_app") {
         return quitRunningApp(payload);
     }
@@ -346,8 +349,46 @@ QJsonObject TauriBridgeHelper::launchApp(const QJsonObject& payload)
 
     const FrontendApp app = appList->appAt(appIndex);
     Session* session = appList->createSessionForApp(appIndex);
+    return startSession(session, app.name, app.running, QString::number(hostIndex), payload.value("app_id").toString());
+}
+
+QJsonObject TauriBridgeHelper::resumeSession(const QJsonObject& payload)
+{
+    const int hostIndex = hostIndexFromPayload(payload);
+    if (hostIndex < 0) {
+        return {{"error", "Host was not found."}};
+    }
+    if (m_ActiveSession != nullptr) {
+        return {{"error", "A stream session is already active."}};
+    }
+
+    QScopedPointer<AppListFacade> appList(m_Facade.createAppList(hostIndex, true));
+    if (appList.isNull()) {
+        return {{"error", "Unable to create app list."}};
+    }
+
+    const int runningAppId = appList->getRunningAppId();
+    if (runningAppId == 0) {
+        return {{"error", tr("This host has no running session to resume.")}};
+    }
+
+    QString appName = appList->getRunningAppName();
+    if (appName.isEmpty()) {
+        appName = tr("the running app");
+    }
+
+    Session* session = m_Facade.computers()->createSessionForCurrentGame(hostIndex);
+    return startSession(session, appName, true, QString::number(hostIndex), QString::number(runningAppId));
+}
+
+QJsonObject TauriBridgeHelper::startSession(Session* session, const QString& appName, bool isResume, const QString& hostId, const QString& appId)
+{
     if (session == nullptr) {
         return {{"error", "Unable to start stream: session was not created."}};
+    }
+    if (m_ActiveSession != nullptr) {
+        session->deleteLater();
+        return {{"error", "A stream session is already active."}};
     }
 
     m_ActiveSession = session;
@@ -362,7 +403,7 @@ QJsonObject TauriBridgeHelper::launchApp(const QJsonObject& payload)
     m_WindowContext.reset(new QtWidgetWindowContext(m_WindowContextSource.data()));
 
     m_Facade.system()->waitForAsyncLoad();
-    m_Facade.sessions()->setSession(session, app.name, app.running, false);
+    m_Facade.sessions()->setSession(session, appName, isResume, false);
     setControllerNavigationEnabled(false);
     if (!m_Facade.sessions()->initialize(m_WindowContext.data())) {
         const QString error = m_Facade.sessions()->errorText().isEmpty() ?
@@ -376,10 +417,10 @@ QJsonObject TauriBridgeHelper::launchApp(const QJsonObject& payload)
     }
 
     m_Facade.sessions()->start();
-    const QString message = tr("Launch requested for %1.").arg(app.name);
+    const QString message = isResume ? tr("Resume requested for %1.").arg(appName) : tr("Launch requested for %1.").arg(appName);
     return resultWithEvent(
         status(message),
-        bridgeEvent("sessionChanged", message, QString::number(hostIndex), payload.value("app_id").toString()));
+        bridgeEvent("sessionChanged", message, hostId, appId));
 }
 
 QJsonObject TauriBridgeHelper::pairHost(const QJsonObject& payload)

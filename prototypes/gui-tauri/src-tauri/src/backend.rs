@@ -124,6 +124,7 @@ pub trait MoonlightBackend: Send {
     fn test_network(&mut self, host_id: &str) -> Result<NetworkTestResult, String>;
     fn list_apps(&mut self, host_id: &str, show_hidden: bool) -> Result<Vec<AppEntry>, String>;
     fn launch_app(&mut self, host_id: &str, app_id: &str) -> Result<CommandStatus, String>;
+    fn resume_session(&mut self, host_id: &str) -> Result<CommandStatus, String>;
     fn quit_running_app(&mut self, host_id: &str) -> Result<CommandStatus, String>;
     fn set_app_hidden(
         &mut self,

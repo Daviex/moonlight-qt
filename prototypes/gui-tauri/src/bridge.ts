@@ -95,6 +95,7 @@ export const bridge = {
   testNetwork: (hostId: string) => invoke<NetworkTestResult>('test_network', { hostId }),
   listApps: (hostId: string, showHidden: boolean) => invoke<AppEntry[]>('list_apps', { hostId, showHidden }),
   launchApp: (hostId: string, appId: string) => invoke<CommandStatus>('launch_app', { hostId, appId }),
+  resumeSession: (hostId: string) => invoke<CommandStatus>('resume_session', { hostId }),
   quitRunningApp: (hostId: string) => invoke<CommandStatus>('quit_running_app', { hostId }),
   setAppHidden: (hostId: string, appId: string, hidden: boolean) =>
     invoke<CommandStatus>('set_app_hidden', { hostId, appId, hidden }),
