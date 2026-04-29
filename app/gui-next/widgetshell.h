@@ -47,6 +47,8 @@ private slots:
     void showSelectedHostDetails();
     void addHost();
     void showSettings();
+    void openHelp();
+    void openDiscord();
     void saveSettings();
     void showHostsPage();
     void refreshApps();

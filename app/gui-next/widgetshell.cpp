@@ -149,6 +149,8 @@ void GuiNextWindow::buildHostPage()
     auto detailsButton = new QPushButton(tr("Details"), page);
     auto renameButton = new QPushButton(tr("Rename"), page);
     auto deleteButton = new QPushButton(tr("Delete"), page);
+    auto helpButton = new QPushButton(tr("Help"), page);
+    auto discordButton = new QPushButton(tr("Discord"), page);
     auto settingsButton = new QPushButton(tr("Settings"), page);
     buttons->addWidget(refreshButton);
     buttons->addWidget(addButton);
@@ -161,6 +163,8 @@ void GuiNextWindow::buildHostPage()
     buttons->addWidget(renameButton);
     buttons->addWidget(deleteButton);
     buttons->addStretch();
+    buttons->addWidget(discordButton);
+    buttons->addWidget(helpButton);
     buttons->addWidget(settingsButton);
     layout->addLayout(buttons);
 
@@ -177,6 +181,8 @@ void GuiNextWindow::buildHostPage()
     connect(detailsButton, &QPushButton::clicked, this, &GuiNextWindow::showSelectedHostDetails);
     connect(renameButton, &QPushButton::clicked, this, &GuiNextWindow::renameSelectedHost);
     connect(deleteButton, &QPushButton::clicked, this, &GuiNextWindow::deleteSelectedHost);
+    connect(helpButton, &QPushButton::clicked, this, &GuiNextWindow::openHelp);
+    connect(discordButton, &QPushButton::clicked, this, &GuiNextWindow::openDiscord);
     connect(settingsButton, &QPushButton::clicked, this, &GuiNextWindow::showSettings);
 
     m_Stack->addWidget(page);
@@ -759,6 +765,32 @@ void GuiNextWindow::showSettings()
     m_Yuv444CheckBox->setChecked(preferences.enableYUV444);
     m_ControllerAdapter.setUiNavMode(true);
     m_Stack->setCurrentIndex(SettingsPageIndex);
+}
+
+void GuiNextWindow::openHelp()
+{
+    const FrontendSystemProperties system = m_Facade.system()->properties();
+    if (!system.hasBrowser) {
+        QMessageBox::information(this,
+                                 tr("Help"),
+                                 tr("No web browser is available to open the Moonlight setup guide."));
+        return;
+    }
+
+    QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/moonlight-stream/moonlight-docs/wiki/Setup-Guide")));
+}
+
+void GuiNextWindow::openDiscord()
+{
+    const FrontendSystemProperties system = m_Facade.system()->properties();
+    if (!system.hasBrowser) {
+        QMessageBox::information(this,
+                                 tr("Discord"),
+                                 tr("No web browser is available to open the Moonlight Discord community."));
+        return;
+    }
+
+    QDesktopServices::openUrl(QUrl(QStringLiteral("https://moonlight-stream.org/discord")));
 }
 
 void GuiNextWindow::saveSettings()
