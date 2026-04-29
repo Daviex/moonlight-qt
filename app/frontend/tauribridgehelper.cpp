@@ -252,7 +252,7 @@ QJsonObject TauriBridgeHelper::handleCommand(const QJsonObject& command)
         return hostDetails(payload);
     }
     if (commandName == "test_network") {
-        return unsupported(commandName);
+        return testNetwork(payload);
     }
     if (commandName == "list_apps") {
         return listApps(payload);
@@ -476,6 +476,22 @@ QJsonObject TauriBridgeHelper::deleteHost(const QJsonObject& payload)
     m_Facade.computers()->deleteComputer(hostIndex);
     const QString message = tr("Host deleted.");
     return resultWithEvent(status(message), bridgeEvent("hostChanged", message, QString::number(hostIndex)));
+}
+
+QJsonObject TauriBridgeHelper::testNetwork(const QJsonObject& payload)
+{
+    const int hostIndex = hostIndexFromPayload(payload);
+    if (hostIndex < 0) {
+        return {{"error", "Host was not found."}};
+    }
+
+    m_Facade.computers()->testConnectionForComputer(hostIndex);
+    const QString message = tr("Network test started.");
+    return {{"result", QJsonObject{
+        {"result", "unavailable"},
+        {"blockedPorts", QJsonArray{}},
+        {"message", message},
+    }}};
 }
 
 QJsonObject TauriBridgeHelper::quitRunningApp(const QJsonObject& payload)

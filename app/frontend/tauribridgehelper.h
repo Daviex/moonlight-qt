@@ -36,6 +36,7 @@ private:
     QJsonObject wakeHost(const QJsonObject& payload);
     QJsonObject renameHost(const QJsonObject& payload);
     QJsonObject deleteHost(const QJsonObject& payload);
+    QJsonObject testNetwork(const QJsonObject& payload);
     QJsonObject quitRunningApp(const QJsonObject& payload);
     QJsonObject setAppHidden(const QJsonObject& payload);
     QJsonObject setAppDirectLaunch(const QJsonObject& payload);
