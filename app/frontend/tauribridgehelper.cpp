@@ -64,6 +64,52 @@ static bool validateRequiredIntegerSetting(const QJsonObject& settings,
     return validateIntegerSetting(settings, key, label, minimum, maximum, error);
 }
 
+static bool validateBooleanSetting(const QJsonObject& settings,
+                                   const QString& key,
+                                   const QString& label,
+                                   QString& error)
+{
+    if (!settings.contains(key)) {
+        return true;
+    }
+
+    if (!settings.value(key).isBool()) {
+        error = QStringLiteral("%1 must be a boolean.").arg(label);
+        return false;
+    }
+
+    return true;
+}
+
+static bool validateStreamingBooleanSettings(const QJsonObject& settings, QString& error)
+{
+    return validateBooleanSetting(settings, QStringLiteral("unlockBitrate"), QStringLiteral("Unlock bitrate"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("autoAdjustBitrate"), QStringLiteral("Auto-adjust bitrate"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("enableVsync"), QStringLiteral("V-Sync"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("gameOptimizations"), QStringLiteral("Game optimizations"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("playAudioOnHost"), QStringLiteral("Play audio on host"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("multiController"), QStringLiteral("Multiple controllers"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("enableMdns"), QStringLiteral("mDNS discovery"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("quitAppAfter"), QStringLiteral("Quit app after stream"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("absoluteMouseMode"), QStringLiteral("Absolute mouse mode"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("absoluteTouchMode"), QStringLiteral("Absolute touch mode"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("framePacing"), QStringLiteral("Frame pacing"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("connectionWarnings"), QStringLiteral("Connection warnings"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("configurationWarnings"), QStringLiteral("Configuration warnings"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("richPresence"), QStringLiteral("Rich presence"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("enableHdr"), QStringLiteral("HDR"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("gamepadMouse"), QStringLiteral("Gamepad mouse"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("detectNetworkBlocking"), QStringLiteral("Network blocking detection"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("showPerformanceOverlay"), QStringLiteral("Performance overlay"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("swapMouseButtons"), QStringLiteral("Swap mouse buttons"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("muteOnFocusLoss"), QStringLiteral("Mute on focus loss"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("backgroundGamepad"), QStringLiteral("Background gamepad"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("reverseScrollDirection"), QStringLiteral("Reverse scroll direction"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("swapFaceButtons"), QStringLiteral("Swap face buttons"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("keepAwake"), QStringLiteral("Keep awake"), error) &&
+        validateBooleanSetting(settings, QStringLiteral("enableYUV444"), QStringLiteral("YUV 4:4:4"), error);
+}
+
 static bool validateStreamingSettings(const QJsonObject& settings, QString& error)
 {
     return validateIntegerSetting(settings, QStringLiteral("width"), QStringLiteral("Width"), 256, 8192, error) &&
@@ -76,7 +122,8 @@ static bool validateStreamingSettings(const QJsonObject& settings, QString& erro
         validateIntegerSetting(settings, QStringLiteral("videoDecoderSelection"), QStringLiteral("Video decoder"), 0, 2, error) &&
         validateIntegerSetting(settings, QStringLiteral("windowMode"), QStringLiteral("Stream window mode"), 0, 2, error) &&
         validateIntegerSetting(settings, QStringLiteral("uiDisplayMode"), QStringLiteral("UI startup mode"), 0, 2, error) &&
-        validateIntegerSetting(settings, QStringLiteral("captureSysKeysMode"), QStringLiteral("Capture system keys mode"), 0, 2, error);
+        validateIntegerSetting(settings, QStringLiteral("captureSysKeysMode"), QStringLiteral("Capture system keys mode"), 0, 2, error) &&
+        validateStreamingBooleanSettings(settings, error);
 }
 
 static bool validateDefaultBitratePayload(const QJsonObject& payload, QString& error)
