@@ -303,10 +303,17 @@ export default function App() {
     }
   }, [selectedHostId, showHiddenApps]);
 
-  const openApps = useCallback(async (hostId: string) => {
-    setSelectedHostId(hostId);
-    await refreshApps(hostId, showHiddenApps);
+  const openApps = useCallback(async (host: HostEntry) => {
+    setSelectedHostId(host.id);
     setPage('apps');
+
+    if (!host.paired) {
+      setApps([]);
+      setStatus(`${host.name} must be paired before Moonlight can load apps.`);
+      return;
+    }
+
+    await refreshApps(host.id, showHiddenApps);
   }, [refreshApps, showHiddenApps]);
 
   const runHostCommand = useCallback(async (action: () => Promise<{ message: string }>) => {
@@ -1231,7 +1238,7 @@ export default function App() {
           <div className="card-grid">
             {hosts.map((host) => (
               <article key={host.id} className={`host-card ${host.id === selectedHostId ? 'selected' : ''}`}>
-                <button type="button" className="card-primary" onClick={() => openApps(host.id)}>
+                <button type="button" className="card-primary" onClick={() => openApps(host)}>
                   <span className="title">{host.name}</span>
                   <span>{host.status}</span>
                   <span>{host.paired ? 'Paired' : 'Pairing required'}</span>
@@ -1273,6 +1280,47 @@ export default function App() {
               <button type="button" onClick={() => setPage('hosts')}>Back</button>
             </div>
           </div>
+          {apps.length === 0 && (
+            <div className="empty-state">
+              <h3>
+                {selectedHost
+                  ? selectedHost.paired ? 'No apps returned' : 'Pair this host to load apps'
+                  : 'No host selected'}
+              </h3>
+              {selectedHost ? (
+                selectedHost.paired ? (
+                  <p>
+                    The native helper did not return any visible apps for this host. Try refreshing, show hidden apps,
+                    or confirm the host is online and Sunshine is returning an app list.
+                  </p>
+                ) : (
+                  <p>
+                    {selectedHost.name} is not paired yet. Pair it from here or return to Hosts before trying to load
+                    apps.
+                  </p>
+                )
+              ) : (
+                <p>Select a host before loading apps.</p>
+              )}
+              {selectedHost && (
+                <p>
+                  Host status: {selectedHost.status}; paired: {selectedHost.paired ? 'yes' : 'no'};
+                  server supported: {selectedHost.serverSupported ? 'yes' : 'no'}.
+                </p>
+              )}
+              <div className="button-row">
+                {selectedHost && !selectedHost.paired && (
+                  <button type="button" onClick={() => pairHost(selectedHost)}>Pair Host</button>
+                )}
+                {selectedHost?.paired && (
+                  <button type="button" onClick={() => void refreshApps(selectedHost.id, showHiddenApps)}>
+                    Refresh Apps
+                  </button>
+                )}
+                <button type="button" onClick={() => setPage('hosts')}>Back to Hosts</button>
+              </div>
+            </div>
+          )}
           <div className="card-grid">
             {apps.map((app) => {
               const imageSrc = boxArtSrc(app);
