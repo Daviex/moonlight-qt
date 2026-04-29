@@ -81,6 +81,19 @@ static bool validateBooleanSetting(const QJsonObject& settings,
     return true;
 }
 
+static bool validateRequiredBooleanSetting(const QJsonObject& settings,
+                                           const QString& key,
+                                           const QString& label,
+                                           QString& error)
+{
+    if (!settings.contains(key)) {
+        error = QStringLiteral("%1 is required.").arg(label);
+        return false;
+    }
+
+    return validateBooleanSetting(settings, key, label, error);
+}
+
 static bool validateStreamingBooleanSettings(const QJsonObject& settings, QString& error)
 {
     return validateBooleanSetting(settings, QStringLiteral("unlockBitrate"), QStringLiteral("Unlock bitrate"), error) &&
@@ -532,6 +545,11 @@ QJsonObject TauriBridgeHelper::listApps(const QJsonObject& payload)
     if (hostIndex < 0) {
         return {{"error", "Host was not found."}};
     }
+    QString validationError;
+    if (payload.contains(QStringLiteral("show_hidden")) &&
+        !validateBooleanSetting(payload, QStringLiteral("show_hidden"), QStringLiteral("Show hidden apps"), validationError)) {
+        return {{"error", validationError}};
+    }
 
     const bool showHidden = payload.value("show_hidden").toBool();
     observeAppList(hostIndex, showHidden);
@@ -742,6 +760,10 @@ QJsonObject TauriBridgeHelper::setAppHidden(const QJsonObject& payload)
     if (appIndex < 0) {
         return {{"error", "App was not found."}};
     }
+    QString validationError;
+    if (!validateRequiredBooleanSetting(payload, QStringLiteral("hidden"), QStringLiteral("Hidden"), validationError)) {
+        return {{"error", validationError}};
+    }
 
     appList->setAppHidden(appIndex, payload.value("hidden").toBool());
     const QString message = tr("App visibility updated.");
@@ -759,6 +781,10 @@ QJsonObject TauriBridgeHelper::setAppDirectLaunch(const QJsonObject& payload)
     const int appIndex = appIndexFromPayload(appList.data(), payload);
     if (appIndex < 0) {
         return {{"error", "App was not found."}};
+    }
+    QString validationError;
+    if (!validateRequiredBooleanSetting(payload, QStringLiteral("direct_launch"), QStringLiteral("Direct launch"), validationError)) {
+        return {{"error", validationError}};
     }
 
     appList->setAppDirectLaunch(appIndex, payload.value("direct_launch").toBool());

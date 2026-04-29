@@ -40,7 +40,7 @@ The streaming video path should remain a native SDL/window path. Do not attempt 
 `src\bridge.ts` is the TypeScript-side contract for the UI. `src-tauri\src\main.rs` currently implements the same commands with an in-memory mock backend:
 
 1. Hosts: list, add, pair, wake, rename, delete, expanded native details, wakeability/server-support metadata, network test, and action guards that block invalid pair/wake requests.
-2. Apps: list, launch, resume running session, quit running app, hide/unhide, direct-launch toggle, app collector metadata, cached box-art URLs, and empty-state guidance when a host is unpaired or returns no visible apps.
+2. Apps: list, launch, resume running session, quit running app, hide/unhide, direct-launch toggle, app collector metadata, cached box-art URLs, empty-state guidance when a host is unpaired or returns no visible apps, and native validation for app command toggles.
 3. Settings: load and save the current streaming settings snapshot, including core display, bitrate, audio/video, input, warning, network, and stream-behavior preferences, plus native default bitrate calculation and frontend/native validation for numeric, select, and boolean stream settings.
 4. System: load native version, architecture, display/HDR, hardware acceleration, browser, desktop session, unmapped gamepad information, and open HTTP/HTTPS documentation or update URLs through the native browser integration.
 
