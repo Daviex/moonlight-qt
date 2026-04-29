@@ -39,4 +39,10 @@ The bridge also emits `moonlight-bridge-event` events for native-side host, app,
 
 For now, the prototype exposes a small "Controller event test" toolbar that asks the native side to emit controller actions. Production should replace this mock command with events from Moonlight's existing SDL controller navigation source.
 
-The next production step is replacing the mock Rust state with a thin bridge into the existing C++ facades without moving backend behavior into TypeScript.
+The Rust side now separates the production command surface from the in-memory mock implementation:
+
+1. `src-tauri\src\backend.rs` defines the DTOs and `MoonlightBackend` trait used by all Tauri commands.
+2. `src-tauri\src\mock_backend.rs` contains the current in-memory mock implementation.
+3. `src-tauri\src\main.rs` owns the Tauri commands, event emission, and backend registration.
+
+The next production step is adding a real `MoonlightBackend` implementation that forwards calls to the existing C++ facades without moving backend behavior into TypeScript.
