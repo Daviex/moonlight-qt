@@ -1,10 +1,12 @@
 mod backend;
+mod ipc_backend;
 mod mock_backend;
 
 use backend::{
     AppEntry, BridgeEvent, BridgeEventKind, CommandStatus, ControllerAction, HostDetails,
     HostEntry, MoonlightBackend, NetworkTestResult, PairingChallenge, StreamingSettings,
 };
+use ipc_backend::{ipc_backend_requested, IpcBackend};
 use mock_backend::MockBackend;
 use std::sync::Mutex;
 use tauri::Emitter;
@@ -12,6 +14,14 @@ use tauri::Emitter;
 const BRIDGE_EVENT: &str = "moonlight-bridge-event";
 
 type BackendState = Mutex<Box<dyn MoonlightBackend>>;
+
+fn create_backend() -> Box<dyn MoonlightBackend> {
+    if ipc_backend_requested() {
+        Box::new(IpcBackend::from_environment().expect("failed to initialize IPC backend"))
+    } else {
+        Box::new(MockBackend::new())
+    }
+}
 
 fn emit_bridge_event(
     app_handle: &tauri::AppHandle,
@@ -336,9 +346,7 @@ fn save_settings(
 
 fn main() {
     tauri::Builder::default()
-        .manage(Mutex::new(
-            Box::new(MockBackend::new()) as Box<dyn MoonlightBackend>
-        ))
+        .manage(Mutex::new(create_backend()))
         .invoke_handler(tauri::generate_handler![
             list_hosts,
             add_host,

@@ -97,7 +97,7 @@ impl MockBackend {
 }
 
 impl MoonlightBackend for MockBackend {
-    fn list_hosts(&self) -> Result<Vec<HostEntry>, String> {
+    fn list_hosts(&mut self) -> Result<Vec<HostEntry>, String> {
         Ok(self.hosts.clone())
     }
 
@@ -157,7 +157,7 @@ impl MoonlightBackend for MockBackend {
         })
     }
 
-    fn host_details(&self, host_id: &str) -> Result<HostDetails, String> {
+    fn host_details(&mut self, host_id: &str) -> Result<HostDetails, String> {
         let host = self.host(host_id)?;
         Ok(HostDetails {
             name: host.name.clone(),
@@ -169,7 +169,7 @@ impl MoonlightBackend for MockBackend {
         })
     }
 
-    fn test_network(&self, host_id: &str) -> Result<NetworkTestResult, String> {
+    fn test_network(&mut self, host_id: &str) -> Result<NetworkTestResult, String> {
         let host = self.host(host_id)?;
         Ok(NetworkTestResult {
             result: "ok".into(),
@@ -178,7 +178,7 @@ impl MoonlightBackend for MockBackend {
         })
     }
 
-    fn list_apps(&self, host_id: &str, show_hidden: bool) -> Result<Vec<AppEntry>, String> {
+    fn list_apps(&mut self, host_id: &str, show_hidden: bool) -> Result<Vec<AppEntry>, String> {
         self.host(host_id)?;
         Ok(self
             .apps
@@ -250,7 +250,7 @@ impl MoonlightBackend for MockBackend {
         })
     }
 
-    fn load_settings(&self) -> Result<StreamingSettings, String> {
+    fn load_settings(&mut self) -> Result<StreamingSettings, String> {
         Ok(self.settings.clone())
     }
 

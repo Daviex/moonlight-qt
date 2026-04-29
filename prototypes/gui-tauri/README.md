@@ -43,6 +43,27 @@ The Rust side now separates the production command surface from the in-memory mo
 
 1. `src-tauri\src\backend.rs` defines the DTOs and `MoonlightBackend` trait used by all Tauri commands.
 2. `src-tauri\src\mock_backend.rs` contains the current in-memory mock implementation.
-3. `src-tauri\src\main.rs` owns the Tauri commands, event emission, and backend registration.
+3. `src-tauri\src\ipc_backend.rs` contains the selected production bridge scaffold. It can spawn a native helper process and forward commands over a line-delimited JSON protocol.
+4. `src-tauri\src\main.rs` owns the Tauri commands, event emission, and backend registration.
 
-The next production step is adding a real `MoonlightBackend` implementation that forwards calls to the existing C++ facades without moving backend behavior into TypeScript.
+The default backend remains the in-memory mock so the prototype launches without extra native processes. To exercise the IPC bridge scaffold later, run the Tauri shell with:
+
+```powershell
+$env:MOONLIGHT_TAURI_BACKEND = 'ipc'
+$env:MOONLIGHT_TAURI_HELPER = 'C:\path\to\moonlight-native-helper.exe'
+npm run tauri dev
+```
+
+The helper must reserve stdout for one JSON response per line and write diagnostics to stderr. Requests include an ID and tagged command payload:
+
+```json
+{"id":1,"command":{"command":"list_hosts"}}
+```
+
+Responses must echo the request ID and include either `result` or `error`:
+
+```json
+{"id":1,"result":[{"id":"gaming-pc","name":"Gaming PC","address":"192.168.1.20","status":"Online","paired":true,"running":false}]}
+```
+
+This process boundary is the chosen production direction because it avoids mixing Tauri/Rust and Qt/C++ event loops in one process, keeps the existing C++ backend and SDL streaming ownership intact, and prevents TypeScript from reimplementing Moonlight backend logic. The next production step is adding a C++ helper mode that adapts the existing frontend facades to this protocol.
