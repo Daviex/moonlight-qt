@@ -40,9 +40,11 @@ private slots:
     void openSelectedHost();
     void openSelectedHostAllApps();
     void pairSelectedHost();
+    void testSelectedHostConnection();
     void wakeSelectedHost();
     void deleteSelectedHost();
     void renameSelectedHost();
+    void showSelectedHostDetails();
     void addHost();
     void showSettings();
     void saveSettings();
@@ -54,6 +56,7 @@ private slots:
     void toggleSelectedAppDirectLaunch();
     void runStartupChecks();
     void handlePairingCompleted(const QString& error);
+    void handleConnectionTestCompleted(int result, const QString& blockedPorts);
     void handleHardwareAccelerationChanged();
     void handleUnmappedGamepadsChanged();
     void handleUpdateAvailable(const QString& newVersion, const QString& url);
@@ -62,6 +65,7 @@ private:
     int selectedHostIndex() const;
     int selectedAppIndex() const;
     void openHost(int index, bool showHiddenGames, bool allowDirectLaunch);
+    void showUnsupportedHostWarning(const FrontendComputer& computer);
     void buildHostPage();
     void buildAppPage();
     void buildSettingsPage();
@@ -79,6 +83,7 @@ private:
     QListWidget* m_HostList = nullptr;
     QListWidget* m_AppListWidget = nullptr;
     QPointer<QMessageBox> m_PairingDialog;
+    QPointer<QMessageBox> m_ConnectionTestDialog;
     QLabel* m_StatusLabel = nullptr;
     QLabel* m_AppHeaderLabel = nullptr;
     QSpinBox* m_WidthSpinBox = nullptr;
@@ -119,6 +124,7 @@ private:
     QCheckBox* m_Yuv444CheckBox = nullptr;
     int m_CurrentComputerIndex = -1;
     bool m_PairingInProgress = false;
+    bool m_ConnectionTestInProgress = false;
     bool m_StartupChecksStarted = false;
     bool m_HardwareWarningShown = false;
     bool m_UnmappedGamepadWarningShown = false;

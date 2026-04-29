@@ -84,6 +84,8 @@ GuiNextWindow::GuiNextWindow(QWidget* parent)
             this, &GuiNextWindow::refreshHosts);
     connect(m_Facade.computers(), &ComputerListFacade::pairingCompleted,
             this, &GuiNextWindow::handlePairingCompleted);
+    connect(m_Facade.computers(), &ComputerListFacade::connectionTestCompleted,
+            this, &GuiNextWindow::handleConnectionTestCompleted);
 
     connect(m_Facade.sessions(), &FrontendSessionCoordinator::hideUiRequested,
             this, &QWidget::hide);
@@ -143,6 +145,8 @@ void GuiNextWindow::buildHostPage()
     auto allAppsButton = new QPushButton(tr("View All Apps"), page);
     auto pairButton = new QPushButton(tr("Pair"), page);
     auto wakeButton = new QPushButton(tr("Wake"), page);
+    auto testButton = new QPushButton(tr("Test Network"), page);
+    auto detailsButton = new QPushButton(tr("Details"), page);
     auto renameButton = new QPushButton(tr("Rename"), page);
     auto deleteButton = new QPushButton(tr("Delete"), page);
     auto settingsButton = new QPushButton(tr("Settings"), page);
@@ -152,6 +156,8 @@ void GuiNextWindow::buildHostPage()
     buttons->addWidget(allAppsButton);
     buttons->addWidget(pairButton);
     buttons->addWidget(wakeButton);
+    buttons->addWidget(testButton);
+    buttons->addWidget(detailsButton);
     buttons->addWidget(renameButton);
     buttons->addWidget(deleteButton);
     buttons->addStretch();
@@ -167,6 +173,8 @@ void GuiNextWindow::buildHostPage()
     connect(allAppsButton, &QPushButton::clicked, this, &GuiNextWindow::openSelectedHostAllApps);
     connect(pairButton, &QPushButton::clicked, this, &GuiNextWindow::pairSelectedHost);
     connect(wakeButton, &QPushButton::clicked, this, &GuiNextWindow::wakeSelectedHost);
+    connect(testButton, &QPushButton::clicked, this, &GuiNextWindow::testSelectedHostConnection);
+    connect(detailsButton, &QPushButton::clicked, this, &GuiNextWindow::showSelectedHostDetails);
     connect(renameButton, &QPushButton::clicked, this, &GuiNextWindow::renameSelectedHost);
     connect(deleteButton, &QPushButton::clicked, this, &GuiNextWindow::deleteSelectedHost);
     connect(settingsButton, &QPushButton::clicked, this, &GuiNextWindow::showSettings);
@@ -424,6 +432,10 @@ void GuiNextWindow::openHost(int index, bool showHiddenGames, bool allowDirectLa
         QMessageBox::information(this, tr("Host Offline"), tr("This host is not online."));
         return;
     }
+    if (!computer.serverSupported) {
+        showUnsupportedHostWarning(computer);
+        return;
+    }
     if (!computer.paired) {
         pairSelectedHost();
         return;
@@ -555,6 +567,20 @@ void GuiNextWindow::pairSelectedHost()
         return;
     }
 
+    FrontendComputer computer = m_Facade.computers()->computerAt(index);
+    if (!computer.online) {
+        QMessageBox::information(this, tr("Host Offline"), tr("This host is not online."));
+        return;
+    }
+    if (!computer.serverSupported) {
+        showUnsupportedHostWarning(computer);
+        return;
+    }
+    if (computer.paired) {
+        QMessageBox::information(this, tr("Pair Host"), tr("This host is already paired."));
+        return;
+    }
+
     QString pin = m_Facade.computers()->generatePinString();
     m_PairingInProgress = true;
     setStatusText(tr("Pairing in progress..."));
@@ -576,6 +602,55 @@ void GuiNextWindow::wakeSelectedHost()
     if (index >= 0) {
         m_Facade.computers()->wakeComputer(index);
     }
+}
+
+void GuiNextWindow::testSelectedHostConnection()
+{
+    if (m_ConnectionTestInProgress) {
+        if (!m_ConnectionTestDialog.isNull()) {
+            m_ConnectionTestDialog->show();
+            m_ConnectionTestDialog->raise();
+            m_ConnectionTestDialog->activateWindow();
+        }
+        return;
+    }
+
+    int index = selectedHostIndex();
+    if (index < 0) {
+        return;
+    }
+
+    m_ConnectionTestInProgress = true;
+    setStatusText(tr("Testing network connection..."));
+    m_Facade.computers()->testConnectionForComputer(index);
+
+    auto dialog = new QMessageBox(QMessageBox::Information,
+                                  tr("Test Network"),
+                                  tr("Moonlight is testing your network connection to determine if any required ports are blocked.\n\nThis may take a few seconds..."),
+                                  QMessageBox::Ok,
+                                  this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    m_ConnectionTestDialog = dialog;
+    dialog->open();
+}
+
+void GuiNextWindow::showSelectedHostDetails()
+{
+    int index = selectedHostIndex();
+    if (index < 0) {
+        return;
+    }
+
+    QMessageBox::information(this,
+                             tr("Host Details"),
+                             m_Facade.computers()->computerAt(index).details);
+}
+
+void GuiNextWindow::showUnsupportedHostWarning(const FrontendComputer& computer)
+{
+    QMessageBox::warning(this,
+                         tr("Unsupported Host"),
+                         tr("The version of GeForce Experience on %1 is not supported by this build of Moonlight. You must update Moonlight to stream from %1.").arg(computer.name));
 }
 
 void GuiNextWindow::deleteSelectedHost()
@@ -730,6 +805,43 @@ void GuiNextWindow::handlePairingCompleted(const QString& error)
         QMessageBox::warning(this, tr("Pairing Failed"), error);
     }
     refreshHosts();
+}
+
+void GuiNextWindow::handleConnectionTestCompleted(int result, const QString& blockedPorts)
+{
+    m_ConnectionTestInProgress = false;
+
+    QString message;
+    QMessageBox::Icon icon = QMessageBox::Information;
+    if (result == -1) {
+        icon = QMessageBox::Warning;
+        message = tr("The network test could not be performed because none of Moonlight's connection testing servers were reachable from this PC. Check your Internet connection or try again later.");
+    }
+    else if (result == 0) {
+        message = tr("This network does not appear to be blocking Moonlight. If you still have trouble connecting, check your PC's firewall settings.") +
+                  QStringLiteral("\n\n") +
+                  tr("If you are trying to stream over the Internet, install the Moonlight Internet Hosting Tool on your gaming PC and run the included Internet Streaming Tester to check your gaming PC's Internet connection.");
+    }
+    else {
+        icon = QMessageBox::Critical;
+        message = tr("Your PC's current network connection seems to be blocking Moonlight. Streaming over the Internet may not work while connected to this network.") +
+                  QStringLiteral("\n\n") +
+                  tr("The following network ports were blocked:") +
+                  QStringLiteral("\n") +
+                  blockedPorts;
+    }
+
+    setStatusText(tr("Network test completed."));
+    if (m_ConnectionTestDialog.isNull()) {
+        auto dialog = new QMessageBox(icon, tr("Test Network"), message, QMessageBox::Ok, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        m_ConnectionTestDialog = dialog;
+        dialog->open();
+        return;
+    }
+
+    m_ConnectionTestDialog->setIcon(icon);
+    m_ConnectionTestDialog->setText(message);
 }
 
 void GuiNextWindow::toggleSelectedAppHidden()
