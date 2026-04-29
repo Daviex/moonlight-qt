@@ -331,6 +331,7 @@ export default function App() {
     [hosts, selectedHostId],
   );
   const settingsErrors = useMemo(() => validateSettings(settings), [settings]);
+  const unmappedGamepads = systemInfo?.unmappedGamepads.trim() ?? '';
 
   const updateSetting = useCallback(<K extends keyof StreamingSettings,>(key: K, value: StreamingSettings[K]) => {
     setSettings((currentSettings) => ({ ...currentSettings, [key]: value }));
@@ -994,10 +995,11 @@ export default function App() {
   }, [handleControllerAction, handleSessionEvent, handleStatusEvent, refreshApps, refreshHosts, refreshSettingsSnapshot, selectedHostId, showHiddenApps, syncWindowForSessionEvent]);
 
   useEffect(() => {
-    writeDebugLog('frontend mounted; loading backend info and hosts');
+    writeDebugLog('frontend mounted; loading backend info, hosts, and system info');
     void refreshBackendInfo();
     void refreshHosts();
-  }, [refreshBackendInfo, refreshHosts]);
+    void loadSystemInfo();
+  }, [loadSystemInfo, refreshBackendInfo, refreshHosts]);
 
   useEffect(() => {
     if (dialog.kind === 'none') {
@@ -1319,6 +1321,27 @@ export default function App() {
               </button>
             )}
             <button type="button" onClick={() => setUpdateInfo(null)}>Dismiss</button>
+          </div>
+        </section>
+      )}
+
+      {unmappedGamepads && (
+        <section className="update-banner warning" aria-label="Unmapped gamepads detected">
+          <div>
+            <h2>Gamepad mapping needed</h2>
+            <p>Moonlight detected unmapped gamepads: {unmappedGamepads}</p>
+          </div>
+          <div className="button-row">
+            <button type="button" onClick={() => {
+              void openExternalUrl(gamepadMappingHelpUrl, 'gamepad mapping help');
+            }}>
+              Gamepad Help
+            </button>
+            <button type="button" onClick={() => {
+              void loadSystemInfo();
+            }}>
+              Refresh
+            </button>
           </div>
         </section>
       )}

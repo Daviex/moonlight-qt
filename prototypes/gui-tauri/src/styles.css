@@ -150,6 +150,11 @@ nav {
   color: #c9d1d9;
 }
 
+.update-banner.warning {
+  background: #2f2411;
+  border-color: #d29922;
+}
+
 .stream-panel h2,
 .stream-panel p {
   margin: 0;
