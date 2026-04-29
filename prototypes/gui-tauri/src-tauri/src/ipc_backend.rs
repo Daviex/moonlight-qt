@@ -2,18 +2,21 @@ use crate::backend::{
     AppEntry, BackendInfo, BridgeEvent, CommandStatus, HostDetails, HostEntry, MoonlightBackend,
     NetworkTestResult, PairingChallenge, StreamingSettings,
 };
+use crate::logger;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 use tauri::Emitter;
 
 const BACKEND_MODE_ENV: &str = "MOONLIGHT_TAURI_BACKEND";
 const HELPER_PATH_ENV: &str = "MOONLIGHT_TAURI_HELPER";
+const IPC_TIMEOUT_ENV: &str = "MOONLIGHT_TAURI_IPC_TIMEOUT_SECS";
 const BRIDGE_EVENT: &str = "moonlight-bridge-event";
 
 type PendingResponses = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<serde_json::Value, String>>>>>;
@@ -37,17 +40,26 @@ impl IpcBackend {
         let helper_path = env::var(HELPER_PATH_ENV).map_err(|_| {
             format!("{HELPER_PATH_ENV} must point to the native helper executable.")
         })?;
+        logger::log(format!("ipc backend requested; helper_path={helper_path}"));
         Self::spawn(helper_path, app_handle)
     }
 
     fn spawn(helper_path: String, app_handle: tauri::AppHandle) -> Result<Self, String> {
-        let mut process = Command::new(&helper_path)
+        let mut command = Command::new(&helper_path);
+        command
             .arg("--tauri-bridge-helper")
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stdout(Stdio::piped());
+        if logger::enabled() {
+            command.stderr(Stdio::piped());
+        } else {
+            command.stderr(Stdio::inherit());
+        }
+
+        let mut process = command
             .spawn()
             .map_err(|error| format!("Failed to start native helper '{helper_path}': {error}"))?;
+        logger::log(format!("native helper spawned; pid={}", process.id()));
 
         let stdin = process
             .stdin
@@ -57,6 +69,9 @@ impl IpcBackend {
             .stdout
             .take()
             .ok_or_else(|| "Failed to open native helper stdout.".to_string())?;
+        if let Some(stderr) = process.stderr.take() {
+            start_stderr_thread(stderr);
+        }
         let pending_responses = Arc::new(Mutex::new(HashMap::new()));
         start_reader_thread(stdout, pending_responses.clone(), app_handle);
 
@@ -75,6 +90,10 @@ impl IpcBackend {
     {
         let request_id = self.next_request_id;
         self.next_request_id += 1;
+        let command_name = command.name();
+        logger::log(format!(
+            "ipc request {request_id} begin; command={command_name}"
+        ));
 
         let request = serde_json::to_vec(&IpcRequest {
             id: request_id,
@@ -91,23 +110,13 @@ impl IpcBackend {
         let write_result = self
             .stdin
             .lock()
-            .map_err(|error| error.to_string())?
-            .write_all(&request)
-            .and_then(|_| {
-                self.stdin
-                    .lock()
-                    .map_err(|error| {
-                        std::io::Error::new(std::io::ErrorKind::Other, error.to_string())
-                    })?
-                    .write_all(b"\n")
-            })
-            .and_then(|_| {
-                self.stdin
-                    .lock()
-                    .map_err(|error| {
-                        std::io::Error::new(std::io::ErrorKind::Other, error.to_string())
-                    })?
-                    .flush()
+            .map_err(|error| error.to_string())
+            .and_then(|mut stdin| {
+                stdin
+                    .write_all(&request)
+                    .and_then(|_| stdin.write_all(b"\n"))
+                    .and_then(|_| stdin.flush())
+                    .map_err(|error| error.to_string())
             });
 
         if let Err(error) = write_result {
@@ -115,12 +124,22 @@ impl IpcBackend {
                 .lock()
                 .map_err(|lock_error| lock_error.to_string())?
                 .remove(&request_id);
+            logger::log(format!(
+                "ipc request {request_id} send failed; command={command_name}; error={error}"
+            ));
             return Err(format!("Failed to send native helper request: {error}"));
         }
 
-        let frame = receiver
-            .recv()
-            .map_err(|error| format!("Native helper response channel closed: {error}"))??;
+        let frame = receiver.recv_timeout(ipc_timeout()).map_err(|error| {
+            self.pending_responses
+                .lock()
+                .map(|mut pending| pending.remove(&request_id))
+                .ok();
+            format!("Native helper response timed out or channel closed: {error}")
+        })??;
+        logger::log(format!(
+            "ipc request {request_id} received response; command={command_name}"
+        ));
         let response: IpcResponse<R> = serde_json::from_value(frame)
             .map_err(|error| format!("Failed to parse native helper response: {error}"))?;
         if response.id != request_id {
@@ -130,8 +149,25 @@ impl IpcBackend {
             ));
         }
 
-        response.into_result()
+        let result = response.into_result();
+        match &result {
+            Ok(_) => logger::log(format!(
+                "ipc request {request_id} completed; command={command_name}"
+            )),
+            Err(error) => logger::log(format!(
+                "ipc request {request_id} failed; command={command_name}; error={error}"
+            )),
+        }
+        result
     }
+}
+
+fn ipc_timeout() -> Duration {
+    env::var(IPC_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(15))
 }
 
 fn start_reader_thread(
@@ -140,20 +176,39 @@ fn start_reader_thread(
     app_handle: tauri::AppHandle,
 ) {
     thread::spawn(move || {
+        logger::log("native helper stdout reader started");
         let mut stdout = BufReader::new(stdout);
         loop {
             let mut line = String::new();
             match stdout.read_line(&mut line) {
                 Ok(0) => {
+                    logger::log("native helper stdout closed");
                     fail_pending_responses(&pending_responses, "Native helper stdout closed.");
                     break;
                 }
                 Ok(_) => handle_helper_frame(&line, &pending_responses, &app_handle),
                 Err(error) => {
+                    logger::log(format!("native helper stdout read failed; error={error}"));
                     fail_pending_responses(
                         &pending_responses,
                         &format!("Failed to read native helper response: {error}"),
                     );
+                    break;
+                }
+            }
+        }
+    });
+}
+
+fn start_stderr_thread(stderr: ChildStderr) {
+    thread::spawn(move || {
+        logger::log("native helper stderr reader started");
+        let stderr = BufReader::new(stderr);
+        for line in stderr.lines() {
+            match line {
+                Ok(line) => logger::log(format!("native helper stderr: {line}")),
+                Err(error) => {
+                    logger::log(format!("native helper stderr read failed; error={error}"));
                     break;
                 }
             }
@@ -169,6 +224,9 @@ fn handle_helper_frame(
     let frame: serde_json::Value = match serde_json::from_str(line) {
         Ok(frame) => frame,
         Err(error) => {
+            logger::log(format!(
+                "failed to parse native helper frame; error={error}; line={line:?}"
+            ));
             eprintln!("Failed to parse native helper frame: {error}");
             return;
         }
@@ -177,16 +235,27 @@ fn handle_helper_frame(
     if let Some(event) = frame.get("event") {
         match serde_json::from_value::<BridgeEvent>(event.clone()) {
             Ok(event) => {
+                logger::log(format!(
+                    "native helper event; kind={:?}; message={}",
+                    event.kind, event.message
+                ));
                 if let Err(error) = app_handle.emit(BRIDGE_EVENT, event) {
+                    logger::log(format!("failed to emit native helper event; error={error}"));
                     eprintln!("Failed to emit native helper event: {error}");
                 }
             }
-            Err(error) => eprintln!("Failed to parse native helper event: {error}"),
+            Err(error) => {
+                logger::log(format!(
+                    "failed to parse native helper event; error={error}"
+                ));
+                eprintln!("Failed to parse native helper event: {error}");
+            }
         }
         return;
     }
 
     let Some(response_id) = frame.get("id").and_then(|value| value.as_u64()) else {
+        logger::log("native helper response missing numeric ID");
         eprintln!("Native helper response was missing a numeric ID.");
         return;
     };
@@ -198,6 +267,9 @@ fn handle_helper_frame(
     if let Some(sender) = sender {
         let _ = sender.send(Ok(frame));
     } else {
+        logger::log(format!(
+            "native helper response had no pending request; id={response_id}"
+        ));
         eprintln!("Native helper response had no pending request: {response_id}");
     }
 }
@@ -213,13 +285,18 @@ fn fail_pending_responses(pending_responses: &PendingResponses, message: &str) {
         })
         .unwrap_or_default();
 
+    let count = senders.len();
     for sender in senders {
         let _ = sender.send(Err(message.to_string()));
     }
+    logger::log(format!(
+        "failed {count} pending IPC responses; message={message}"
+    ));
 }
 
 impl Drop for IpcBackend {
     fn drop(&mut self) {
+        logger::log(format!("stopping native helper; pid={}", self.process.id()));
         let _ = self.process.kill();
         let _ = self.process.wait();
     }
@@ -404,6 +481,29 @@ enum IpcCommand {
     SaveSettings {
         settings: StreamingSettings,
     },
+}
+
+impl IpcCommand {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::ListHosts => "list_hosts",
+            Self::AddHost { .. } => "add_host",
+            Self::PairHost { .. } => "pair_host",
+            Self::WakeHost { .. } => "wake_host",
+            Self::RenameHost { .. } => "rename_host",
+            Self::DeleteHost { .. } => "delete_host",
+            Self::HostDetails { .. } => "host_details",
+            Self::TestNetwork { .. } => "test_network",
+            Self::ListApps { .. } => "list_apps",
+            Self::LaunchApp { .. } => "launch_app",
+            Self::ResumeSession { .. } => "resume_session",
+            Self::QuitRunningApp { .. } => "quit_running_app",
+            Self::SetAppHidden { .. } => "set_app_hidden",
+            Self::SetAppDirectLaunch { .. } => "set_app_direct_launch",
+            Self::LoadSettings => "load_settings",
+            Self::SaveSettings { .. } => "save_settings",
+        }
+    }
 }
 
 #[derive(Deserialize)]

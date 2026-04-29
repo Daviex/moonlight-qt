@@ -81,7 +81,7 @@ pub struct BridgeEvent {
     pub controller_action: Option<ControllerAction>,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum BridgeEventKind {
     HostChanged,
@@ -108,7 +108,7 @@ pub enum ControllerAction {
     ActivateControl,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum HostStatus {
     Online,
     Offline,

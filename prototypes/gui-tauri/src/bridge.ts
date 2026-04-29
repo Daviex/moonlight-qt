@@ -90,6 +90,7 @@ export interface BridgeEvent {
 export const BRIDGE_EVENT = 'moonlight-bridge-event';
 
 export const bridge = {
+  debugLog: (message: string) => invoke<CommandStatus>('debug_log', { message }),
   backendInfo: () => invoke<BackendInfo>('backend_info'),
   listHosts: () => invoke<HostEntry[]>('list_hosts'),
   addHost: (address: string) => invoke<CommandStatus>('add_host', { address }),

@@ -5,8 +5,11 @@
 #include "settings/streamingpreferences.h"
 #include "streaming/qtwidgetwindowcontext.h"
 
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QSet>
+#include <QStringList>
 #include <QTextStream>
 #include <QThread>
 #include <QWidget>
@@ -287,9 +290,57 @@ QJsonObject TauriBridgeHelper::handleCommand(const QJsonObject& command)
 QJsonObject TauriBridgeHelper::listHosts()
 {
     QJsonArray hosts;
+    QSet<QString> seenHosts;
+    QHash<QString, int> placeholderHostIndexes;
+    auto hostQuality = [](const QJsonObject& host) {
+        int quality = 0;
+        if (!host.value("address").toString().isEmpty()) {
+            quality += 4;
+        }
+        if (host.value("paired").toBool()) {
+            quality += 2;
+        }
+        if (host.value("running").toBool()) {
+            quality += 1;
+        }
+        if (host.value("status").toString() == "Online") {
+            quality += 1;
+        }
+        return quality;
+    };
+
     const QVector<FrontendComputer> computers = m_Facade.computers()->computers();
     for (int i = 0; i < computers.count(); i++) {
-        hosts.append(hostToJson(computers[i], i));
+        const QJsonObject host = hostToJson(computers[i], i);
+        const QString hostKey = QStringList{
+            host.value("name").toString(),
+            host.value("address").toString(),
+            host.value("status").toString(),
+            host.value("paired").toBool() ? "1" : "0",
+            host.value("running").toBool() ? "1" : "0",
+        }.join('\x1f');
+        if (seenHosts.contains(hostKey)) {
+            continue;
+        }
+
+        seenHosts.insert(hostKey);
+        const QString nameKey = host.value("name").toString().toCaseFolded();
+        const int existingHostIndex = placeholderHostIndexes.value(nameKey, -1);
+        if (existingHostIndex >= 0) {
+            const QJsonObject existingHost = hosts[existingHostIndex].toObject();
+            const bool samePlaceholderHost =
+                existingHost.value("address").toString().isEmpty() ||
+                host.value("address").toString().isEmpty();
+            if (samePlaceholderHost) {
+                if (hostQuality(host) > hostQuality(existingHost)) {
+                    hosts.replace(existingHostIndex, host);
+                }
+                continue;
+            }
+        }
+
+        placeholderHostIndexes.insert(nameKey, hosts.count());
+        hosts.append(host);
     }
     return {{"result", hosts}};
 }

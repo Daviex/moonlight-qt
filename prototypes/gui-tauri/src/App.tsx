@@ -5,7 +5,9 @@ import {
   BackendInfo,
   BridgeEvent,
   ControllerAction,
+  HostDetails,
   HostEntry,
+  PairingChallenge,
   StreamingSettings,
   bridge,
 } from './bridge';
@@ -23,6 +25,15 @@ interface StreamUiState {
   errors: string[];
   uiHiddenRequested: boolean;
 }
+
+type DialogState =
+  | { kind: 'none' }
+  | { kind: 'addHost'; address: string; error: string; submitting: boolean }
+  | { kind: 'renameHost'; host: HostEntry; name: string; error: string; submitting: boolean }
+  | { kind: 'deleteHost'; host: HostEntry; error: string; submitting: boolean }
+  | { kind: 'pairing'; host: HostEntry; challenge: PairingChallenge }
+  | { kind: 'hostDetails'; details: HostDetails }
+  | { kind: 'help' };
 
 const fallbackSettings: StreamingSettings = {
   width: 1920,
@@ -55,9 +66,17 @@ const idleStreamState: StreamUiState = {
 
 const appWindow = getCurrentWindow();
 
-function focusableElements(): HTMLElement[] {
+function writeDebugLog(message: string) {
+  void bridge.debugLog(message).catch(() => undefined);
+}
+
+function activeDialogRoot(): HTMLElement | null {
+  return document.getElementById('active-dialog');
+}
+
+function focusableElements(root: ParentNode = document): HTMLElement[] {
   return Array.from(
-    document.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'),
+    root.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'),
   ).filter((element) =>
     !element.hasAttribute('disabled') &&
     element.tabIndex !== -1 &&
@@ -66,7 +85,7 @@ function focusableElements(): HTMLElement[] {
 }
 
 function moveFocus(delta: number) {
-  const elements = focusableElements();
+  const elements = focusableElements(activeDialogRoot() ?? document);
   if (elements.length === 0) {
     return;
   }
@@ -87,6 +106,7 @@ export default function App() {
   const [eventLog, setEventLog] = useState<BridgeEvent[]>([]);
   const [streamState, setStreamState] = useState<StreamUiState>(idleStreamState);
   const [backendInfo, setBackendInfo] = useState<BackendInfo | null>(null);
+  const [dialog, setDialog] = useState<DialogState>({ kind: 'none' });
   const [hostRefreshDiagnostics, setHostRefreshDiagnostics] = useState({
     attempts: 0,
     lastCount: 0,
@@ -99,8 +119,10 @@ export default function App() {
   );
 
   const refreshHosts = useCallback(async () => {
+    writeDebugLog(`refreshHosts begin; selectedHostId=${selectedHostId}`);
     try {
       const nextHosts = await bridge.listHosts();
+      writeDebugLog(`refreshHosts success; count=${nextHosts.length}`);
       setHosts(nextHosts);
       if (!nextHosts.some((host) => host.id === selectedHostId)) {
         setSelectedHostId(nextHosts[0]?.id ?? '');
@@ -115,6 +137,7 @@ export default function App() {
     }
     catch (error) {
       const message = String(error);
+      writeDebugLog(`refreshHosts failed; error=${message}`);
       setHostRefreshDiagnostics((previousDiagnostics) => ({
         ...previousDiagnostics,
         attempts: previousDiagnostics.attempts + 1,
@@ -126,25 +149,34 @@ export default function App() {
   }, [selectedHostId]);
 
   const refreshBackendInfo = useCallback(async () => {
+    writeDebugLog('refreshBackendInfo begin');
     try {
-      setBackendInfo(await bridge.backendInfo());
+      const info = await bridge.backendInfo();
+      writeDebugLog(`refreshBackendInfo success; mode=${info.mode}; helperPath=${info.helperPath ?? ''}`);
+      setBackendInfo(info);
     }
     catch (error) {
+      writeDebugLog(`refreshBackendInfo failed; error=${String(error)}`);
       setStatus(`Failed to load backend info: ${String(error)}`);
     }
   }, []);
 
   const refreshApps = useCallback(async (hostId = selectedHostId, includeHidden = showHiddenApps) => {
+    writeDebugLog(`refreshApps begin; hostId=${hostId}; includeHidden=${includeHidden}`);
     if (!hostId) {
       setApps([]);
+      writeDebugLog('refreshApps skipped; no hostId');
       return;
     }
 
     try {
-      setApps(await bridge.listApps(hostId, includeHidden));
+      const nextApps = await bridge.listApps(hostId, includeHidden);
+      writeDebugLog(`refreshApps success; count=${nextApps.length}`);
+      setApps(nextApps);
       setStatus('App list loaded.');
     }
     catch (error) {
+      writeDebugLog(`refreshApps failed; error=${String(error)}`);
       setStatus(`Failed to load apps: ${String(error)}`);
     }
   }, [selectedHostId, showHiddenApps]);
@@ -166,26 +198,96 @@ export default function App() {
     }
   }, [refreshHosts]);
 
-  const addHost = useCallback(async () => {
-    const address = window.prompt('Enter host address');
-    if (!address) {
-      return;
-    }
-    await runHostCommand(() => bridge.addHost(address));
-  }, [runHostCommand]);
+  const closeDialog = useCallback(() => {
+    setDialog({ kind: 'none' });
+  }, []);
 
-  const renameHost = useCallback(async (host: HostEntry) => {
-    const name = window.prompt('Enter new host name', host.name);
-    if (!name) {
+  const openAddHostDialog = useCallback(() => {
+    setDialog({ kind: 'addHost', address: '', error: '', submitting: false });
+  }, []);
+
+  const submitAddHost = useCallback(async () => {
+    if (dialog.kind !== 'addHost') {
       return;
     }
-    await runHostCommand(() => bridge.renameHost(host.id, name));
-  }, [runHostCommand]);
+
+    const address = dialog.address.trim();
+    if (!address) {
+      setDialog({ ...dialog, error: 'Enter a host address.' });
+      return;
+    }
+
+    setDialog({ ...dialog, submitting: true });
+    try {
+      const result = await bridge.addHost(address);
+      setStatus(result.message);
+      setDialog({ kind: 'none' });
+      await refreshHosts();
+    }
+    catch (error) {
+      const message = String(error);
+      setStatus(message);
+      setDialog({ ...dialog, error: message, submitting: false });
+    }
+  }, [dialog, refreshHosts]);
+
+  const openRenameHostDialog = useCallback((host: HostEntry) => {
+    setDialog({ kind: 'renameHost', host, name: host.name, error: '', submitting: false });
+  }, []);
+
+  const submitRenameHost = useCallback(async () => {
+    if (dialog.kind !== 'renameHost') {
+      return;
+    }
+
+    const name = dialog.name.trim();
+    if (!name) {
+      setDialog({ ...dialog, error: 'Enter a host name.' });
+      return;
+    }
+
+    setDialog({ ...dialog, submitting: true });
+    try {
+      const result = await bridge.renameHost(dialog.host.id, name);
+      setStatus(result.message);
+      setDialog({ kind: 'none' });
+      await refreshHosts();
+    }
+    catch (error) {
+      const message = String(error);
+      setStatus(message);
+      setDialog({ ...dialog, error: message, submitting: false });
+    }
+  }, [dialog, refreshHosts]);
+
+  const openDeleteHostDialog = useCallback((host: HostEntry) => {
+    setDialog({ kind: 'deleteHost', host, error: '', submitting: false });
+  }, []);
+
+  const confirmDeleteHost = useCallback(async () => {
+    if (dialog.kind !== 'deleteHost') {
+      return;
+    }
+
+    setDialog({ ...dialog, submitting: true });
+    try {
+      const result = await bridge.deleteHost(dialog.host.id);
+      setStatus(result.message);
+      setDialog({ kind: 'none' });
+      await refreshHosts();
+    }
+    catch (error) {
+      const message = String(error);
+      setStatus(message);
+      setDialog({ ...dialog, error: message, submitting: false });
+    }
+  }, [dialog, refreshHosts]);
 
   const showDetails = useCallback(async (host: HostEntry) => {
     try {
       const details = await bridge.hostDetails(host.id);
       setStatus(`${details.name}: ${details.status}, ${details.address}, ${details.serverVersion}`);
+      setDialog({ kind: 'hostDetails', details });
     }
     catch (error) {
       setStatus(String(error));
@@ -207,12 +309,17 @@ export default function App() {
     try {
       const challenge = await bridge.pairHost(host.id);
       setStatus(challenge.message);
+      setDialog({ kind: 'pairing', host, challenge });
       await refreshHosts();
     }
     catch (error) {
       setStatus(String(error));
     }
   }, [refreshHosts]);
+
+  const openHelpDialog = useCallback(() => {
+    setDialog({ kind: 'help' });
+  }, []);
 
   const loadSettings = useCallback(async () => {
     try {
@@ -477,16 +584,21 @@ export default function App() {
       break;
     case 'accept':
     case 'activateControl': {
+      const root = activeDialogRoot() ?? document;
       const activeElement = document.activeElement;
-      if (activeElement instanceof HTMLElement) {
+      if (activeElement instanceof HTMLElement && root.contains(activeElement)) {
         activeElement.click();
       }
       else {
-        focusableElements()[0]?.focus();
+        focusableElements(root)[0]?.focus();
       }
       break;
     }
     case 'back':
+      if (dialog.kind !== 'none') {
+        closeDialog();
+        break;
+      }
       if (page === 'apps' || page === 'settings') {
         setPage('hosts');
       }
@@ -495,15 +607,19 @@ export default function App() {
       }
       break;
     case 'settings':
+      if (dialog.kind !== 'none') {
+        closeDialog();
+      }
       void loadSettings();
       break;
     case 'contextMenu':
       setStatus('Context menu requested by controller navigation.');
       break;
     }
-  }, [loadSettings, page]);
+  }, [closeDialog, dialog.kind, loadSettings, page]);
 
   const handleBridgeEvent = useCallback((event: BridgeEvent) => {
+    writeDebugLog(`bridge event received; kind=${event.kind}; message=${event.message}`);
     setEventLog((previousEvents) => [event, ...previousEvents].slice(0, 6));
     void (async () => {
       if (event.kind === 'controllerAction' && event.controllerAction) {
@@ -542,9 +658,22 @@ export default function App() {
   }, [handleControllerAction, handleSessionEvent, handleStatusEvent, refreshApps, refreshHosts, refreshSettingsSnapshot, selectedHostId, showHiddenApps, syncWindowForSessionEvent]);
 
   useEffect(() => {
+    writeDebugLog('frontend mounted; loading backend info and hosts');
     void refreshBackendInfo();
     void refreshHosts();
   }, [refreshBackendInfo, refreshHosts]);
+
+  useEffect(() => {
+    if (dialog.kind === 'none') {
+      return undefined;
+    }
+
+    const focusTimer = window.setTimeout(() => {
+      focusableElements(activeDialogRoot() ?? document)[0]?.focus();
+    }, 0);
+
+    return () => window.clearTimeout(focusTimer);
+  }, [dialog.kind]);
 
   useEffect(() => {
     if (hosts.length > 0) {
@@ -570,6 +699,7 @@ export default function App() {
 
     bridge.listen(handleBridgeEvent)
       .then((nextUnlisten) => {
+        writeDebugLog('bridge event subscription ready');
         if (disposed) {
           nextUnlisten();
         }
@@ -578,14 +708,146 @@ export default function App() {
         }
       })
       .catch((error) => {
+        writeDebugLog(`bridge event subscription failed; error=${String(error)}`);
         setStatus(`Failed to subscribe to native events: ${String(error)}`);
       });
 
     return () => {
+      writeDebugLog('frontend unmounting; removing bridge event subscription');
       disposed = true;
       unlisten?.();
     };
   }, [handleBridgeEvent]);
+
+  const renderDialog = () => {
+    if (dialog.kind === 'none') {
+      return null;
+    }
+
+    return (
+      <div className="dialog-backdrop" role="presentation">
+        <section
+          id="active-dialog"
+          className="dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="dialog-title"
+        >
+          {dialog.kind === 'addHost' && (
+            <>
+              <h2 id="dialog-title">Add host</h2>
+              <p>Enter the Sunshine host address or hostname. Moonlight will add it through the native bridge.</p>
+              <label className="form-field">
+                Host address
+                <input
+                  value={dialog.address}
+                  disabled={dialog.submitting}
+                  onChange={(event) => setDialog({ ...dialog, address: event.target.value, error: '' })}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      void submitAddHost();
+                    }
+                  }}
+                />
+              </label>
+              {dialog.error && <p className="dialog-error">{dialog.error}</p>}
+              <div className="button-row">
+                <button type="button" onClick={closeDialog} disabled={dialog.submitting}>Cancel</button>
+                <button type="button" onClick={submitAddHost} disabled={dialog.submitting}>Add Host</button>
+              </div>
+            </>
+          )}
+
+          {dialog.kind === 'renameHost' && (
+            <>
+              <h2 id="dialog-title">Rename host</h2>
+              <p>Choose the display name for {dialog.host.name}.</p>
+              <label className="form-field">
+                Host name
+                <input
+                  value={dialog.name}
+                  disabled={dialog.submitting}
+                  onChange={(event) => setDialog({ ...dialog, name: event.target.value, error: '' })}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      void submitRenameHost();
+                    }
+                  }}
+                />
+              </label>
+              {dialog.error && <p className="dialog-error">{dialog.error}</p>}
+              <div className="button-row">
+                <button type="button" onClick={closeDialog} disabled={dialog.submitting}>Cancel</button>
+                <button type="button" onClick={submitRenameHost} disabled={dialog.submitting}>Save Name</button>
+              </div>
+            </>
+          )}
+
+          {dialog.kind === 'deleteHost' && (
+            <>
+              <h2 id="dialog-title">Delete host</h2>
+              <p>Remove {dialog.host.name} from Moonlight?</p>
+              {dialog.error && <p className="dialog-error">{dialog.error}</p>}
+              <div className="button-row">
+                <button type="button" onClick={closeDialog} disabled={dialog.submitting}>Cancel</button>
+                <button type="button" className="danger" onClick={confirmDeleteHost} disabled={dialog.submitting}>
+                  Delete Host
+                </button>
+              </div>
+            </>
+          )}
+
+          {dialog.kind === 'pairing' && (
+            <>
+              <h2 id="dialog-title">Pair with {dialog.host.name}</h2>
+              <p>{dialog.challenge.message}</p>
+              <div className="pin-code" aria-label="Pairing PIN">{dialog.challenge.pin}</div>
+              <p>Enter this PIN on the host to complete pairing.</p>
+              <div className="button-row">
+                <button type="button" onClick={closeDialog}>Done</button>
+              </div>
+            </>
+          )}
+
+          {dialog.kind === 'hostDetails' && (
+            <>
+              <h2 id="dialog-title">{dialog.details.name}</h2>
+              <dl className="details-grid">
+                <dt>Address</dt>
+                <dd>{dialog.details.address || 'Unknown'}</dd>
+                <dt>Status</dt>
+                <dd>{dialog.details.status}</dd>
+                <dt>Paired</dt>
+                <dd>{dialog.details.paired ? 'Yes' : 'No'}</dd>
+                <dt>Running</dt>
+                <dd>{dialog.details.running ? 'Yes' : 'No'}</dd>
+                <dt>Server version</dt>
+                <dd>{dialog.details.serverVersion || 'Unknown'}</dd>
+              </dl>
+              <div className="button-row">
+                <button type="button" onClick={closeDialog}>Close</button>
+              </div>
+            </>
+          )}
+
+          {dialog.kind === 'help' && (
+            <>
+              <h2 id="dialog-title">Moonlight help</h2>
+              <p>This Tauri shell currently exercises the native bridge for host/app/session/settings flows.</p>
+              <p>
+                Use Hosts to refresh discovery, add/pair/wake/test machines, and open Apps. Use Settings to edit the
+                streaming snapshot exposed by the native helper. Controller actions move focus and activate the selected
+                control.
+              </p>
+              <div className="button-row">
+                <button type="button" onClick={closeDialog}>Close</button>
+              </div>
+            </>
+          )}
+        </section>
+      </div>
+    );
+  };
 
   return (
     <main className="shell">
@@ -597,7 +859,7 @@ export default function App() {
         <nav aria-label="Primary">
           <button type="button" onClick={() => setPage('hosts')}>Hosts</button>
           <button type="button" onClick={loadSettings}>Settings</button>
-          <button type="button" onClick={() => setStatus('Help will open Moonlight docs from the native bridge.')}>Help</button>
+          <button type="button" onClick={openHelpDialog}>Help</button>
         </nav>
       </header>
 
@@ -652,7 +914,7 @@ export default function App() {
             <h2 id="hosts-title">Hosts</h2>
             <div className="button-row">
               <button type="button" onClick={refreshHosts}>Refresh</button>
-              <button type="button" onClick={addHost}>Add Host</button>
+              <button type="button" onClick={openAddHostDialog}>Add Host</button>
             </div>
           </div>
           <div className="backend-diagnostics" aria-label="Backend diagnostics">
@@ -691,8 +953,8 @@ export default function App() {
                   <button type="button" onClick={() => runHostCommand(() => bridge.wakeHost(host.id))}>Wake</button>
                   <button type="button" onClick={() => showDetails(host)}>Details</button>
                   <button type="button" onClick={() => testNetwork(host)}>Test</button>
-                  <button type="button" onClick={() => renameHost(host)}>Rename</button>
-                  <button type="button" onClick={() => runHostCommand(() => bridge.deleteHost(host.id))}>Delete</button>
+                  <button type="button" onClick={() => openRenameHostDialog(host)}>Rename</button>
+                  <button type="button" onClick={() => openDeleteHostDialog(host)}>Delete</button>
                 </div>
               </article>
             ))}
@@ -778,6 +1040,8 @@ export default function App() {
           </label>
         </section>
       )}
+
+      {renderDialog()}
 
       {eventLog.length > 0 && (
         <aside className="event-log" aria-label="Native event log">

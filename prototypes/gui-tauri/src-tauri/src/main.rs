@@ -1,5 +1,6 @@
 mod backend;
 mod ipc_backend;
+mod logger;
 mod mock_backend;
 
 use backend::{
@@ -18,10 +19,19 @@ type BackendState = Mutex<Box<dyn MoonlightBackend>>;
 
 fn create_backend(app_handle: tauri::AppHandle) -> Box<dyn MoonlightBackend> {
     if ipc_backend_requested() {
-        Box::new(
-            IpcBackend::from_environment(app_handle).expect("failed to initialize IPC backend"),
-        )
+        logger::log("creating IPC backend");
+        match IpcBackend::from_environment(app_handle) {
+            Ok(backend) => {
+                logger::log("IPC backend ready");
+                Box::new(backend)
+            }
+            Err(error) => {
+                logger::log(format!("IPC backend initialization failed; error={error}"));
+                panic!("failed to initialize IPC backend: {error}");
+            }
+        }
     } else {
+        logger::log("creating mock backend");
         Box::new(MockBackend::new())
     }
 }
@@ -33,6 +43,9 @@ fn emit_bridge_event(
     host_id: Option<String>,
     app_id: Option<String>,
 ) -> Result<(), String> {
+    logger::log(format!(
+        "emit bridge event; kind={kind:?}; message={message}; host_id={host_id:?}; app_id={app_id:?}"
+    ));
     app_handle
         .emit(
             BRIDGE_EVENT,
@@ -49,10 +62,24 @@ fn emit_bridge_event(
 
 #[tauri::command]
 fn backend_info(backend: tauri::State<'_, BackendState>) -> Result<BackendInfo, String> {
-    Ok(backend
+    logger::log("command backend_info begin");
+    let result = backend
         .lock()
         .map_err(|error| error.to_string())?
-        .backend_info())
+        .backend_info();
+    logger::log(format!(
+        "command backend_info complete; mode={}; helper_path={:?}",
+        result.mode, result.helper_path
+    ));
+    Ok(result)
+}
+
+#[tauri::command]
+fn debug_log(message: String) -> CommandStatus {
+    logger::log(format!("frontend: {message}"));
+    CommandStatus {
+        message: "Debug log recorded.".into(),
+    }
 }
 
 #[tauri::command]
@@ -60,6 +87,9 @@ fn emit_controller_action(
     action: ControllerAction,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
+    logger::log(format!(
+        "command emit_controller_action begin; action={action:?}"
+    ));
     let message = format!("Controller action: {action:?}");
     app_handle
         .emit(
@@ -78,10 +108,19 @@ fn emit_controller_action(
 
 #[tauri::command]
 fn list_hosts(backend: tauri::State<'_, BackendState>) -> Result<Vec<HostEntry>, String> {
-    backend
+    logger::log("command list_hosts begin");
+    let result = backend
         .lock()
         .map_err(|error| error.to_string())?
-        .list_hosts()
+        .list_hosts();
+    match &result {
+        Ok(hosts) => logger::log(format!(
+            "command list_hosts complete; count={}",
+            hosts.len()
+        )),
+        Err(error) => logger::log(format!("command list_hosts failed; error={error}")),
+    }
+    result
 }
 
 #[tauri::command]
@@ -90,6 +129,7 @@ fn add_host(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
+    logger::log(format!("command add_host begin; address={address}"));
     let mut backend = backend.lock().map_err(|error| error.to_string())?;
     let (status, host_id) = backend.add_host(address)?;
     let emit_command_events = !backend.emits_native_events();
@@ -104,6 +144,10 @@ fn add_host(
             None,
         )?;
     }
+    logger::log(format!(
+        "command add_host complete; message={}",
+        status.message
+    ));
     Ok(status)
 }
 
@@ -113,6 +157,7 @@ fn pair_host(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<PairingChallenge, String> {
+    logger::log(format!("command pair_host begin; host_id={host_id}"));
     let mut backend = backend.lock().map_err(|error| error.to_string())?;
     let challenge = backend.pair_host(&host_id)?;
     let emit_command_events = !backend.emits_native_events();
@@ -123,10 +168,14 @@ fn pair_host(
             &app_handle,
             BridgeEventKind::HostChanged,
             challenge.message.clone(),
-            Some(host_id),
+            Some(host_id.clone()),
             None,
         )?;
     }
+    logger::log(format!(
+        "command pair_host complete; host_id={host_id}; message={}",
+        challenge.message
+    ));
     Ok(challenge)
 }
 
@@ -136,6 +185,7 @@ fn wake_host(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
+    logger::log(format!("command wake_host begin; host_id={host_id}"));
     let mut backend = backend.lock().map_err(|error| error.to_string())?;
     let status = backend.wake_host(&host_id)?;
     let emit_command_events = !backend.emits_native_events();
@@ -150,6 +200,10 @@ fn wake_host(
             None,
         )?;
     }
+    logger::log(format!(
+        "command wake_host complete; message={}",
+        status.message
+    ));
     Ok(status)
 }
 
@@ -160,6 +214,9 @@ fn rename_host(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
+    logger::log(format!(
+        "command rename_host begin; host_id={host_id}; name={name}"
+    ));
     let mut backend = backend.lock().map_err(|error| error.to_string())?;
     let status = backend.rename_host(&host_id, name)?;
     let emit_command_events = !backend.emits_native_events();
@@ -174,6 +231,10 @@ fn rename_host(
             None,
         )?;
     }
+    logger::log(format!(
+        "command rename_host complete; message={}",
+        status.message
+    ));
     Ok(status)
 }
 
@@ -183,6 +244,7 @@ fn delete_host(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
+    logger::log(format!("command delete_host begin; host_id={host_id}"));
     let mut backend = backend.lock().map_err(|error| error.to_string())?;
     let status = backend.delete_host(&host_id)?;
     let emit_command_events = !backend.emits_native_events();
@@ -197,6 +259,10 @@ fn delete_host(
             None,
         )?;
     }
+    logger::log(format!(
+        "command delete_host complete; message={}",
+        status.message
+    ));
     Ok(status)
 }
 
@@ -205,10 +271,19 @@ fn host_details(
     host_id: String,
     backend: tauri::State<'_, BackendState>,
 ) -> Result<HostDetails, String> {
-    backend
+    logger::log(format!("command host_details begin; host_id={host_id}"));
+    let result = backend
         .lock()
         .map_err(|error| error.to_string())?
-        .host_details(&host_id)
+        .host_details(&host_id);
+    match &result {
+        Ok(details) => logger::log(format!(
+            "command host_details complete; host={}; status={:?}",
+            details.name, details.status
+        )),
+        Err(error) => logger::log(format!("command host_details failed; error={error}")),
+    }
+    result
 }
 
 #[tauri::command]
@@ -217,6 +292,7 @@ fn test_network(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<NetworkTestResult, String> {
+    logger::log(format!("command test_network begin; host_id={host_id}"));
     let mut backend = backend.lock().map_err(|error| error.to_string())?;
     let result = backend.test_network(&host_id)?;
     let emit_command_events = !backend.emits_native_events();
@@ -231,6 +307,10 @@ fn test_network(
             None,
         )?;
     }
+    logger::log(format!(
+        "command test_network complete; result={}; message={}",
+        result.result, result.message
+    ));
     Ok(result)
 }
 
@@ -240,10 +320,18 @@ fn list_apps(
     show_hidden: bool,
     backend: tauri::State<'_, BackendState>,
 ) -> Result<Vec<AppEntry>, String> {
-    backend
+    logger::log(format!(
+        "command list_apps begin; host_id={host_id}; show_hidden={show_hidden}"
+    ));
+    let result = backend
         .lock()
         .map_err(|error| error.to_string())?
-        .list_apps(&host_id, show_hidden)
+        .list_apps(&host_id, show_hidden);
+    match &result {
+        Ok(apps) => logger::log(format!("command list_apps complete; count={}", apps.len())),
+        Err(error) => logger::log(format!("command list_apps failed; error={error}")),
+    }
+    result
 }
 
 #[tauri::command]
@@ -253,6 +341,9 @@ fn launch_app(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
+    logger::log(format!(
+        "command launch_app begin; host_id={host_id}; app_id={app_id}"
+    ));
     let mut backend = backend.lock().map_err(|error| error.to_string())?;
     let status = backend.launch_app(&host_id, &app_id)?;
     let emit_command_events = !backend.emits_native_events();
@@ -274,6 +365,10 @@ fn launch_app(
             Some(app_id),
         )?;
     }
+    logger::log(format!(
+        "command launch_app complete; message={}",
+        status.message
+    ));
     Ok(status)
 }
 
@@ -283,6 +378,7 @@ fn resume_session(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
+    logger::log(format!("command resume_session begin; host_id={host_id}"));
     let mut backend = backend.lock().map_err(|error| error.to_string())?;
     let status = backend.resume_session(&host_id)?;
     let emit_command_events = !backend.emits_native_events();
@@ -304,6 +400,10 @@ fn resume_session(
             None,
         )?;
     }
+    logger::log(format!(
+        "command resume_session complete; message={}",
+        status.message
+    ));
     Ok(status)
 }
 
@@ -313,6 +413,7 @@ fn quit_running_app(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
+    logger::log(format!("command quit_running_app begin; host_id={host_id}"));
     let mut backend = backend.lock().map_err(|error| error.to_string())?;
     let status = backend.quit_running_app(&host_id)?;
     let emit_command_events = !backend.emits_native_events();
@@ -334,6 +435,10 @@ fn quit_running_app(
             None,
         )?;
     }
+    logger::log(format!(
+        "command quit_running_app complete; message={}",
+        status.message
+    ));
     Ok(status)
 }
 
@@ -345,6 +450,9 @@ fn set_app_hidden(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
+    logger::log(format!(
+        "command set_app_hidden begin; host_id={host_id}; app_id={app_id}; hidden={hidden}"
+    ));
     let mut backend = backend.lock().map_err(|error| error.to_string())?;
     let status = backend.set_app_hidden(&host_id, &app_id, hidden)?;
     let emit_command_events = !backend.emits_native_events();
@@ -359,6 +467,10 @@ fn set_app_hidden(
             Some(app_id),
         )?;
     }
+    logger::log(format!(
+        "command set_app_hidden complete; message={}",
+        status.message
+    ));
     Ok(status)
 }
 
@@ -370,6 +482,9 @@ fn set_app_direct_launch(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
+    logger::log(format!(
+        "command set_app_direct_launch begin; host_id={host_id}; app_id={app_id}; direct_launch={direct_launch}"
+    ));
     let mut backend = backend.lock().map_err(|error| error.to_string())?;
     let status = backend.set_app_direct_launch(&host_id, &app_id, direct_launch)?;
     let emit_command_events = !backend.emits_native_events();
@@ -384,15 +499,33 @@ fn set_app_direct_launch(
             Some(app_id),
         )?;
     }
+    logger::log(format!(
+        "command set_app_direct_launch complete; message={}",
+        status.message
+    ));
     Ok(status)
 }
 
 #[tauri::command]
 fn load_settings(backend: tauri::State<'_, BackendState>) -> Result<StreamingSettings, String> {
-    backend
+    logger::log("command load_settings begin");
+    let result = backend
         .lock()
         .map_err(|error| error.to_string())?
-        .load_settings()
+        .load_settings();
+    match &result {
+        Ok(settings) => logger::log(format!(
+            "command load_settings complete; {}x{} {}fps bitrate={} hdr={} gamepad_mouse={}",
+            settings.width,
+            settings.height,
+            settings.fps,
+            settings.bitrate_kbps,
+            settings.enable_hdr,
+            settings.gamepad_mouse
+        )),
+        Err(error) => logger::log(format!("command load_settings failed; error={error}")),
+    }
+    result
 }
 
 #[tauri::command]
@@ -401,6 +534,15 @@ fn save_settings(
     backend: tauri::State<'_, BackendState>,
     app_handle: tauri::AppHandle,
 ) -> Result<CommandStatus, String> {
+    logger::log(format!(
+        "command save_settings begin; {}x{} {}fps bitrate={} hdr={} gamepad_mouse={}",
+        settings.width,
+        settings.height,
+        settings.fps,
+        settings.bitrate_kbps,
+        settings.enable_hdr,
+        settings.gamepad_mouse
+    ));
     let mut backend = backend.lock().map_err(|error| error.to_string())?;
     let status = backend.save_settings(settings)?;
     let emit_command_events = !backend.emits_native_events();
@@ -415,19 +557,32 @@ fn save_settings(
             None,
         )?;
     }
+    logger::log(format!(
+        "command save_settings complete; message={}",
+        status.message
+    ));
     Ok(status)
 }
 
 fn main() {
+    logger::init();
+    logger::log(format!(
+        "starting Moonlight Tauri prototype; exe={:?}; log_path={:?}",
+        std::env::current_exe().ok(),
+        logger::log_path()
+    ));
     tauri::Builder::default()
         .setup(|app| {
+            logger::log("tauri setup begin");
             let app_handle = app.handle().clone();
             app.manage(Mutex::new(create_backend(app_handle)));
+            logger::log("tauri setup complete");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             list_hosts,
             backend_info,
+            debug_log,
             add_host,
             pair_host,
             wake_host,

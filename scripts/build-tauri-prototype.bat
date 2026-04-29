@@ -75,7 +75,17 @@ if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
     echo start "" "%%~dp0MoonlightTauri.exe"
 ) > "%PACKAGE_DIR%\Launch-Moonlight-Tauri.bat"
 
+(
+    echo @echo off
+    echo set "MOONLIGHT_TAURI_BACKEND=ipc"
+    echo set "MOONLIGHT_TAURI_HELPER=%%~dp0native\Moonlight.exe"
+    echo set "MOONLIGHT_TAURI_DEBUG=1"
+    echo set "MOONLIGHT_TAURI_LOG=%%~dp0MoonlightTauri.log"
+    echo start "" "%%~dp0MoonlightTauri.exe"
+) > "%PACKAGE_DIR%\Launch-Moonlight-Tauri-Debug.bat"
+
 echo Tauri prototype package staged at:
 echo %PACKAGE_DIR%
 echo Run Launch-Moonlight-Tauri.bat to start the Tauri shell with the native helper.
+echo Run Launch-Moonlight-Tauri-Debug.bat to capture MoonlightTauri.log beside the staged executable.
 exit /b 0
