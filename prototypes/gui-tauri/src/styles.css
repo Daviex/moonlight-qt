@@ -65,6 +65,13 @@ nav {
   gap: 0.75rem;
 }
 
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: flex-end;
+}
+
 .panel {
   background: #161b22;
   border: 1px solid #30363d;
@@ -90,10 +97,37 @@ nav {
   text-align: left;
   background: #21262d;
   border: 1px solid #30363d;
+  border-radius: 10px;
+  padding: 1rem;
+  gap: 1rem;
 }
 
 .host-card.selected {
   border-color: #79c0ff;
+}
+
+.card-primary {
+  display: flex;
+  flex: 1;
+  width: 100%;
+  min-height: 90px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  text-align: left;
+  background: transparent;
+  border: 1px solid #30363d;
+}
+
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.card-actions button {
+  background: #30363d;
+  padding: 0.45rem 0.65rem;
 }
 
 .title {

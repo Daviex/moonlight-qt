@@ -2,7 +2,7 @@
 
 This prototype is the new target direction for replacing the GUI with a Tauri webview shell and a React + TypeScript frontend.
 
-The first milestone is intentionally isolated from the production qmake build. It proves the frontend structure, accessible host/app/settings screens, and the Tauri command boundary without disturbing the current no-QML Qt Widgets bridge.
+The first milestones are intentionally isolated from the production qmake build. They prove the frontend structure, accessible host/app/settings screens, and the Tauri command boundary without disturbing the current no-QML Qt Widgets bridge.
 
 ## Local commands
 
@@ -26,3 +26,13 @@ The production Tauri migration should keep Moonlight's C++ backend and streaming
 5. Controller navigation actions translated into web focus operations while streaming owns SDL input during active sessions.
 
 The streaming video path should remain a native SDL/window path. Do not attempt to render decoded frames inside the webview unless a separate renderer redesign is explicitly chosen.
+
+## Current bridge scaffold
+
+`src\bridge.ts` is the TypeScript-side contract for the UI. `src-tauri\src\main.rs` currently implements the same commands with an in-memory mock backend:
+
+1. Hosts: list, add, pair, wake, rename, delete, details, and network test.
+2. Apps: list, launch, quit running app, hide/unhide, and direct-launch toggle.
+3. Settings: load and save the current streaming settings snapshot.
+
+The next production step is replacing the mock Rust state with a thin bridge into the existing C++ facades without moving backend behavior into TypeScript.

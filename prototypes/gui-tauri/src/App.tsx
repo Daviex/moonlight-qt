@@ -1,44 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import {
+  AppEntry,
+  HostEntry,
+  StreamingSettings,
+  bridge,
+} from './bridge';
 
 type Page = 'hosts' | 'apps' | 'settings';
-
-interface HostEntry {
-  id: string;
-  name: string;
-  status: string;
-  paired: boolean;
-  running: boolean;
-}
-
-interface AppEntry {
-  id: string;
-  name: string;
-  hidden: boolean;
-  directLaunch: boolean;
-  running: boolean;
-}
-
-interface StreamingSettings {
-  width: number;
-  height: number;
-  fps: number;
-  bitrateKbps: number;
-  enableHdr: boolean;
-  gamepadMouse: boolean;
-}
-
-const fallbackHosts: HostEntry[] = [
-  { id: 'gaming-pc', name: 'Gaming PC', status: 'Online', paired: true, running: false },
-  { id: 'living-room', name: 'Living Room PC', status: 'Offline', paired: true, running: false },
-  { id: 'new-host', name: 'New Host', status: 'Pairing required', paired: false, running: false },
-];
-
-const fallbackApps: AppEntry[] = [
-  { id: 'steam', name: 'Steam Big Picture', hidden: false, directLaunch: true, running: false },
-  { id: 'desktop', name: 'Desktop', hidden: false, directLaunch: false, running: false },
-  { id: 'game', name: 'Example Game', hidden: false, directLaunch: false, running: false },
-];
 
 const fallbackSettings: StreamingSettings = {
   width: 1920,
@@ -49,55 +17,197 @@ const fallbackSettings: StreamingSettings = {
   gamepadMouse: true,
 };
 
-async function callBackend<T>(command: string, args?: Record<string, unknown>, fallback?: T): Promise<T> {
-  try {
-    return await invoke<T>(command, args);
-  }
-  catch (error) {
-    if (fallback !== undefined) {
-      return fallback;
-    }
-
-    throw error;
-  }
-}
-
 export default function App() {
   const [page, setPage] = useState<Page>('hosts');
-  const [selectedHostId, setSelectedHostId] = useState<string>(fallbackHosts[0].id);
-  const [hosts, setHosts] = useState<HostEntry[]>(fallbackHosts);
-  const [apps, setApps] = useState<AppEntry[]>(fallbackApps);
+  const [hosts, setHosts] = useState<HostEntry[]>([]);
+  const [apps, setApps] = useState<AppEntry[]>([]);
+  const [selectedHostId, setSelectedHostId] = useState('');
   const [settings, setSettings] = useState<StreamingSettings>(fallbackSettings);
+  const [showHiddenApps, setShowHiddenApps] = useState(false);
   const [status, setStatus] = useState('Tauri shell ready.');
 
   const selectedHost = useMemo(
-    () => hosts.find((host) => host.id === selectedHostId) ?? hosts[0],
+    () => hosts.find((host) => host.id === selectedHostId),
     [hosts, selectedHostId],
   );
 
   const refreshHosts = useCallback(async () => {
-    const nextHosts = await callBackend<HostEntry[]>('list_hosts', undefined, fallbackHosts);
-    setHosts(nextHosts);
-    if (!nextHosts.some((host) => host.id === selectedHostId)) {
-      setSelectedHostId(nextHosts[0]?.id ?? '');
+    try {
+      const nextHosts = await bridge.listHosts();
+      setHosts(nextHosts);
+      if (!nextHosts.some((host) => host.id === selectedHostId)) {
+        setSelectedHostId(nextHosts[0]?.id ?? '');
+      }
+      setStatus('Host list refreshed.');
     }
-    setStatus('Host list refreshed.');
+    catch (error) {
+      setStatus(`Failed to refresh hosts: ${String(error)}`);
+    }
   }, [selectedHostId]);
 
+  const refreshApps = useCallback(async (hostId = selectedHostId, includeHidden = showHiddenApps) => {
+    if (!hostId) {
+      setApps([]);
+      return;
+    }
+
+    try {
+      setApps(await bridge.listApps(hostId, includeHidden));
+      setStatus('App list loaded.');
+    }
+    catch (error) {
+      setStatus(`Failed to load apps: ${String(error)}`);
+    }
+  }, [selectedHostId, showHiddenApps]);
+
   const openApps = useCallback(async (hostId: string) => {
-    const nextApps = await callBackend<AppEntry[]>('list_apps', { hostId }, fallbackApps);
     setSelectedHostId(hostId);
-    setApps(nextApps);
+    await refreshApps(hostId, showHiddenApps);
     setPage('apps');
-    setStatus('App list loaded.');
+  }, [refreshApps, showHiddenApps]);
+
+  const runHostCommand = useCallback(async (action: () => Promise<{ message: string }>) => {
+    try {
+      const result = await action();
+      setStatus(result.message);
+      await refreshHosts();
+    }
+    catch (error) {
+      setStatus(String(error));
+    }
+  }, [refreshHosts]);
+
+  const addHost = useCallback(async () => {
+    const address = window.prompt('Enter host address');
+    if (!address) {
+      return;
+    }
+    await runHostCommand(() => bridge.addHost(address));
+  }, [runHostCommand]);
+
+  const renameHost = useCallback(async (host: HostEntry) => {
+    const name = window.prompt('Enter new host name', host.name);
+    if (!name) {
+      return;
+    }
+    await runHostCommand(() => bridge.renameHost(host.id, name));
+  }, [runHostCommand]);
+
+  const showDetails = useCallback(async (host: HostEntry) => {
+    try {
+      const details = await bridge.hostDetails(host.id);
+      setStatus(`${details.name}: ${details.status}, ${details.address}, ${details.serverVersion}`);
+    }
+    catch (error) {
+      setStatus(String(error));
+    }
   }, []);
 
-  const loadSettings = useCallback(async () => {
-    const nextSettings = await callBackend<StreamingSettings>('load_settings', undefined, fallbackSettings);
-    setSettings(nextSettings);
-    setPage('settings');
-    setStatus('Settings loaded.');
+  const testNetwork = useCallback(async (host: HostEntry) => {
+    try {
+      const result = await bridge.testNetwork(host.id);
+      const blockedPorts = result.blockedPorts.length > 0 ? ` Blocked ports: ${result.blockedPorts.join(', ')}` : '';
+      setStatus(`${result.message}${blockedPorts}`);
+    }
+    catch (error) {
+      setStatus(String(error));
+    }
   }, []);
+
+  const pairHost = useCallback(async (host: HostEntry) => {
+    try {
+      const challenge = await bridge.pairHost(host.id);
+      setStatus(challenge.message);
+      await refreshHosts();
+    }
+    catch (error) {
+      setStatus(String(error));
+    }
+  }, [refreshHosts]);
+
+  const loadSettings = useCallback(async () => {
+    try {
+      setSettings(await bridge.loadSettings());
+      setPage('settings');
+      setStatus('Settings loaded.');
+    }
+    catch (error) {
+      setStatus(String(error));
+    }
+  }, []);
+
+  const saveSettings = useCallback(async () => {
+    try {
+      const result = await bridge.saveSettings(settings);
+      setStatus(result.message);
+      setPage('hosts');
+    }
+    catch (error) {
+      setStatus(String(error));
+    }
+  }, [settings]);
+
+  const launchApp = useCallback(async (app: AppEntry) => {
+    if (!selectedHostId) {
+      return;
+    }
+
+    try {
+      const result = await bridge.launchApp(selectedHostId, app.id);
+      setStatus(result.message);
+      await refreshApps(selectedHostId, showHiddenApps);
+      await refreshHosts();
+    }
+    catch (error) {
+      setStatus(String(error));
+    }
+  }, [refreshApps, refreshHosts, selectedHostId, showHiddenApps]);
+
+  const quitRunningApp = useCallback(async () => {
+    if (!selectedHostId) {
+      return;
+    }
+
+    try {
+      const result = await bridge.quitRunningApp(selectedHostId);
+      setStatus(result.message);
+      await refreshApps(selectedHostId, showHiddenApps);
+      await refreshHosts();
+    }
+    catch (error) {
+      setStatus(String(error));
+    }
+  }, [refreshApps, refreshHosts, selectedHostId, showHiddenApps]);
+
+  const toggleHidden = useCallback(async (app: AppEntry) => {
+    if (!selectedHostId) {
+      return;
+    }
+
+    try {
+      const result = await bridge.setAppHidden(selectedHostId, app.id, !app.hidden);
+      setStatus(result.message);
+      await refreshApps(selectedHostId, showHiddenApps);
+    }
+    catch (error) {
+      setStatus(String(error));
+    }
+  }, [refreshApps, selectedHostId, showHiddenApps]);
+
+  const toggleDirectLaunch = useCallback(async (app: AppEntry) => {
+    if (!selectedHostId) {
+      return;
+    }
+
+    try {
+      const result = await bridge.setAppDirectLaunch(selectedHostId, app.id, !app.directLaunch);
+      setStatus(result.message);
+      await refreshApps(selectedHostId, showHiddenApps);
+    }
+    catch (error) {
+      setStatus(String(error));
+    }
+  }, [refreshApps, selectedHostId, showHiddenApps]);
 
   useEffect(() => {
     void refreshHosts();
@@ -121,21 +231,29 @@ export default function App() {
         <section className="panel" aria-labelledby="hosts-title">
           <div className="panel-heading">
             <h2 id="hosts-title">Hosts</h2>
-            <button type="button" onClick={refreshHosts}>Refresh</button>
+            <div className="button-row">
+              <button type="button" onClick={refreshHosts}>Refresh</button>
+              <button type="button" onClick={addHost}>Add Host</button>
+            </div>
           </div>
           <div className="card-grid">
             {hosts.map((host) => (
-              <button
-                key={host.id}
-                type="button"
-                className={`host-card ${host.id === selectedHostId ? 'selected' : ''}`}
-                onClick={() => openApps(host.id)}
-              >
-                <span className="title">{host.name}</span>
-                <span>{host.status}</span>
-                <span>{host.paired ? 'Paired' : 'Pairing required'}</span>
-                {host.running && <span className="tag">In Game</span>}
-              </button>
+              <article key={host.id} className={`host-card ${host.id === selectedHostId ? 'selected' : ''}`}>
+                <button type="button" className="card-primary" onClick={() => openApps(host.id)}>
+                  <span className="title">{host.name}</span>
+                  <span>{host.status}</span>
+                  <span>{host.paired ? 'Paired' : 'Pairing required'}</span>
+                  {host.running && <span className="tag">In Game</span>}
+                </button>
+                <div className="card-actions">
+                  <button type="button" onClick={() => pairHost(host)}>Pair</button>
+                  <button type="button" onClick={() => runHostCommand(() => bridge.wakeHost(host.id))}>Wake</button>
+                  <button type="button" onClick={() => showDetails(host)}>Details</button>
+                  <button type="button" onClick={() => testNetwork(host)}>Test</button>
+                  <button type="button" onClick={() => renameHost(host)}>Rename</button>
+                  <button type="button" onClick={() => runHostCommand(() => bridge.deleteHost(host.id))}>Delete</button>
+                </div>
+              </article>
             ))}
           </div>
         </section>
@@ -146,23 +264,39 @@ export default function App() {
           <div className="panel-heading">
             <div>
               <h2 id="apps-title">{selectedHost?.name ?? 'Apps'}</h2>
-              <p>Launch, quit, hide, and direct-launch actions will map to native commands.</p>
+              <p>Launch, quit, hide, and direct-launch actions map to native commands.</p>
             </div>
-            <button type="button" onClick={() => setPage('hosts')}>Back</button>
+            <div className="button-row">
+              <button type="button" onClick={() => {
+                const nextShowHidden = !showHiddenApps;
+                setShowHiddenApps(nextShowHidden);
+                void refreshApps(selectedHostId, nextShowHidden);
+              }}>
+                {showHiddenApps ? 'Hide Hidden Apps' : 'View All Apps'}
+              </button>
+              <button type="button" onClick={quitRunningApp}>Quit Running App</button>
+              <button type="button" onClick={() => setPage('hosts')}>Back</button>
+            </div>
           </div>
           <div className="card-grid">
             {apps.map((app) => (
-              <button
-                key={app.id}
-                type="button"
-                className="app-card"
-                onClick={() => setStatus(`Launch requested for ${app.name}.`)}
-              >
-                <span className="title">{app.name}</span>
-                <span>{app.running ? 'Running' : 'Ready'}</span>
-                {app.directLaunch && <span className="tag">Direct Launch</span>}
-                {app.hidden && <span className="tag muted">Hidden</span>}
-              </button>
+              <article key={app.id} className="app-card">
+                <button type="button" className="card-primary" onClick={() => launchApp(app)}>
+                  <span className="title">{app.name}</span>
+                  <span>{app.running ? 'Running' : 'Ready'}</span>
+                  {app.directLaunch && <span className="tag">Direct Launch</span>}
+                  {app.hidden && <span className="tag muted">Hidden</span>}
+                </button>
+                <div className="card-actions">
+                  <button type="button" onClick={() => launchApp(app)}>Launch</button>
+                  <button type="button" onClick={() => toggleDirectLaunch(app)}>
+                    {app.directLaunch ? 'Clear Direct Launch' : 'Direct Launch'}
+                  </button>
+                  <button type="button" onClick={() => toggleHidden(app)}>
+                    {app.hidden ? 'Unhide' : 'Hide'}
+                  </button>
+                </div>
+              </article>
             ))}
           </div>
         </section>
@@ -172,7 +306,10 @@ export default function App() {
         <section className="panel settings" aria-labelledby="settings-title">
           <div className="panel-heading">
             <h2 id="settings-title">Settings</h2>
-            <button type="button" onClick={() => setPage('hosts')}>Done</button>
+            <div className="button-row">
+              <button type="button" onClick={() => setPage('hosts')}>Cancel</button>
+              <button type="button" onClick={saveSettings}>Save</button>
+            </div>
           </div>
           <label>
             Width
