@@ -1,15 +1,22 @@
 use crate::backend::{
-    AppEntry, CommandStatus, HostDetails, HostEntry, MoonlightBackend, NetworkTestResult,
-    PairingChallenge, StreamingSettings,
+    AppEntry, BridgeEvent, CommandStatus, HostDetails, HostEntry, MoonlightBackend,
+    NetworkTestResult, PairingChallenge, StreamingSettings,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::env;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
+use tauri::Emitter;
 
 const BACKEND_MODE_ENV: &str = "MOONLIGHT_TAURI_BACKEND";
 const HELPER_PATH_ENV: &str = "MOONLIGHT_TAURI_HELPER";
+const BRIDGE_EVENT: &str = "moonlight-bridge-event";
+
+type PendingResponses = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<serde_json::Value, String>>>>>;
 
 pub fn ipc_backend_requested() -> bool {
     env::var(BACKEND_MODE_ENV)
@@ -19,20 +26,20 @@ pub fn ipc_backend_requested() -> bool {
 
 pub struct IpcBackend {
     process: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    stdin: Arc<Mutex<ChildStdin>>,
+    pending_responses: PendingResponses,
     next_request_id: u64,
 }
 
 impl IpcBackend {
-    pub fn from_environment() -> Result<Self, String> {
+    pub fn from_environment(app_handle: tauri::AppHandle) -> Result<Self, String> {
         let helper_path = env::var(HELPER_PATH_ENV).map_err(|_| {
             format!("{HELPER_PATH_ENV} must point to the native helper executable.")
         })?;
-        Self::spawn(helper_path)
+        Self::spawn(helper_path, app_handle)
     }
 
-    fn spawn(helper_path: String) -> Result<Self, String> {
+    fn spawn(helper_path: String, app_handle: tauri::AppHandle) -> Result<Self, String> {
         let mut process = Command::new(&helper_path)
             .arg("--tauri-bridge-helper")
             .stdin(Stdio::piped())
@@ -49,11 +56,13 @@ impl IpcBackend {
             .stdout
             .take()
             .ok_or_else(|| "Failed to open native helper stdout.".to_string())?;
+        let pending_responses = Arc::new(Mutex::new(HashMap::new()));
+        start_reader_thread(stdout, pending_responses.clone(), app_handle);
 
         Ok(Self {
             process,
-            stdin,
-            stdout: BufReader::new(stdout),
+            stdin: Arc::new(Mutex::new(stdin)),
+            pending_responses,
             next_request_id: 1,
         })
     }
@@ -65,46 +74,145 @@ impl IpcBackend {
         let request_id = self.next_request_id;
         self.next_request_id += 1;
 
-        serde_json::to_writer(
-            &mut self.stdin,
-            &IpcRequest {
-                id: request_id,
-                command,
-            },
-        )
+        let request = serde_json::to_vec(&IpcRequest {
+            id: request_id,
+            command,
+        })
         .map_err(|error| format!("Failed to serialize native helper request: {error}"))?;
-        self.stdin
-            .write_all(b"\n")
-            .and_then(|_| self.stdin.flush())
-            .map_err(|error| format!("Failed to send native helper request: {error}"))?;
 
+        let (sender, receiver) = mpsc::channel();
+        self.pending_responses
+            .lock()
+            .map_err(|error| error.to_string())?
+            .insert(request_id, sender);
+
+        let write_result = self
+            .stdin
+            .lock()
+            .map_err(|error| error.to_string())?
+            .write_all(&request)
+            .and_then(|_| {
+                self.stdin
+                    .lock()
+                    .map_err(|error| {
+                        std::io::Error::new(std::io::ErrorKind::Other, error.to_string())
+                    })?
+                    .write_all(b"\n")
+            })
+            .and_then(|_| {
+                self.stdin
+                    .lock()
+                    .map_err(|error| {
+                        std::io::Error::new(std::io::ErrorKind::Other, error.to_string())
+                    })?
+                    .flush()
+            });
+
+        if let Err(error) = write_result {
+            self.pending_responses
+                .lock()
+                .map_err(|lock_error| lock_error.to_string())?
+                .remove(&request_id);
+            return Err(format!("Failed to send native helper request: {error}"));
+        }
+
+        let frame = receiver
+            .recv()
+            .map_err(|error| format!("Native helper response channel closed: {error}"))??;
+        let response: IpcResponse<R> = serde_json::from_value(frame)
+            .map_err(|error| format!("Failed to parse native helper response: {error}"))?;
+        if response.id != request_id {
+            return Err(format!(
+                "Native helper response ID mismatch: expected {request_id}, got {}.",
+                response.id
+            ));
+        }
+
+        response.into_result()
+    }
+}
+
+fn start_reader_thread(
+    stdout: ChildStdout,
+    pending_responses: PendingResponses,
+    app_handle: tauri::AppHandle,
+) {
+    thread::spawn(move || {
+        let mut stdout = BufReader::new(stdout);
         loop {
             let mut line = String::new();
-            let bytes_read = self
-                .stdout
-                .read_line(&mut line)
-                .map_err(|error| format!("Failed to read native helper response: {error}"))?;
-            if bytes_read == 0 {
-                return Err("Native helper exited before sending a response.".into());
+            match stdout.read_line(&mut line) {
+                Ok(0) => {
+                    fail_pending_responses(&pending_responses, "Native helper stdout closed.");
+                    break;
+                }
+                Ok(_) => handle_helper_frame(&line, &pending_responses, &app_handle),
+                Err(error) => {
+                    fail_pending_responses(
+                        &pending_responses,
+                        &format!("Failed to read native helper response: {error}"),
+                    );
+                    break;
+                }
             }
-
-            let frame: serde_json::Value = serde_json::from_str(&line)
-                .map_err(|error| format!("Failed to parse native helper frame: {error}"))?;
-            if frame.get("event").is_some() {
-                continue;
-            }
-
-            let response: IpcResponse<R> = serde_json::from_value(frame)
-                .map_err(|error| format!("Failed to parse native helper response: {error}"))?;
-            if response.id != request_id {
-                return Err(format!(
-                    "Native helper response ID mismatch: expected {request_id}, got {}.",
-                    response.id
-                ));
-            }
-
-            return response.into_result();
         }
+    });
+}
+
+fn handle_helper_frame(
+    line: &str,
+    pending_responses: &PendingResponses,
+    app_handle: &tauri::AppHandle,
+) {
+    let frame: serde_json::Value = match serde_json::from_str(line) {
+        Ok(frame) => frame,
+        Err(error) => {
+            eprintln!("Failed to parse native helper frame: {error}");
+            return;
+        }
+    };
+
+    if let Some(event) = frame.get("event") {
+        match serde_json::from_value::<BridgeEvent>(event.clone()) {
+            Ok(event) => {
+                if let Err(error) = app_handle.emit(BRIDGE_EVENT, event) {
+                    eprintln!("Failed to emit native helper event: {error}");
+                }
+            }
+            Err(error) => eprintln!("Failed to parse native helper event: {error}"),
+        }
+        return;
+    }
+
+    let Some(response_id) = frame.get("id").and_then(|value| value.as_u64()) else {
+        eprintln!("Native helper response was missing a numeric ID.");
+        return;
+    };
+
+    let sender = pending_responses
+        .lock()
+        .map(|mut pending| pending.remove(&response_id))
+        .unwrap_or(None);
+    if let Some(sender) = sender {
+        let _ = sender.send(Ok(frame));
+    } else {
+        eprintln!("Native helper response had no pending request: {response_id}");
+    }
+}
+
+fn fail_pending_responses(pending_responses: &PendingResponses, message: &str) {
+    let senders = pending_responses
+        .lock()
+        .map(|mut pending| {
+            pending
+                .drain()
+                .map(|(_, sender)| sender)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    for sender in senders {
+        let _ = sender.send(Err(message.to_string()));
     }
 }
 
