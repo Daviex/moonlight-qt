@@ -95,6 +95,33 @@ static bool validateRequiredBooleanSetting(const QJsonObject& settings,
     return validateBooleanSetting(settings, key, label, error);
 }
 
+static bool parseRequiredNumericString(const QJsonObject& payload,
+                                       const QString& key,
+                                       const QString& label,
+                                       int& value,
+                                       QString& error)
+{
+    if (!payload.contains(key)) {
+        error = QStringLiteral("%1 is required.").arg(label);
+        return false;
+    }
+
+    const QJsonValue jsonValue = payload.value(key);
+    if (!jsonValue.isString() || jsonValue.toString().isEmpty()) {
+        error = QStringLiteral("%1 must be a numeric string.").arg(label);
+        return false;
+    }
+
+    bool ok = false;
+    value = jsonValue.toString().toInt(&ok);
+    if (!ok || value < 0) {
+        error = QStringLiteral("%1 must be a non-negative integer.").arg(label);
+        return false;
+    }
+
+    return true;
+}
+
 static bool validateStreamingBooleanSettings(const QJsonObject& settings, QString& error)
 {
     return validateBooleanSetting(settings, QStringLiteral("unlockBitrate"), QStringLiteral("Unlock bitrate"), error) &&
@@ -539,9 +566,10 @@ QJsonObject TauriBridgeHelper::listHosts()
 
 QJsonObject TauriBridgeHelper::hostDetails(const QJsonObject& payload)
 {
-    const int hostIndex = hostIndexFromPayload(payload);
+    QString validationError;
+    const int hostIndex = hostIndexFromPayload(payload, &validationError);
     if (hostIndex < 0) {
-        return {{"error", "Host was not found."}};
+        return {{"error", validationError}};
     }
 
     const FrontendComputer computer = m_Facade.computers()->computerAt(hostIndex);
@@ -573,11 +601,11 @@ QJsonObject TauriBridgeHelper::hostDetails(const QJsonObject& payload)
 
 QJsonObject TauriBridgeHelper::listApps(const QJsonObject& payload)
 {
-    const int hostIndex = hostIndexFromPayload(payload);
-    if (hostIndex < 0) {
-        return {{"error", "Host was not found."}};
-    }
     QString validationError;
+    const int hostIndex = hostIndexFromPayload(payload, &validationError);
+    if (hostIndex < 0) {
+        return {{"error", validationError}};
+    }
     if (payload.contains(QStringLiteral("show_hidden")) &&
         !validateBooleanSetting(payload, QStringLiteral("show_hidden"), QStringLiteral("Show hidden apps"), validationError)) {
         return {{"error", validationError}};
@@ -599,18 +627,19 @@ QJsonObject TauriBridgeHelper::listApps(const QJsonObject& payload)
 
 QJsonObject TauriBridgeHelper::launchApp(const QJsonObject& payload)
 {
-    const int hostIndex = hostIndexFromPayload(payload);
+    QString validationError;
+    const int hostIndex = hostIndexFromPayload(payload, &validationError);
     if (hostIndex < 0) {
-        return {{"error", "Host was not found."}};
+        return {{"error", validationError}};
     }
     if (m_ActiveSession != nullptr) {
         return {{"error", "A stream session is already active."}};
     }
 
     QScopedPointer<AppListFacade> appList(m_Facade.createAppList(hostIndex, true));
-    const int appIndex = appIndexFromPayload(appList.data(), payload);
+    const int appIndex = appIndexFromPayload(appList.data(), payload, &validationError);
     if (appIndex < 0) {
-        return {{"error", "App was not found."}};
+        return {{"error", validationError}};
     }
 
     const FrontendApp app = appList->appAt(appIndex);
@@ -620,9 +649,10 @@ QJsonObject TauriBridgeHelper::launchApp(const QJsonObject& payload)
 
 QJsonObject TauriBridgeHelper::resumeSession(const QJsonObject& payload)
 {
-    const int hostIndex = hostIndexFromPayload(payload);
+    QString validationError;
+    const int hostIndex = hostIndexFromPayload(payload, &validationError);
     if (hostIndex < 0) {
-        return {{"error", "Host was not found."}};
+        return {{"error", validationError}};
     }
     if (m_ActiveSession != nullptr) {
         return {{"error", "A stream session is already active."}};
@@ -691,9 +721,10 @@ QJsonObject TauriBridgeHelper::startSession(Session* session, const QString& app
 
 QJsonObject TauriBridgeHelper::pairHost(const QJsonObject& payload)
 {
-    const int hostIndex = hostIndexFromPayload(payload);
+    QString validationError;
+    const int hostIndex = hostIndexFromPayload(payload, &validationError);
     if (hostIndex < 0) {
-        return {{"error", "Host was not found."}};
+        return {{"error", validationError}};
     }
 
     const QString pin = m_Facade.computers()->generatePinString();
@@ -706,9 +737,10 @@ QJsonObject TauriBridgeHelper::pairHost(const QJsonObject& payload)
 
 QJsonObject TauriBridgeHelper::wakeHost(const QJsonObject& payload)
 {
-    const int hostIndex = hostIndexFromPayload(payload);
+    QString validationError;
+    const int hostIndex = hostIndexFromPayload(payload, &validationError);
     if (hostIndex < 0) {
-        return {{"error", "Host was not found."}};
+        return {{"error", validationError}};
     }
 
     m_Facade.computers()->wakeComputer(hostIndex);
@@ -718,10 +750,11 @@ QJsonObject TauriBridgeHelper::wakeHost(const QJsonObject& payload)
 
 QJsonObject TauriBridgeHelper::renameHost(const QJsonObject& payload)
 {
-    const int hostIndex = hostIndexFromPayload(payload);
+    QString validationError;
+    const int hostIndex = hostIndexFromPayload(payload, &validationError);
     const QString name = payload.value("name").toString();
     if (hostIndex < 0) {
-        return {{"error", "Host was not found."}};
+        return {{"error", validationError}};
     }
     if (name.isEmpty()) {
         return {{"error", "Host name is required."}};
@@ -734,9 +767,10 @@ QJsonObject TauriBridgeHelper::renameHost(const QJsonObject& payload)
 
 QJsonObject TauriBridgeHelper::deleteHost(const QJsonObject& payload)
 {
-    const int hostIndex = hostIndexFromPayload(payload);
+    QString validationError;
+    const int hostIndex = hostIndexFromPayload(payload, &validationError);
     if (hostIndex < 0) {
-        return {{"error", "Host was not found."}};
+        return {{"error", validationError}};
     }
 
     m_Facade.computers()->deleteComputer(hostIndex);
@@ -746,9 +780,10 @@ QJsonObject TauriBridgeHelper::deleteHost(const QJsonObject& payload)
 
 QJsonObject TauriBridgeHelper::testNetwork(const QJsonObject& payload)
 {
-    const int hostIndex = hostIndexFromPayload(payload);
+    QString validationError;
+    const int hostIndex = hostIndexFromPayload(payload, &validationError);
     if (hostIndex < 0) {
-        return {{"error", "Host was not found."}};
+        return {{"error", validationError}};
     }
 
     m_Facade.computers()->testConnectionForComputer(hostIndex);
@@ -762,9 +797,10 @@ QJsonObject TauriBridgeHelper::testNetwork(const QJsonObject& payload)
 
 QJsonObject TauriBridgeHelper::quitRunningApp(const QJsonObject& payload)
 {
-    const int hostIndex = hostIndexFromPayload(payload);
+    QString validationError;
+    const int hostIndex = hostIndexFromPayload(payload, &validationError);
     if (hostIndex < 0) {
-        return {{"error", "Host was not found."}};
+        return {{"error", validationError}};
     }
 
     QScopedPointer<AppListFacade> appList(m_Facade.createAppList(hostIndex, true));
@@ -782,17 +818,17 @@ QJsonObject TauriBridgeHelper::quitRunningApp(const QJsonObject& payload)
 
 QJsonObject TauriBridgeHelper::setAppHidden(const QJsonObject& payload)
 {
-    const int hostIndex = hostIndexFromPayload(payload);
+    QString validationError;
+    const int hostIndex = hostIndexFromPayload(payload, &validationError);
     if (hostIndex < 0) {
-        return {{"error", "Host was not found."}};
+        return {{"error", validationError}};
     }
 
     QScopedPointer<AppListFacade> appList(m_Facade.createAppList(hostIndex, true));
-    const int appIndex = appIndexFromPayload(appList.data(), payload);
+    const int appIndex = appIndexFromPayload(appList.data(), payload, &validationError);
     if (appIndex < 0) {
-        return {{"error", "App was not found."}};
+        return {{"error", validationError}};
     }
-    QString validationError;
     if (!validateRequiredBooleanSetting(payload, QStringLiteral("hidden"), QStringLiteral("Hidden"), validationError)) {
         return {{"error", validationError}};
     }
@@ -804,17 +840,17 @@ QJsonObject TauriBridgeHelper::setAppHidden(const QJsonObject& payload)
 
 QJsonObject TauriBridgeHelper::setAppDirectLaunch(const QJsonObject& payload)
 {
-    const int hostIndex = hostIndexFromPayload(payload);
+    QString validationError;
+    const int hostIndex = hostIndexFromPayload(payload, &validationError);
     if (hostIndex < 0) {
-        return {{"error", "Host was not found."}};
+        return {{"error", validationError}};
     }
 
     QScopedPointer<AppListFacade> appList(m_Facade.createAppList(hostIndex, true));
-    const int appIndex = appIndexFromPayload(appList.data(), payload);
+    const int appIndex = appIndexFromPayload(appList.data(), payload, &validationError);
     if (appIndex < 0) {
-        return {{"error", "App was not found."}};
+        return {{"error", validationError}};
     }
-    QString validationError;
     if (!validateRequiredBooleanSetting(payload, QStringLiteral("direct_launch"), QStringLiteral("Direct launch"), validationError)) {
         return {{"error", validationError}};
     }
@@ -1200,25 +1236,41 @@ QString TauriBridgeHelper::hostAddress(const FrontendComputer& computer) const
     return QString();
 }
 
-int TauriBridgeHelper::hostIndexFromPayload(const QJsonObject& payload)
+int TauriBridgeHelper::hostIndexFromPayload(const QJsonObject& payload, QString* error)
 {
-    bool ok = false;
-    const int hostIndex = payload.value("host_id").toString().toInt(&ok);
-    if (!ok || hostIndex < 0 || hostIndex >= m_Facade.computers()->count()) {
+    QString validationError;
+    int hostIndex = -1;
+    if (!parseRequiredNumericString(payload, QStringLiteral("host_id"), QStringLiteral("Host ID"), hostIndex, validationError)) {
+        if (error != nullptr) {
+            *error = validationError;
+        }
+        return -1;
+    }
+
+    if (hostIndex >= m_Facade.computers()->count()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("Host was not found.");
+        }
         return -1;
     }
     return hostIndex;
 }
 
-int TauriBridgeHelper::appIndexFromPayload(AppListFacade* appList, const QJsonObject& payload) const
+int TauriBridgeHelper::appIndexFromPayload(AppListFacade* appList, const QJsonObject& payload, QString* error) const
 {
     if (appList == nullptr) {
+        if (error != nullptr) {
+            *error = QStringLiteral("Unable to create app list.");
+        }
         return -1;
     }
 
-    bool ok = false;
-    const int appId = payload.value("app_id").toString().toInt(&ok);
-    if (!ok) {
+    QString validationError;
+    int appId = -1;
+    if (!parseRequiredNumericString(payload, QStringLiteral("app_id"), QStringLiteral("App ID"), appId, validationError)) {
+        if (error != nullptr) {
+            *error = validationError;
+        }
         return -1;
     }
 
@@ -1227,6 +1279,9 @@ int TauriBridgeHelper::appIndexFromPayload(AppListFacade* appList, const QJsonOb
         if (apps[i].appId == appId) {
             return i;
         }
+    }
+    if (error != nullptr) {
+        *error = QStringLiteral("App was not found.");
     }
     return -1;
 }

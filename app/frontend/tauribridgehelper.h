@@ -61,8 +61,8 @@ private:
     QJsonObject appToJson(const FrontendApp& app) const;
     QString hostStatus(const FrontendComputer& computer) const;
     QString hostAddress(const FrontendComputer& computer) const;
-    int hostIndexFromPayload(const QJsonObject& payload);
-    int appIndexFromPayload(AppListFacade* appList, const QJsonObject& payload) const;
+    int hostIndexFromPayload(const QJsonObject& payload, QString* error = nullptr);
+    int appIndexFromPayload(AppListFacade* appList, const QJsonObject& payload, QString* error = nullptr) const;
     QJsonObject unsupported(const QString& command) const;
 
     ComputerManager m_ComputerManager;
