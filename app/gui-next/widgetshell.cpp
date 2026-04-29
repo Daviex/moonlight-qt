@@ -7,6 +7,7 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QCursor>
 #include <QDesktopServices>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -15,6 +16,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMessageBox>
+#include <QMenu>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSize>
@@ -59,6 +61,15 @@ namespace {
         }
 
         return url.toString();
+    }
+
+    QPoint menuPositionForCurrentItem(QListWidget* listWidget)
+    {
+        if (listWidget != nullptr && listWidget->currentItem() != nullptr) {
+            return listWidget->viewport()->mapToGlobal(listWidget->visualItemRect(listWidget->currentItem()).center());
+        }
+
+        return QCursor::pos();
     }
 }
 
@@ -133,10 +144,13 @@ void GuiNextWindow::buildHostPage()
 
     m_HostList = new QListWidget(page);
     m_HostList->setAlternatingRowColors(true);
+    m_HostList->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_HostList, &QListWidget::itemActivated,
             this, &GuiNextWindow::openSelectedHost);
     connect(m_HostList, &QListWidget::itemDoubleClicked,
             this, &GuiNextWindow::openSelectedHost);
+    connect(m_HostList, &QListWidget::customContextMenuRequested,
+            this, &GuiNextWindow::showHostContextMenu);
     layout->addWidget(m_HostList, 1);
 
     auto buttons = new QHBoxLayout();
@@ -199,10 +213,13 @@ void GuiNextWindow::buildAppPage()
 
     m_AppListWidget = new QListWidget(page);
     m_AppListWidget->setIconSize(QSize(75, 100));
+    m_AppListWidget->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_AppListWidget, &QListWidget::itemActivated,
             this, &GuiNextWindow::launchSelectedApp);
     connect(m_AppListWidget, &QListWidget::itemDoubleClicked,
             this, &GuiNextWindow::launchSelectedApp);
+    connect(m_AppListWidget, &QListWidget::customContextMenuRequested,
+            this, &GuiNextWindow::showAppContextMenu);
     layout->addWidget(m_AppListWidget, 1);
 
     auto buttons = new QHBoxLayout();
@@ -560,6 +577,86 @@ void GuiNextWindow::refreshApps()
     if (m_AppListWidget->currentItem() == nullptr && m_AppListWidget->count() > 0) {
         m_AppListWidget->setCurrentRow(0);
     }
+}
+
+void GuiNextWindow::showHostContextMenu(const QPoint& position)
+{
+    QListWidgetItem* item = m_HostList->itemAt(position);
+    if (item == nullptr) {
+        return;
+    }
+
+    m_HostList->setCurrentItem(item);
+    showSelectedHostMenu(m_HostList->viewport()->mapToGlobal(position));
+}
+
+void GuiNextWindow::showSelectedHostMenu(const QPoint& globalPosition)
+{
+    int index = selectedHostIndex();
+    if (index < 0) {
+        return;
+    }
+
+    const FrontendComputer computer = m_Facade.computers()->computerAt(index);
+    QMenu menu(this);
+    QAction* statusAction = menu.addAction(tr("PC Status: %1").arg(computer.online ? tr("Online") : tr("Offline")));
+    statusAction->setEnabled(false);
+
+    QAction* appsAction = menu.addAction(tr("Apps / Resume"), this, &GuiNextWindow::openSelectedHost);
+    appsAction->setEnabled(computer.online);
+    QAction* allAppsAction = menu.addAction(tr("View All Apps"), this, &GuiNextWindow::openSelectedHostAllApps);
+    allAppsAction->setEnabled(computer.online && computer.paired);
+    QAction* pairAction = menu.addAction(tr("Pair"), this, &GuiNextWindow::pairSelectedHost);
+    pairAction->setEnabled(computer.online && !computer.paired && computer.serverSupported);
+    QAction* wakeAction = menu.addAction(tr("Wake"), this, &GuiNextWindow::wakeSelectedHost);
+    wakeAction->setEnabled(!computer.online && computer.wakeable);
+
+    menu.addSeparator();
+    menu.addAction(tr("Test Network"), this, &GuiNextWindow::testSelectedHostConnection);
+    menu.addAction(tr("Rename"), this, &GuiNextWindow::renameSelectedHost);
+    menu.addAction(tr("Delete"), this, &GuiNextWindow::deleteSelectedHost);
+    menu.addAction(tr("Details"), this, &GuiNextWindow::showSelectedHostDetails);
+    menu.exec(globalPosition);
+}
+
+void GuiNextWindow::showAppContextMenu(const QPoint& position)
+{
+    QListWidgetItem* item = m_AppListWidget->itemAt(position);
+    if (item == nullptr) {
+        return;
+    }
+
+    m_AppListWidget->setCurrentItem(item);
+    showSelectedAppMenu(m_AppListWidget->viewport()->mapToGlobal(position));
+}
+
+void GuiNextWindow::showSelectedAppMenu(const QPoint& globalPosition)
+{
+    if (m_AppList == nullptr) {
+        return;
+    }
+
+    int appIndex = selectedAppIndex();
+    if (appIndex < 0) {
+        return;
+    }
+
+    const FrontendApp app = m_AppList->appAt(appIndex);
+    QMenu menu(this);
+    menu.addAction(app.running ? tr("Resume Game") : tr("Launch Game"), this, &GuiNextWindow::launchSelectedApp);
+    QAction* quitAction = menu.addAction(tr("Quit Game"), this, &GuiNextWindow::quitRunningApp);
+    quitAction->setVisible(app.running);
+
+    QAction* directLaunchAction = menu.addAction(tr("Direct Launch"), this, &GuiNextWindow::toggleSelectedAppDirectLaunch);
+    directLaunchAction->setCheckable(true);
+    directLaunchAction->setChecked(app.directLaunch);
+    directLaunchAction->setEnabled(!app.hidden);
+
+    QAction* hiddenAction = menu.addAction(tr("Hide Game"), this, &GuiNextWindow::toggleSelectedAppHidden);
+    hiddenAction->setCheckable(true);
+    hiddenAction->setChecked(app.hidden);
+    hiddenAction->setEnabled(app.hidden || (!app.running && !app.directLaunch));
+    menu.exec(globalPosition);
 }
 
 void GuiNextWindow::launchSelectedApp()
@@ -1237,6 +1334,25 @@ void GuiNextWindow::closeEvent(QCloseEvent* event)
 void GuiNextWindow::keyPressEvent(QKeyEvent* event)
 {
     switch (event->key()) {
+    case Qt::Key_Menu:
+        if (m_Stack->currentIndex() == AppPageIndex) {
+            showSelectedAppMenu(menuPositionForCurrentItem(m_AppListWidget));
+            event->accept();
+            return;
+        }
+        if (m_Stack->currentIndex() == HostPageIndex) {
+            showSelectedHostMenu(menuPositionForCurrentItem(m_HostList));
+            event->accept();
+            return;
+        }
+        break;
+    case Qt::Key_Delete:
+        if (m_Stack->currentIndex() == HostPageIndex) {
+            deleteSelectedHost();
+            event->accept();
+            return;
+        }
+        break;
     case Qt::Key_Hangup:
         showSettings();
         event->accept();

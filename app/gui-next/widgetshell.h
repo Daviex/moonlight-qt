@@ -7,6 +7,7 @@
 
 #include <QListWidget>
 #include <QMainWindow>
+#include <QPoint>
 #include <QPointer>
 #include <QScopedPointer>
 #include <QStackedWidget>
@@ -52,6 +53,8 @@ private slots:
     void saveSettings();
     void showHostsPage();
     void refreshApps();
+    void showHostContextMenu(const QPoint& position);
+    void showAppContextMenu(const QPoint& position);
     void launchSelectedApp();
     void quitRunningApp();
     void handleQuitAppCompleted(const QString& error);
@@ -76,6 +79,8 @@ private:
     void buildAppPage();
     void buildSettingsPage();
     void launchSession(Session* session, const QString& appName, bool isResume);
+    void showSelectedHostMenu(const QPoint& globalPosition);
+    void showSelectedAppMenu(const QPoint& globalPosition);
     int defaultBitrateForCurrentSettings();
     void updateDefaultBitrateButton();
     void setStatusText(const QString& text);
