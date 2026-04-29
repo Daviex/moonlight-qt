@@ -16,6 +16,48 @@
 #include <QUrl>
 #include <QWidget>
 
+#include <cmath>
+
+static bool validateIntegerSetting(const QJsonObject& settings,
+                                   const QString& key,
+                                   const QString& label,
+                                   int minimum,
+                                   int maximum,
+                                   QString& error)
+{
+    if (!settings.contains(key)) {
+        return true;
+    }
+
+    const QJsonValue value = settings.value(key);
+    if (!value.isDouble()) {
+        error = QStringLiteral("%1 must be a number.").arg(label);
+        return false;
+    }
+
+    const double numericValue = value.toDouble();
+    if (!std::isfinite(numericValue) || std::floor(numericValue) != numericValue) {
+        error = QStringLiteral("%1 must be a whole number.").arg(label);
+        return false;
+    }
+
+    if (numericValue < minimum || numericValue > maximum) {
+        error = QStringLiteral("%1 must be between %2 and %3.").arg(label).arg(minimum).arg(maximum);
+        return false;
+    }
+
+    return true;
+}
+
+static bool validateStreamingSettings(const QJsonObject& settings, QString& error)
+{
+    return validateIntegerSetting(settings, QStringLiteral("width"), QStringLiteral("Width"), 256, 8192, error) &&
+        validateIntegerSetting(settings, QStringLiteral("height"), QStringLiteral("Height"), 256, 8192, error) &&
+        validateIntegerSetting(settings, QStringLiteral("fps"), QStringLiteral("FPS"), 10, 9999, error) &&
+        validateIntegerSetting(settings, QStringLiteral("bitrateKbps"), QStringLiteral("Bitrate"), 500, 500000, error) &&
+        validateIntegerSetting(settings, QStringLiteral("packetSize"), QStringLiteral("Packet size"), 0, 9000, error);
+}
+
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
 
@@ -685,7 +727,17 @@ QJsonObject TauriBridgeHelper::loadSettings()
 
 QJsonObject TauriBridgeHelper::saveSettings(const QJsonObject& payload)
 {
-    const QJsonObject settings = payload.value("settings").toObject();
+    const QJsonValue settingsValue = payload.value("settings");
+    if (!settingsValue.isObject()) {
+        return {{"error", "Settings payload must be an object."}};
+    }
+
+    const QJsonObject settings = settingsValue.toObject();
+    QString validationError;
+    if (!validateStreamingSettings(settings, validationError)) {
+        return {{"error", validationError}};
+    }
+
     FrontendStreamingPreferences preferences = m_Facade.preferences()->preferences();
     preferences.width = settings.value("width").toInt(preferences.width);
     preferences.height = settings.value("height").toInt(preferences.height);
