@@ -302,6 +302,17 @@ nav {
   grid-column: 1 / -1;
 }
 
+.settings-errors {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 0.35rem;
+  color: #ffdcd7;
+  background: #33161c;
+  border: 1px solid #f85149;
+  border-radius: 10px;
+  padding: 0.75rem;
+}
+
 .settings label {
   display: grid;
   gap: 0.4rem;

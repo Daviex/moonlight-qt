@@ -145,8 +145,59 @@ const captureSysKeysOptions = [
   { value: 2, label: 'Always' },
 ];
 
+const numericSettingRules = {
+  width: { label: 'Width', min: 256, max: 8192 },
+  height: { label: 'Height', min: 256, max: 8192 },
+  fps: { label: 'FPS', min: 10, max: 9999 },
+  bitrateKbps: { label: 'Bitrate', min: 500, max: 500000 },
+  packetSize: { label: 'Packet size', min: 0, max: 9000 },
+} as const;
+
+type NumericSettingKey = keyof typeof numericSettingRules;
+
 function writeDebugLog(message: string) {
   void bridge.debugLog(message).catch(() => undefined);
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeNumericSetting(key: NumericSettingKey, value: number) {
+  const rule = numericSettingRules[key];
+  if (!Number.isFinite(value)) {
+    return rule.min;
+  }
+
+  return clampNumber(Math.round(value), rule.min, rule.max);
+}
+
+function normalizeSettings(settings: StreamingSettings): StreamingSettings {
+  return {
+    ...settings,
+    width: normalizeNumericSetting('width', settings.width),
+    height: normalizeNumericSetting('height', settings.height),
+    fps: normalizeNumericSetting('fps', settings.fps),
+    bitrateKbps: normalizeNumericSetting('bitrateKbps', settings.bitrateKbps),
+    packetSize: normalizeNumericSetting('packetSize', settings.packetSize),
+  };
+}
+
+function validateSettings(settings: StreamingSettings) {
+  return (Object.entries(numericSettingRules) as [NumericSettingKey, typeof numericSettingRules[NumericSettingKey]][])
+    .flatMap(([key, rule]) => {
+      const value = settings[key];
+      if (!Number.isFinite(value)) {
+        return [`${rule.label} must be a number.`];
+      }
+      if (!Number.isInteger(value)) {
+        return [`${rule.label} must be a whole number.`];
+      }
+      if (value < rule.min || value > rule.max) {
+        return [`${rule.label} must be between ${rule.min} and ${rule.max}.`];
+      }
+      return [];
+    });
 }
 
 function activeDialogRoot(): HTMLElement | null {
@@ -235,10 +286,19 @@ export default function App() {
     () => hosts.find((host) => host.id === selectedHostId),
     [hosts, selectedHostId],
   );
+  const settingsErrors = useMemo(() => validateSettings(settings), [settings]);
 
   const updateSetting = useCallback(<K extends keyof StreamingSettings,>(key: K, value: StreamingSettings[K]) => {
     setSettings((currentSettings) => ({ ...currentSettings, [key]: value }));
   }, []);
+
+  const updateNumericSetting = useCallback((key: NumericSettingKey, value: number) => {
+    setSettings((currentSettings) => ({ ...currentSettings, [key]: Number.isFinite(value) ? value : NaN }));
+  }, []);
+
+  const updateNumericSettingFromInput = useCallback((key: NumericSettingKey, value: string) => {
+    updateNumericSetting(key, value === '' ? NaN : Number(value));
+  }, [updateNumericSetting]);
 
   const refreshHosts = useCallback(async () => {
     writeDebugLog(`refreshHosts begin; selectedHostId=${selectedHostId}`);
@@ -499,14 +559,25 @@ export default function App() {
 
   const applyDefaultBitrate = useCallback(async () => {
     try {
+      const normalizedSettings = normalizeSettings(settings);
+      if (settings.width !== normalizedSettings.width ||
+          settings.height !== normalizedSettings.height ||
+          settings.fps !== normalizedSettings.fps) {
+        setSettings(normalizedSettings);
+        setStatus('Resolution and FPS were adjusted to valid ranges before calculating the default bitrate.');
+      }
+
       const bitrateKbps = await bridge.defaultBitrate(
-        settings.width,
-        settings.height,
-        settings.fps,
-        settings.enableYUV444,
+        normalizedSettings.width,
+        normalizedSettings.height,
+        normalizedSettings.fps,
+        normalizedSettings.enableYUV444,
       );
       setSettings((currentSettings) => ({
         ...currentSettings,
+        width: normalizedSettings.width,
+        height: normalizedSettings.height,
+        fps: normalizedSettings.fps,
         bitrateKbps,
         autoAdjustBitrate: true,
       }));
@@ -515,11 +586,19 @@ export default function App() {
     catch (error) {
       setStatus(String(error));
     }
-  }, [settings.enableYUV444, settings.fps, settings.height, settings.width]);
+  }, [settings]);
 
   const saveSettings = useCallback(async () => {
+    const validationErrors = validateSettings(settings);
+    if (validationErrors.length > 0) {
+      setStatus(`Fix settings before saving: ${validationErrors[0]}`);
+      return;
+    }
+
     try {
-      const result = await bridge.saveSettings(settings);
+      const normalizedSettings = normalizeSettings(settings);
+      const result = await bridge.saveSettings(normalizedSettings);
+      setSettings(normalizedSettings);
       setStatus(result.message);
       setPage('hosts');
     }
@@ -1362,31 +1441,36 @@ export default function App() {
             <h2 id="settings-title">Settings</h2>
             <div className="button-row">
               <button type="button" onClick={() => setPage('hosts')}>Cancel</button>
-              <button type="button" onClick={saveSettings}>Save</button>
+              <button type="button" onClick={saveSettings} disabled={settingsErrors.length > 0}>Save</button>
             </div>
           </div>
+          {settingsErrors.length > 0 && (
+            <div className="settings-errors" role="alert">
+              {settingsErrors.map((error) => <span key={error}>{error}</span>)}
+            </div>
+          )}
           <label>
             Width
-            <input value={settings.width} type="number" min={1} max={16384} onChange={(event) => updateSetting('width', Number(event.target.value))} />
+            <input value={Number.isNaN(settings.width) ? '' : settings.width} type="number" min={numericSettingRules.width.min} max={numericSettingRules.width.max} onChange={(event) => updateNumericSettingFromInput('width', event.target.value)} />
           </label>
           <label>
             Height
-            <input value={settings.height} type="number" min={1} max={16384} onChange={(event) => updateSetting('height', Number(event.target.value))} />
+            <input value={Number.isNaN(settings.height) ? '' : settings.height} type="number" min={numericSettingRules.height.min} max={numericSettingRules.height.max} onChange={(event) => updateNumericSettingFromInput('height', event.target.value)} />
           </label>
           <label>
             FPS
-            <input value={settings.fps} type="number" min={10} max={480} onChange={(event) => updateSetting('fps', Number(event.target.value))} />
+            <input value={Number.isNaN(settings.fps) ? '' : settings.fps} type="number" min={numericSettingRules.fps.min} max={numericSettingRules.fps.max} onChange={(event) => updateNumericSettingFromInput('fps', event.target.value)} />
           </label>
           <label>
             Bitrate (Kbps)
-            <input value={settings.bitrateKbps} type="number" min={500} max={500000} onChange={(event) => updateSetting('bitrateKbps', Number(event.target.value))} />
+            <input value={Number.isNaN(settings.bitrateKbps) ? '' : settings.bitrateKbps} type="number" min={numericSettingRules.bitrateKbps.min} max={numericSettingRules.bitrateKbps.max} onChange={(event) => updateNumericSettingFromInput('bitrateKbps', event.target.value)} />
           </label>
           <div className="setting-action">
             <button type="button" onClick={applyDefaultBitrate}>Use Default Bitrate</button>
           </div>
           <label>
             Packet size
-            <input value={settings.packetSize} type="number" min={0} max={9000} onChange={(event) => updateSetting('packetSize', Number(event.target.value))} />
+            <input value={Number.isNaN(settings.packetSize) ? '' : settings.packetSize} type="number" min={numericSettingRules.packetSize.min} max={numericSettingRules.packetSize.max} onChange={(event) => updateNumericSettingFromInput('packetSize', event.target.value)} />
           </label>
           <label>
             Audio
