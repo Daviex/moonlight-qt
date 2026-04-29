@@ -9,6 +9,17 @@ import {
 } from './bridge';
 
 type Page = 'hosts' | 'apps' | 'settings';
+type StreamPhase = 'idle' | 'launching' | 'active' | 'quitting' | 'finished' | 'error';
+
+interface StreamUiState {
+  phase: StreamPhase;
+  hostName: string;
+  appName: string;
+  message: string;
+  warnings: string[];
+  errors: string[];
+  uiHiddenRequested: boolean;
+}
 
 const fallbackSettings: StreamingSettings = {
   width: 1920,
@@ -27,6 +38,16 @@ const controllerTestActions: ControllerAction[] = [
   'settings',
   'contextMenu',
 ];
+
+const idleStreamState: StreamUiState = {
+  phase: 'idle',
+  hostName: '',
+  appName: '',
+  message: '',
+  warnings: [],
+  errors: [],
+  uiHiddenRequested: false,
+};
 
 function focusableElements(): HTMLElement[] {
   return Array.from(
@@ -58,6 +79,7 @@ export default function App() {
   const [showHiddenApps, setShowHiddenApps] = useState(false);
   const [status, setStatus] = useState('Tauri shell ready.');
   const [eventLog, setEventLog] = useState<BridgeEvent[]>([]);
+  const [streamState, setStreamState] = useState<StreamUiState>(idleStreamState);
 
   const selectedHost = useMemo(
     () => hosts.find((host) => host.id === selectedHostId),
@@ -194,6 +216,16 @@ export default function App() {
       return;
     }
 
+    setStreamState({
+      phase: 'launching',
+      hostName: selectedHost?.name ?? selectedHostId,
+      appName: app.name,
+      message: `Launching ${app.name}...`,
+      warnings: [],
+      errors: [],
+      uiHiddenRequested: false,
+    });
+
     try {
       const result = await bridge.launchApp(selectedHostId, app.id);
       setStatus(result.message);
@@ -201,14 +233,27 @@ export default function App() {
       await refreshHosts();
     }
     catch (error) {
-      setStatus(String(error));
+      const message = String(error);
+      setStatus(message);
+      setStreamState((previousState) => ({
+        ...previousState,
+        phase: 'error',
+        message,
+        errors: [...previousState.errors, message],
+      }));
     }
-  }, [refreshApps, refreshHosts, selectedHostId, showHiddenApps]);
+  }, [refreshApps, refreshHosts, selectedHost?.name, selectedHostId, showHiddenApps]);
 
   const quitRunningApp = useCallback(async () => {
     if (!selectedHostId) {
       return;
     }
+
+    setStreamState((previousState) => ({
+      ...previousState,
+      phase: previousState.phase === 'idle' ? 'quitting' : previousState.phase,
+      message: 'Quit requested...',
+    }));
 
     try {
       const result = await bridge.quitRunningApp(selectedHostId);
@@ -220,6 +265,74 @@ export default function App() {
       setStatus(String(error));
     }
   }, [refreshApps, refreshHosts, selectedHostId, showHiddenApps]);
+
+  const handleSessionEvent = useCallback((event: BridgeEvent) => {
+    setStreamState((previousState) => {
+      const message = event.message;
+      const nextState = previousState.phase === 'idle'
+        ? { ...idleStreamState, phase: 'launching' as StreamPhase }
+        : previousState;
+
+      if (message.includes('hide UI requested')) {
+        return {
+          ...nextState,
+          phase: 'active',
+          message,
+          uiHiddenRequested: true,
+        };
+      }
+
+      if (message.includes('UI can be shown')) {
+        return {
+          ...nextState,
+          phase: 'active',
+          message,
+          uiHiddenRequested: false,
+        };
+      }
+
+      if (message.startsWith('Quitting ')) {
+        return {
+          ...nextState,
+          phase: 'quitting',
+          message,
+        };
+      }
+
+      if (message.includes('finished') || message.includes('cleanup completed')) {
+        return {
+          ...nextState,
+          phase: 'finished',
+          message,
+          uiHiddenRequested: false,
+        };
+      }
+
+      return {
+        ...nextState,
+        phase: nextState.phase === 'idle' ? 'launching' : nextState.phase,
+        message,
+      };
+    });
+  }, []);
+
+  const handleStatusEvent = useCallback((event: BridgeEvent) => {
+    setStreamState((previousState) => {
+      if (previousState.phase === 'idle') {
+        return previousState;
+      }
+
+      const message = event.message;
+      const isError = /failed|error|terminated|unable|cannot/i.test(message);
+      return {
+        ...previousState,
+        phase: isError ? 'error' : previousState.phase,
+        message,
+        warnings: isError ? previousState.warnings : [...previousState.warnings, message].slice(-4),
+        errors: isError ? [...previousState.errors, message].slice(-4) : previousState.errors,
+      };
+    });
+  }, []);
 
   const toggleHidden = useCallback(async (app: AppEntry) => {
     if (!selectedHostId) {
@@ -298,6 +411,14 @@ export default function App() {
         handleControllerAction(event.controllerAction);
       }
 
+      if (event.kind === 'sessionChanged') {
+        handleSessionEvent(event);
+      }
+
+      if (event.kind === 'status') {
+        handleStatusEvent(event);
+      }
+
       if (event.kind === 'hostChanged' || event.kind === 'sessionChanged') {
         await refreshHosts();
       }
@@ -312,7 +433,7 @@ export default function App() {
 
       setStatus(event.message);
     })();
-  }, [handleControllerAction, refreshApps, refreshHosts, refreshSettingsSnapshot, selectedHostId, showHiddenApps]);
+  }, [handleControllerAction, handleSessionEvent, handleStatusEvent, refreshApps, refreshHosts, refreshSettingsSnapshot, selectedHostId, showHiddenApps]);
 
   useEffect(() => {
     void refreshHosts();
@@ -365,6 +486,39 @@ export default function App() {
           </button>
         ))}
       </section>
+
+      {streamState.phase !== 'idle' && (
+        <section className={`stream-panel ${streamState.phase}`} aria-label="Native stream state">
+          <div>
+            <h2>Native stream</h2>
+            <p>
+              {streamState.appName || 'Session'}
+              {streamState.hostName && ` on ${streamState.hostName}`}
+            </p>
+          </div>
+          <div className="stream-status">
+            <span className="tag">{streamState.phase}</span>
+            <span>{streamState.message}</span>
+            {streamState.uiHiddenRequested && <span>Native requested the Tauri shell to hide while streaming.</span>}
+          </div>
+          {(streamState.warnings.length > 0 || streamState.errors.length > 0) && (
+            <div className="stream-messages">
+              {streamState.warnings.map((warning, index) => (
+                <span key={`warning-${index}`}>{warning}</span>
+              ))}
+              {streamState.errors.map((error, index) => (
+                <span key={`error-${index}`} className="error">{error}</span>
+              ))}
+            </div>
+          )}
+          <div className="button-row">
+            <button type="button" onClick={quitRunningApp}>Quit Stream</button>
+            {(streamState.phase === 'finished' || streamState.phase === 'error') && (
+              <button type="button" onClick={() => setStreamState(idleStreamState)}>Dismiss</button>
+            )}
+          </div>
+        </section>
+      )}
 
       {page === 'hosts' && (
         <section className="panel" aria-labelledby="hosts-title">

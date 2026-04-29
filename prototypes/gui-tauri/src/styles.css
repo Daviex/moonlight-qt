@@ -78,6 +78,49 @@ nav {
   padding: 0.45rem 0.65rem;
 }
 
+.stream-panel {
+  display: grid;
+  gap: 0.75rem;
+  background: #10233f;
+  border: 1px solid #1f6feb;
+  border-radius: 14px;
+  padding: 1rem;
+}
+
+.stream-panel h2,
+.stream-panel p {
+  margin: 0;
+}
+
+.stream-panel.error {
+  background: #33161c;
+  border-color: #f85149;
+}
+
+.stream-panel.finished {
+  background: #172a1a;
+  border-color: #3fb950;
+}
+
+.stream-status,
+.stream-messages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  color: #c9d1d9;
+}
+
+.stream-messages span {
+  background: #30363d;
+  border-radius: 999px;
+  padding: 0.35rem 0.6rem;
+}
+
+.stream-messages .error {
+  color: #ffdcd7;
+  background: #8e1519;
+}
+
 .button-row {
   display: flex;
   flex-wrap: wrap;
