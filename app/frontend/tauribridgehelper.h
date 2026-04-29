@@ -42,6 +42,7 @@ private:
     QJsonObject setAppDirectLaunch(const QJsonObject& payload);
     QJsonObject loadSettings();
     QJsonObject saveSettings(const QJsonObject& payload);
+    QJsonObject systemInfo();
 
     void handleControllerNavigation(ControllerNavigationAction action, bool pressed) override;
     void handleControllerQuit() override;

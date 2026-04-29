@@ -283,6 +283,9 @@ QJsonObject TauriBridgeHelper::handleCommand(const QJsonObject& command)
     if (commandName == "save_settings") {
         return saveSettings(payload);
     }
+    if (commandName == "system_info") {
+        return systemInfo();
+    }
 
     return {{"error", QString("Unknown bridge command: %1").arg(commandName)}};
 }
@@ -630,6 +633,44 @@ QJsonObject TauriBridgeHelper::saveSettings(const QJsonObject& payload)
     m_Facade.preferences()->applyPreferences(preferences, true);
     const QString message = tr("Settings saved.");
     return resultWithEvent(status(message), bridgeEvent("settingsChanged", message));
+}
+
+QJsonObject TauriBridgeHelper::systemInfo()
+{
+    m_Facade.system()->startAsyncLoad();
+    m_Facade.system()->waitForAsyncLoad();
+    m_Facade.system()->refreshDisplays();
+
+    const FrontendSystemProperties system = m_Facade.system()->properties();
+    QJsonArray displays;
+    for (const FrontendDisplayInfo& display : system.displays) {
+        displays.append(QJsonObject{
+            {"nativeWidth", display.nativeResolution.width()},
+            {"nativeHeight", display.nativeResolution.height()},
+            {"safeAreaWidth", display.safeAreaResolution.width()},
+            {"safeAreaHeight", display.safeAreaResolution.height()},
+            {"refreshRate", display.refreshRate},
+        });
+    }
+
+    return {{"result", QJsonObject{
+        {"version", system.versionString},
+        {"friendlyNativeArchName", system.friendlyNativeArchName},
+        {"isRunningWayland", system.isRunningWayland},
+        {"isRunningXWayland", system.isRunningXWayland},
+        {"isWow64", system.isWow64},
+        {"hasDesktopEnvironment", system.hasDesktopEnvironment},
+        {"hasBrowser", system.hasBrowser},
+        {"hasDiscordIntegration", system.hasDiscordIntegration},
+        {"usesMaterial3Theme", system.usesMaterial3Theme},
+        {"hasHardwareAcceleration", system.hasHardwareAcceleration},
+        {"rendererAlwaysFullScreen", system.rendererAlwaysFullScreen},
+        {"maximumResolutionWidth", system.maximumResolution.width()},
+        {"maximumResolutionHeight", system.maximumResolution.height()},
+        {"supportsHdr", system.supportsHdr},
+        {"unmappedGamepads", system.unmappedGamepads},
+        {"displays", displays},
+    }}};
 }
 
 void TauriBridgeHelper::handleControllerNavigation(ControllerNavigationAction action, bool pressed)

@@ -9,6 +9,7 @@ import {
   HostEntry,
   PairingChallenge,
   StreamingSettings,
+  SystemInfo,
   bridge,
 } from './bridge';
 
@@ -106,6 +107,7 @@ export default function App() {
   const [eventLog, setEventLog] = useState<BridgeEvent[]>([]);
   const [streamState, setStreamState] = useState<StreamUiState>(idleStreamState);
   const [backendInfo, setBackendInfo] = useState<BackendInfo | null>(null);
+  const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [dialog, setDialog] = useState<DialogState>({ kind: 'none' });
   const [hostRefreshDiagnostics, setHostRefreshDiagnostics] = useState({
     attempts: 0,
@@ -317,9 +319,26 @@ export default function App() {
     }
   }, [refreshHosts]);
 
+  const loadSystemInfo = useCallback(async () => {
+    writeDebugLog('loadSystemInfo begin');
+    try {
+      const info = await bridge.systemInfo();
+      writeDebugLog(`loadSystemInfo success; version=${info.version}; displays=${info.displays.length}`);
+      setSystemInfo(info);
+      return info;
+    }
+    catch (error) {
+      const message = String(error);
+      writeDebugLog(`loadSystemInfo failed; error=${message}`);
+      setStatus(message);
+      return null;
+    }
+  }, []);
+
   const openHelpDialog = useCallback(() => {
     setDialog({ kind: 'help' });
-  }, []);
+    void loadSystemInfo();
+  }, [loadSystemInfo]);
 
   const loadSettings = useCallback(async () => {
     try {
@@ -839,7 +858,53 @@ export default function App() {
                 streaming snapshot exposed by the native helper. Controller actions move focus and activate the selected
                 control.
               </p>
+              <h3>System</h3>
+              {systemInfo ? (
+                <>
+                  <dl className="details-grid">
+                    <dt>Version</dt>
+                    <dd>{systemInfo.version || 'Unknown'}</dd>
+                    <dt>Architecture</dt>
+                    <dd>{systemInfo.friendlyNativeArchName || 'Unknown'}</dd>
+                    <dt>Hardware acceleration</dt>
+                    <dd>{systemInfo.hasHardwareAcceleration ? 'Available' : 'Not detected'}</dd>
+                    <dt>HDR support</dt>
+                    <dd>{systemInfo.supportsHdr ? 'Available' : 'Not detected'}</dd>
+                    <dt>Maximum resolution</dt>
+                    <dd>
+                      {systemInfo.maximumResolutionWidth > 0 && systemInfo.maximumResolutionHeight > 0
+                        ? `${systemInfo.maximumResolutionWidth}x${systemInfo.maximumResolutionHeight}`
+                        : 'Unknown'}
+                    </dd>
+                    <dt>Desktop session</dt>
+                    <dd>
+                      {systemInfo.isRunningWayland ? 'Wayland' : systemInfo.isRunningXWayland ? 'XWayland' : 'Native/X11/Windows'}
+                    </dd>
+                    <dt>Browser integration</dt>
+                    <dd>{systemInfo.hasBrowser ? 'Available' : 'Not detected'}</dd>
+                    <dt>Unmapped gamepads</dt>
+                    <dd>{systemInfo.unmappedGamepads || 'None detected'}</dd>
+                  </dl>
+                  {systemInfo.displays.length > 0 && (
+                    <div className="display-list">
+                      {systemInfo.displays.map((display, index) => (
+                        <span key={`${display.nativeWidth}-${display.nativeHeight}-${index}`}>
+                          Display {index + 1}: {display.nativeWidth}x{display.nativeHeight}
+                          {display.refreshRate > 0 && ` @ ${display.refreshRate} Hz`}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p>Loading native system information...</p>
+              )}
               <div className="button-row">
+                <button type="button" onClick={() => {
+                  void loadSystemInfo();
+                }}>
+                  Refresh System Info
+                </button>
                 <button type="button" onClick={closeDialog}>Close</button>
               </div>
             </>

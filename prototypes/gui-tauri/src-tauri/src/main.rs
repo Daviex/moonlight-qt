@@ -6,7 +6,7 @@ mod mock_backend;
 use backend::{
     AppEntry, BackendInfo, BridgeEvent, BridgeEventKind, CommandStatus, ControllerAction,
     HostDetails, HostEntry, MoonlightBackend, NetworkTestResult, PairingChallenge,
-    StreamingSettings,
+    StreamingSettings, SystemInfo,
 };
 use ipc_backend::{ipc_backend_requested, IpcBackend};
 use mock_backend::MockBackend;
@@ -529,6 +529,28 @@ fn load_settings(backend: tauri::State<'_, BackendState>) -> Result<StreamingSet
 }
 
 #[tauri::command]
+fn system_info(backend: tauri::State<'_, BackendState>) -> Result<SystemInfo, String> {
+    logger::log("command system_info begin");
+    let result = backend
+        .lock()
+        .map_err(|error| error.to_string())?
+        .system_info();
+    match &result {
+        Ok(info) => logger::log(format!(
+            "command system_info complete; version={}; arch={}; displays={}; hdr={}; hardware_accel={}; unmapped_gamepads={}",
+            info.version,
+            info.friendly_native_arch_name,
+            info.displays.len(),
+            info.supports_hdr,
+            info.has_hardware_acceleration,
+            !info.unmapped_gamepads.is_empty()
+        )),
+        Err(error) => logger::log(format!("command system_info failed; error={error}")),
+    }
+    result
+}
+
+#[tauri::command]
 fn save_settings(
     settings: StreamingSettings,
     backend: tauri::State<'_, BackendState>,
@@ -597,6 +619,7 @@ fn main() {
             set_app_hidden,
             set_app_direct_launch,
             load_settings,
+            system_info,
             save_settings,
             emit_controller_action
         ])

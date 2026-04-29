@@ -1,6 +1,6 @@
 use crate::backend::{
-    AppEntry, BackendInfo, CommandStatus, HostDetails, HostEntry, HostStatus, MoonlightBackend,
-    NetworkTestResult, PairingChallenge, StreamingSettings,
+    AppEntry, BackendInfo, CommandStatus, DisplayInfo, HostDetails, HostEntry, HostStatus,
+    MoonlightBackend, NetworkTestResult, PairingChallenge, StreamingSettings, SystemInfo,
 };
 
 pub struct MockBackend {
@@ -282,6 +282,33 @@ impl MoonlightBackend for MockBackend {
         self.settings = settings;
         Ok(CommandStatus {
             message: "Settings saved.".into(),
+        })
+    }
+
+    fn system_info(&mut self) -> Result<SystemInfo, String> {
+        Ok(SystemInfo {
+            version: "Mock 0.0".into(),
+            friendly_native_arch_name: std::env::consts::ARCH.into(),
+            is_running_wayland: false,
+            is_running_xwayland: false,
+            is_wow64: false,
+            has_desktop_environment: true,
+            has_browser: true,
+            has_discord_integration: false,
+            uses_material3_theme: false,
+            has_hardware_acceleration: true,
+            renderer_always_full_screen: false,
+            maximum_resolution_width: 3840,
+            maximum_resolution_height: 2160,
+            supports_hdr: true,
+            unmapped_gamepads: String::new(),
+            displays: vec![DisplayInfo {
+                native_width: 1920,
+                native_height: 1080,
+                safe_area_width: 1920,
+                safe_area_height: 1080,
+                refresh_rate: 60,
+            }],
         })
     }
 }

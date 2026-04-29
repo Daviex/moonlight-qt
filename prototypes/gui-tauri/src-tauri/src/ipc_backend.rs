@@ -1,6 +1,6 @@
 use crate::backend::{
     AppEntry, BackendInfo, BridgeEvent, CommandStatus, HostDetails, HostEntry, MoonlightBackend,
-    NetworkTestResult, PairingChallenge, StreamingSettings,
+    NetworkTestResult, PairingChallenge, StreamingSettings, SystemInfo,
 };
 use crate::logger;
 use serde::de::DeserializeOwned;
@@ -419,6 +419,10 @@ impl MoonlightBackend for IpcBackend {
     fn save_settings(&mut self, settings: StreamingSettings) -> Result<CommandStatus, String> {
         self.request(IpcCommand::SaveSettings { settings })
     }
+
+    fn system_info(&mut self) -> Result<SystemInfo, String> {
+        self.request(IpcCommand::SystemInfo)
+    }
 }
 
 #[derive(Serialize)]
@@ -481,6 +485,7 @@ enum IpcCommand {
     SaveSettings {
         settings: StreamingSettings,
     },
+    SystemInfo,
 }
 
 impl IpcCommand {
@@ -502,6 +507,7 @@ impl IpcCommand {
             Self::SetAppDirectLaunch { .. } => "set_app_direct_launch",
             Self::LoadSettings => "load_settings",
             Self::SaveSettings { .. } => "save_settings",
+            Self::SystemInfo => "system_info",
         }
     }
 }

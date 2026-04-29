@@ -38,6 +38,33 @@ export interface StreamingSettings {
   gamepadMouse: boolean;
 }
 
+export interface DisplayInfo {
+  nativeWidth: number;
+  nativeHeight: number;
+  safeAreaWidth: number;
+  safeAreaHeight: number;
+  refreshRate: number;
+}
+
+export interface SystemInfo {
+  version: string;
+  friendlyNativeArchName: string;
+  isRunningWayland: boolean;
+  isRunningXWayland: boolean;
+  isWow64: boolean;
+  hasDesktopEnvironment: boolean;
+  hasBrowser: boolean;
+  hasDiscordIntegration: boolean;
+  usesMaterial3Theme: boolean;
+  hasHardwareAcceleration: boolean;
+  rendererAlwaysFullScreen: boolean;
+  maximumResolutionWidth: number;
+  maximumResolutionHeight: number;
+  supportsHdr: boolean;
+  unmappedGamepads: string;
+  displays: DisplayInfo[];
+}
+
 export interface CommandStatus {
   message: string;
 }
@@ -110,6 +137,7 @@ export const bridge = {
     invoke<CommandStatus>('set_app_direct_launch', { hostId, appId, directLaunch }),
   loadSettings: () => invoke<StreamingSettings>('load_settings'),
   saveSettings: (settings: StreamingSettings) => invoke<CommandStatus>('save_settings', { settings }),
+  systemInfo: () => invoke<SystemInfo>('system_info'),
   emitControllerAction: (action: ControllerAction) =>
     invoke<CommandStatus>('emit_controller_action', { action }),
   listen: (handler: (event: BridgeEvent) => void) =>

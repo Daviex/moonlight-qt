@@ -45,6 +45,37 @@ pub struct StreamingSettings {
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DisplayInfo {
+    pub native_width: i32,
+    pub native_height: i32,
+    pub safe_area_width: i32,
+    pub safe_area_height: i32,
+    pub refresh_rate: i32,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemInfo {
+    pub version: String,
+    pub friendly_native_arch_name: String,
+    pub is_running_wayland: bool,
+    pub is_running_xwayland: bool,
+    pub is_wow64: bool,
+    pub has_desktop_environment: bool,
+    pub has_browser: bool,
+    pub has_discord_integration: bool,
+    pub uses_material3_theme: bool,
+    pub has_hardware_acceleration: bool,
+    pub renderer_always_full_screen: bool,
+    pub maximum_resolution_width: i32,
+    pub maximum_resolution_height: i32,
+    pub supports_hdr: bool,
+    pub unmapped_gamepads: String,
+    pub displays: Vec<DisplayInfo>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CommandStatus {
     pub message: String,
 }
@@ -149,4 +180,5 @@ pub trait MoonlightBackend: Send {
     ) -> Result<CommandStatus, String>;
     fn load_settings(&mut self) -> Result<StreamingSettings, String>;
     fn save_settings(&mut self, settings: StreamingSettings) -> Result<CommandStatus, String>;
+    fn system_info(&mut self) -> Result<SystemInfo, String>;
 }

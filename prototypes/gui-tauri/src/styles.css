@@ -279,6 +279,7 @@ nav {
 }
 
 .dialog h2,
+.dialog h3,
 .dialog p,
 .details-grid {
   margin: 0;
@@ -328,6 +329,19 @@ nav {
 
 .details-grid dd {
   margin: 0;
+}
+
+.display-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.display-list span {
+  color: #c9d1d9;
+  background: #30363d;
+  border-radius: 999px;
+  padding: 0.35rem 0.6rem;
 }
 
 .event-log {
