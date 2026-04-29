@@ -874,6 +874,7 @@ QJsonObject TauriBridgeHelper::appToJson(const FrontendApp& app) const
     return {
         {"id", QString::number(app.appId)},
         {"name", app.name},
+        {"boxArtUrl", app.boxArt.toString()},
         {"hidden", app.hidden},
         {"directLaunch", app.directLaunch},
         {"running", app.running},

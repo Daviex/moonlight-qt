@@ -20,7 +20,15 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$CACHE/Moonlight Game Streaming Project/Moonlight/cache/boxart/**",
+          "$EXE/boxart/**",
+          "$EXE/native/boxart/**"
+        ]
+      }
     }
   },
   "bundle": {

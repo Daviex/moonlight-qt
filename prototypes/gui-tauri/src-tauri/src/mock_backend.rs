@@ -43,6 +43,7 @@ impl MockBackend {
                 AppEntry {
                     id: "steam".into(),
                     name: "Steam Big Picture".into(),
+                    box_art_url: String::new(),
                     hidden: false,
                     direct_launch: true,
                     running: false,
@@ -50,6 +51,7 @@ impl MockBackend {
                 AppEntry {
                     id: "desktop".into(),
                     name: "Desktop".into(),
+                    box_art_url: String::new(),
                     hidden: false,
                     direct_launch: false,
                     running: false,
@@ -57,6 +59,7 @@ impl MockBackend {
                 AppEntry {
                     id: "game".into(),
                     name: "Example Game".into(),
+                    box_art_url: String::new(),
                     hidden: false,
                     direct_launch: false,
                     running: false,

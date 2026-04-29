@@ -27,6 +27,7 @@ pub struct HostDetails {
 pub struct AppEntry {
     pub id: String,
     pub name: String,
+    pub box_art_url: String,
     pub hidden: bool,
     pub direct_launch: bool,
     pub running: bool,

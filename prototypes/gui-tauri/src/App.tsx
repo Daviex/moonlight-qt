@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import {
   AppEntry,
   BackendInfo,
@@ -93,6 +94,43 @@ function focusableElements(root: ParentNode = document): HTMLElement[] {
     element.tabIndex !== -1 &&
     element.offsetParent !== null,
   );
+}
+
+function appInitials(appName: string) {
+  return appName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('') || '?';
+}
+
+function boxArtSrc(app: AppEntry) {
+  if (!app.boxArtUrl || app.boxArtUrl.startsWith('qrc:')) {
+    return '';
+  }
+
+  try {
+    const url = new URL(app.boxArtUrl);
+    if (url.protocol === 'file:') {
+      let path = decodeURIComponent(url.pathname);
+      if (url.hostname) {
+        path = `//${url.hostname}${path}`;
+      }
+      if (/^\/[A-Za-z]:\//.test(path)) {
+        path = path.slice(1);
+      }
+      return convertFileSrc(path);
+    }
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+      return app.boxArtUrl;
+    }
+  }
+  catch {
+    return '';
+  }
+
+  return '';
 }
 
 function moveFocus(delta: number) {
@@ -1115,25 +1153,35 @@ export default function App() {
             </div>
           </div>
           <div className="card-grid">
-            {apps.map((app) => (
-              <article key={app.id} className="app-card">
-                <button type="button" className="card-primary" onClick={() => launchApp(app)}>
-                  <span className="title">{app.name}</span>
-                  <span>{app.running ? 'Running' : 'Ready'}</span>
-                  {app.directLaunch && <span className="tag">Direct Launch</span>}
-                  {app.hidden && <span className="tag muted">Hidden</span>}
-                </button>
-                <div className="card-actions">
-                  <button type="button" onClick={() => launchApp(app)}>Launch</button>
-                  <button type="button" onClick={() => toggleDirectLaunch(app)}>
-                    {app.directLaunch ? 'Clear Direct Launch' : 'Direct Launch'}
+            {apps.map((app) => {
+              const imageSrc = boxArtSrc(app);
+              return (
+                <article key={app.id} className="app-card">
+                  <button type="button" className="card-primary" onClick={() => launchApp(app)}>
+                    <span className="app-art" aria-hidden="true">
+                      {imageSrc ? (
+                        <img src={imageSrc} alt="" />
+                      ) : (
+                        <span>{appInitials(app.name)}</span>
+                      )}
+                    </span>
+                    <span className="title">{app.name}</span>
+                    <span>{app.running ? 'Running' : 'Ready'}</span>
+                    {app.directLaunch && <span className="tag">Direct Launch</span>}
+                    {app.hidden && <span className="tag muted">Hidden</span>}
                   </button>
-                  <button type="button" onClick={() => toggleHidden(app)}>
-                    {app.hidden ? 'Unhide' : 'Hide'}
-                  </button>
-                </div>
-              </article>
-            ))}
+                  <div className="card-actions">
+                    <button type="button" onClick={() => launchApp(app)}>Launch</button>
+                    <button type="button" onClick={() => toggleDirectLaunch(app)}>
+                      {app.directLaunch ? 'Clear Direct Launch' : 'Direct Launch'}
+                    </button>
+                    <button type="button" onClick={() => toggleHidden(app)}>
+                      {app.hidden ? 'Unhide' : 'Hide'}
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         </section>
       )}

@@ -24,6 +24,7 @@ export interface HostDetails {
 export interface AppEntry {
   id: string;
   name: string;
+  boxArtUrl: string;
   hidden: boolean;
   directLaunch: boolean;
   running: boolean;

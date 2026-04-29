@@ -40,7 +40,7 @@ The streaming video path should remain a native SDL/window path. Do not attempt 
 `src\bridge.ts` is the TypeScript-side contract for the UI. `src-tauri\src\main.rs` currently implements the same commands with an in-memory mock backend:
 
 1. Hosts: list, add, pair, wake, rename, delete, details, and network test.
-2. Apps: list, launch, resume running session, quit running app, hide/unhide, and direct-launch toggle.
+2. Apps: list, launch, resume running session, quit running app, hide/unhide, direct-launch toggle, and cached box-art URLs.
 3. Settings: load and save the current streaming settings snapshot.
 4. System: load native version, architecture, display/HDR, hardware acceleration, browser, desktop session, unmapped gamepad information, and open HTTP/HTTPS documentation or update URLs through the native browser integration.
 
@@ -51,6 +51,8 @@ Host management flows use in-app React dialogs instead of browser prompts for ad
 The helper starts the native update checker during IPC startup and forwards `updateAvailable` bridge events with the available version and download URL. The React shell shows those events as a dismissible update banner and opens the download URL through the native `open_url` bridge command, matching the Widgets UI's update notification path without implementing update-check networking in TypeScript or navigating the webview itself.
 
 Help/About documentation buttons also use the native `open_url` bridge command. The helper restricts this command to `http://` and `https://` URLs and reports a native error when no browser is available.
+
+App entries include `boxArtUrl` from the native `AppListFacade`. Cached local artwork is rendered through Tauri's asset URL conversion, scoped in `tauri.conf.json` to the standard Moonlight box-art cache and staged portable box-art directories. The native helper continues to emit `appChanged` events when asynchronous box-art loading completes so the React app grid refreshes without duplicating artwork fetching logic in TypeScript.
 
 For mock-backend runs, the prototype exposes a small "Controller event test" toolbar that asks the Rust side to emit controller actions. IPC-backend runs now also receive real controller events from Moonlight's existing SDL controller navigation source in the native helper. The helper disables its GUI controller polling while a native stream owns SDL input, then re-enables it when session lifecycle events return control to the UI.
 

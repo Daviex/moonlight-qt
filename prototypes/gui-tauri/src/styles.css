@@ -231,6 +231,35 @@ nav {
   border: 1px solid #30363d;
 }
 
+.app-card .card-primary {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr;
+  align-items: center;
+}
+
+.app-card .card-primary > :not(.app-art) {
+  grid-column: 2;
+}
+
+.app-art {
+  grid-row: 1 / span 4;
+  width: 4rem;
+  aspect-ratio: 3 / 4;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: #c9d1d9;
+  background: linear-gradient(135deg, #1f6feb, #30363d);
+  border-radius: 10px;
+  font-weight: 700;
+}
+
+.app-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .card-actions {
   display: flex;
   flex-wrap: wrap;
