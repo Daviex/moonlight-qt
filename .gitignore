@@ -8,3 +8,5 @@ config.tests/*/.qmake.stash
 config.tests/*/Makefile
 build-msys2-ucrt64
 .flatpak-builder
+prototypes/gui-tauri/node_modules
+prototypes/gui-tauri/src-tauri/target
