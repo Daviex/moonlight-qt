@@ -59,6 +59,7 @@ export interface StreamingSettings {
   videoDecoderSelection: number;
   windowMode: number;
   uiDisplayMode: number;
+  language: number;
   captureSysKeysMode: number;
   unlockBitrate: boolean;
   autoAdjustBitrate: boolean;

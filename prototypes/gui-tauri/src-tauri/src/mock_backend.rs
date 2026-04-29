@@ -85,6 +85,7 @@ impl MockBackend {
                 video_decoder_selection: 0,
                 window_mode: 1,
                 ui_display_mode: 0,
+                language: 0,
                 capture_sys_keys_mode: 1,
                 unlock_bitrate: false,
                 auto_adjust_bitrate: false,

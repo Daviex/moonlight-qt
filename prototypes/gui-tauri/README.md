@@ -29,7 +29,7 @@ The production Tauri migration should keep Moonlight's C++ backend and streaming
 
 1. Host discovery, pairing, wake, rename, delete, details, and network tests.
 2. App listing, launch, resume, quit, hide/unhide, direct launch, and box art.
-3. Streaming settings snapshots, validation, saves, and localization.
+3. Streaming settings snapshots, validation, saves, and the persisted native language preference.
 4. Session launch lifecycle, warnings, errors, UI hide/show, and stream-window ownership.
 5. Controller navigation actions translated into web focus operations while streaming owns SDL input during active sessions.
 
@@ -41,7 +41,7 @@ The streaming video path should remain a native SDL/window path. Do not attempt 
 
 1. Hosts: list, add, pair, wake, rename, delete, expanded native details, wakeability/server-support metadata, network test, and action guards that block invalid pair/wake requests.
 2. Apps: list, launch, resume running session, quit running app, hide/unhide, direct-launch toggle, app collector metadata, cached box-art URLs, empty-state guidance when a host is unpaired or returns no visible apps, and native validation for app command toggles.
-3. Settings: load and save the current streaming settings snapshot, including core display, bitrate, audio/video, input, warning, network, and stream-behavior preferences, plus native default bitrate calculation and frontend/native validation for numeric, select, and boolean stream settings.
+3. Settings: load and save the current streaming settings snapshot, including core display, bitrate, audio/video, language, input, warning, network, and stream-behavior preferences, plus native default bitrate calculation and frontend/native validation for numeric, select, and boolean stream settings.
 4. System: load native version, architecture, display/HDR, hardware acceleration, browser, desktop session, unmapped gamepad information, and open HTTP/HTTPS documentation or update URLs through the native browser integration.
 
 The bridge also emits `moonlight-bridge-event` events for native-side host, app, session, settings, status, and controller navigation changes. The React shell subscribes to those events, refreshes the affected state, translates controller actions into web focus/activation/back/settings behavior, tracks an active native stream panel for forwarded lifecycle state, hides the Tauri shell when the native stream requests it, shows/focuses the shell when the native lifecycle allows it again, and shows recent native events in the UI. This mirrors the production shape needed for host discovery updates, app list changes, stream lifecycle events, errors, warnings, and SDL-derived controller navigation events. `src-tauri\capabilities\default.json` grants the Tauri v2 `core:event:default` permission required for frontend event subscriptions and `core:window:default` for stream lifecycle window show/hide/focus calls.

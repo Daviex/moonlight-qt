@@ -189,6 +189,9 @@ static bool validateStreamingSettings(const QJsonObject& settings, QString& erro
         validateIntegerSetting(settings, QStringLiteral("videoDecoderSelection"), QStringLiteral("Video decoder"), 0, 2, error) &&
         validateIntegerSetting(settings, QStringLiteral("windowMode"), QStringLiteral("Stream window mode"), 0, 2, error) &&
         validateIntegerSetting(settings, QStringLiteral("uiDisplayMode"), QStringLiteral("UI startup mode"), 0, 2, error) &&
+        validateIntegerSetting(settings, QStringLiteral("language"), QStringLiteral("Language"),
+                               static_cast<int>(StreamingPreferences::LANG_AUTO),
+                               static_cast<int>(StreamingPreferences::LANG_TA), error) &&
         validateIntegerSetting(settings, QStringLiteral("captureSysKeysMode"), QStringLiteral("Capture system keys mode"), 0, 2, error) &&
         validateStreamingBooleanSettings(settings, error);
 }
@@ -898,11 +901,12 @@ QJsonObject TauriBridgeHelper::loadSettings()
                            {"packetSize", preferences.packetSize},
                            {"audioConfig", preferences.audioConfig},
                            {"videoCodecConfig", preferences.videoCodecConfig},
-                           {"videoDecoderSelection", preferences.videoDecoderSelection},
-                           {"windowMode", preferences.windowMode},
-                           {"uiDisplayMode", preferences.uiDisplayMode},
-                           {"captureSysKeysMode", preferences.captureSysKeysMode},
-                           {"unlockBitrate", preferences.unlockBitrate},
+                            {"videoDecoderSelection", preferences.videoDecoderSelection},
+                            {"windowMode", preferences.windowMode},
+                            {"uiDisplayMode", preferences.uiDisplayMode},
+                            {"language", preferences.language},
+                            {"captureSysKeysMode", preferences.captureSysKeysMode},
+                            {"unlockBitrate", preferences.unlockBitrate},
                            {"autoAdjustBitrate", preferences.autoAdjustBitrate},
                            {"enableVsync", preferences.enableVsync},
                            {"gameOptimizations", preferences.gameOptimizations},
@@ -954,6 +958,7 @@ QJsonObject TauriBridgeHelper::saveSettings(const QJsonObject& payload)
     preferences.videoDecoderSelection = settings.value("videoDecoderSelection").toInt(preferences.videoDecoderSelection);
     preferences.windowMode = settings.value("windowMode").toInt(preferences.windowMode);
     preferences.uiDisplayMode = settings.value("uiDisplayMode").toInt(preferences.uiDisplayMode);
+    preferences.language = settings.value("language").toInt(preferences.language);
     preferences.captureSysKeysMode = settings.value("captureSysKeysMode").toInt(preferences.captureSysKeysMode);
     preferences.unlockBitrate = settings.value("unlockBitrate").toBool(preferences.unlockBitrate);
     preferences.autoAdjustBitrate = settings.value("autoAdjustBitrate").toBool(preferences.autoAdjustBitrate);

@@ -64,6 +64,7 @@ pub struct StreamingSettings {
     pub video_decoder_selection: i32,
     pub window_mode: i32,
     pub ui_display_mode: i32,
+    pub language: i32,
     pub capture_sys_keys_mode: i32,
     pub unlock_bitrate: bool,
     pub auto_adjust_bitrate: bool,

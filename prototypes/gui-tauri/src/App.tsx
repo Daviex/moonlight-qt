@@ -54,6 +54,7 @@ const fallbackSettings: StreamingSettings = {
   videoDecoderSelection: 0,
   windowMode: 1,
   uiDisplayMode: 0,
+  language: 0,
   captureSysKeysMode: 1,
   unlockBitrate: false,
   autoAdjustBitrate: false,
@@ -137,6 +138,41 @@ const uiDisplayModeOptions = [
   { value: 0, label: 'Windowed' },
   { value: 1, label: 'Maximized' },
   { value: 2, label: 'Fullscreen' },
+];
+
+const languageOptions = [
+  { value: 0, label: 'Automatic' },
+  { value: 1, label: 'English' },
+  { value: 2, label: 'French' },
+  { value: 3, label: 'Simplified Chinese' },
+  { value: 4, label: 'German' },
+  { value: 5, label: 'Norwegian Bokmal' },
+  { value: 6, label: 'Russian' },
+  { value: 7, label: 'Spanish' },
+  { value: 8, label: 'Japanese' },
+  { value: 9, label: 'Vietnamese' },
+  { value: 10, label: 'Thai' },
+  { value: 11, label: 'Korean' },
+  { value: 12, label: 'Hungarian' },
+  { value: 13, label: 'Dutch' },
+  { value: 14, label: 'Swedish' },
+  { value: 15, label: 'Turkish' },
+  { value: 16, label: 'Ukrainian' },
+  { value: 17, label: 'Traditional Chinese' },
+  { value: 18, label: 'Portuguese' },
+  { value: 19, label: 'Brazilian Portuguese' },
+  { value: 20, label: 'Greek' },
+  { value: 21, label: 'Italian' },
+  { value: 22, label: 'Hindi' },
+  { value: 23, label: 'Polish' },
+  { value: 24, label: 'Czech' },
+  { value: 25, label: 'Hebrew' },
+  { value: 26, label: 'Central Kurdish' },
+  { value: 27, label: 'Lithuanian' },
+  { value: 28, label: 'Estonian' },
+  { value: 29, label: 'Bulgarian' },
+  { value: 30, label: 'Esperanto' },
+  { value: 31, label: 'Tamil' },
 ];
 
 const captureSysKeysOptions = [
@@ -1543,6 +1579,12 @@ export default function App() {
             UI startup mode
             <select value={settings.uiDisplayMode} onChange={(event) => updateSetting('uiDisplayMode', Number(event.target.value))}>
               {uiDisplayModeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <label>
+            Language
+            <select value={settings.language} onChange={(event) => updateSetting('language', Number(event.target.value))}>
+              {languageOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           </label>
           <label>
