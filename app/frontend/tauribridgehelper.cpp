@@ -17,6 +17,7 @@
 #include <QWidget>
 
 #include <cmath>
+#include <limits>
 
 static bool validateIntegerSetting(const QJsonObject& settings,
                                    const QString& key,
@@ -305,14 +306,38 @@ int TauriBridgeHelper::run()
         }
 
         QJsonObject response;
-        const QJsonDocument requestDocument = QJsonDocument::fromJson(line.toUtf8());
+        QJsonParseError parseError;
+        const QJsonDocument requestDocument = QJsonDocument::fromJson(line.toUtf8(), &parseError);
+        if (parseError.error != QJsonParseError::NoError || !requestDocument.isObject()) {
+            response.insert("id", QJsonValue::Null);
+            response.insert("error", "Invalid bridge request JSON.");
+            return {QJsonDocument(response).toJson(QJsonDocument::Compact)};
+        }
+
         const QJsonObject request = requestDocument.object();
-        const int requestId = request.value("id").toInt();
+        const QJsonValue requestIdValue = request.value("id");
+        if (!requestIdValue.isDouble()) {
+            response.insert("id", QJsonValue::Null);
+            response.insert("error", "Bridge request id must be a number.");
+            return {QJsonDocument(response).toJson(QJsonDocument::Compact)};
+        }
+
+        const double requestIdNumber = requestIdValue.toDouble();
+        if (!std::isfinite(requestIdNumber) ||
+            std::floor(requestIdNumber) != requestIdNumber ||
+            requestIdNumber < 0 ||
+            requestIdNumber > std::numeric_limits<int>::max()) {
+            response.insert("id", QJsonValue::Null);
+            response.insert("error", "Bridge request id must be a non-negative integer.");
+            return {QJsonDocument(response).toJson(QJsonDocument::Compact)};
+        }
+
+        const int requestId = static_cast<int>(requestIdNumber);
         response.insert("id", requestId);
 
         QJsonArray events;
-        if (!requestDocument.isObject() || !request.value("command").isObject()) {
-            response.insert("error", "Invalid bridge request.");
+        if (!request.value("command").isObject()) {
+            response.insert("error", "Bridge request command must be an object.");
         }
         else {
             const QJsonObject command = request.value("command").toObject();
@@ -375,6 +400,13 @@ int TauriBridgeHelper::run()
 
 QJsonObject TauriBridgeHelper::handleCommand(const QJsonObject& command)
 {
+    if (!command.value("command").isString() || command.value("command").toString().isEmpty()) {
+        return {{"error", "Bridge command name is required."}};
+    }
+    if (command.contains("payload") && !command.value("payload").isObject()) {
+        return {{"error", "Bridge command payload must be an object."}};
+    }
+
     const QString commandName = command.value("command").toString();
     const QJsonObject payload = command.value("payload").toObject();
 
