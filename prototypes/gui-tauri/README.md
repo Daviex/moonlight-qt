@@ -50,11 +50,11 @@ The default backend remains the in-memory mock so the prototype launches without
 
 ```powershell
 $env:MOONLIGHT_TAURI_BACKEND = 'ipc'
-$env:MOONLIGHT_TAURI_HELPER = 'C:\path\to\moonlight-native-helper.exe'
+$env:MOONLIGHT_TAURI_HELPER = 'C:\Users\david\Desktop\Work\moonlight-qt\build\deploy-x64-release\Moonlight.exe'
 npm run tauri dev
 ```
 
-The helper must reserve stdout for one JSON response per line and write diagnostics to stderr. Requests include an ID and tagged command payload:
+The native Moonlight executable now has a hidden `--tauri-bridge-helper` mode for this protocol. The helper reserves stdout for one JSON response per line and writes diagnostics to stderr. Requests include an ID and tagged command payload:
 
 ```json
 {"id":1,"command":{"command":"list_hosts"}}
@@ -66,4 +66,6 @@ Responses must echo the request ID and include either `result` or `error`:
 {"id":1,"result":[{"id":"gaming-pc","name":"Gaming PC","address":"192.168.1.20","status":"Online","paired":true,"running":false}]}
 ```
 
-This process boundary is the chosen production direction because it avoids mixing Tauri/Rust and Qt/C++ event loops in one process, keeps the existing C++ backend and SDL streaming ownership intact, and prevents TypeScript from reimplementing Moonlight backend logic. The next production step is adding a C++ helper mode that adapts the existing frontend facades to this protocol.
+This process boundary is the chosen production direction because it avoids mixing Tauri/Rust and Qt/C++ event loops in one process, keeps the existing C++ backend and SDL streaming ownership intact, and prevents TypeScript from reimplementing Moonlight backend logic.
+
+Current helper coverage is intentionally incremental: it can return real settings and host snapshots through the existing frontend facades, update the subset of settings used by the prototype, and route basic host/app mutations that already have facade methods. Commands that need full stream-window/session orchestration, such as `launch_app`, remain explicit "not implemented" errors until the native session bridge is added.

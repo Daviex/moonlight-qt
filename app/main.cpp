@@ -58,6 +58,7 @@
 #include "backend/systemproperties.h"
 #include "streaming/session.h"
 #include "settings/streamingpreferences.h"
+#include "frontend/tauribridgehelper.h"
 #ifdef GUI_NEXT_WIDGETS
 #include "gui-next/clicontroller.h"
 #include "gui-next/widgetshell.h"
@@ -812,6 +813,7 @@ int main(int argc, char *argv[])
     GlobalCommandLineParser::ParseResult commandLineParserResult = parser.parse(app.arguments());
     switch (commandLineParserResult) {
     case GlobalCommandLineParser::ListRequested:
+    case GlobalCommandLineParser::TauriBridgeHelperRequested:
         // Don't log to the console since it will jumble the command output
         s_SuppressVerboseOutput = true;
         break;
@@ -937,6 +939,11 @@ int main(int argc, char *argv[])
 
     // Create the identity manager on the main thread
     IdentityManager::get();
+
+    if (commandLineParserResult == GlobalCommandLineParser::TauriBridgeHelperRequested) {
+        TauriBridgeHelper helper;
+        return helper.run();
+    }
 
 #ifdef GUI_NEXT_WIDGETS
     QScopedPointer<GuiNextWindow> guiNextWindow;

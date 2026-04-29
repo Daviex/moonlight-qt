@@ -1,0 +1,433 @@
+#include "tauribridgehelper.h"
+
+#include "frontend/applistfacade.h"
+#include "settings/streamingpreferences.h"
+
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QScopedPointer>
+#include <QTextStream>
+
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+
+static bool readBridgeLine(HANDLE inputHandle, QByteArray& line)
+{
+    line.clear();
+
+    char ch = 0;
+    DWORD bytesRead = 0;
+    while (ReadFile(inputHandle, &ch, 1, &bytesRead, nullptr) && bytesRead > 0) {
+        if (ch == '\n') {
+            break;
+        }
+        if (ch != '\r') {
+            line.append(ch);
+        }
+    }
+
+    return !line.isEmpty() || bytesRead > 0;
+}
+
+static bool writeBridgeLine(HANDLE outputHandle, const QByteArray& line)
+{
+    DWORD bytesWritten = 0;
+    if (!WriteFile(outputHandle, line.constData(), static_cast<DWORD>(line.size()), &bytesWritten, nullptr)) {
+        return false;
+    }
+
+    const char newline = '\n';
+    return WriteFile(outputHandle, &newline, 1, &bytesWritten, nullptr);
+}
+#endif
+
+TauriBridgeHelper::TauriBridgeHelper()
+    : m_ComputerManager(StreamingPreferences::get())
+{
+    m_Facade.initialize(&m_ComputerManager);
+}
+
+int TauriBridgeHelper::run()
+{
+    auto processLine = [this](const QByteArray& rawLine) -> QByteArray {
+        const QString line = QString::fromUtf8(rawLine).trimmed();
+        if (line.isEmpty()) {
+            return {};
+        }
+
+        QJsonObject response;
+        const QJsonDocument requestDocument = QJsonDocument::fromJson(line.toUtf8());
+        const QJsonObject request = requestDocument.object();
+        const int requestId = request.value("id").toInt();
+        response.insert("id", requestId);
+
+        if (!requestDocument.isObject() || !request.value("command").isObject()) {
+            response.insert("error", "Invalid bridge request.");
+        }
+        else {
+            const QJsonObject command = request.value("command").toObject();
+            const QJsonObject result = handleCommand(command);
+            if (result.contains("error")) {
+                response.insert("error", result.value("error").toString());
+            }
+            else {
+                response.insert("result", result.value("result"));
+            }
+        }
+
+        return QJsonDocument(response).toJson(QJsonDocument::Compact);
+    };
+
+#ifdef Q_OS_WIN
+    HANDLE inputHandle = GetStdHandle(STD_INPUT_HANDLE);
+    HANDLE outputHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (inputHandle == INVALID_HANDLE_VALUE || inputHandle == nullptr ||
+            outputHandle == INVALID_HANDLE_VALUE || outputHandle == nullptr) {
+        return 1;
+    }
+
+    QByteArray line;
+    while (readBridgeLine(inputHandle, line)) {
+        const QByteArray response = processLine(line);
+        if (!response.isEmpty() && !writeBridgeLine(outputHandle, response)) {
+            return 1;
+        }
+    }
+#else
+    QTextStream input(stdin, QIODevice::ReadOnly);
+    QTextStream output(stdout, QIODevice::WriteOnly);
+
+    while (!input.atEnd()) {
+        const QByteArray response = processLine(input.readLine().toUtf8());
+        if (!response.isEmpty()) {
+            output << QString::fromUtf8(response) << Qt::endl;
+            output.flush();
+        }
+    }
+#endif
+
+    return 0;
+}
+
+QJsonObject TauriBridgeHelper::handleCommand(const QJsonObject& command)
+{
+    const QString commandName = command.value("command").toString();
+    const QJsonObject payload = command.value("payload").toObject();
+
+    if (commandName == "list_hosts") {
+        return listHosts();
+    }
+    if (commandName == "add_host") {
+        const QString address = payload.value("address").toString();
+        if (address.isEmpty()) {
+            return {{"error", "Host address is required."}};
+        }
+        m_ComputerManager.addNewHostManually(address);
+        return {{"result", QJsonObject{{"status", status(tr("Host add requested."))}, {"hostId", address}}}};
+    }
+    if (commandName == "pair_host") {
+        return pairHost(payload);
+    }
+    if (commandName == "wake_host") {
+        return wakeHost(payload);
+    }
+    if (commandName == "rename_host") {
+        return renameHost(payload);
+    }
+    if (commandName == "delete_host") {
+        return deleteHost(payload);
+    }
+    if (commandName == "host_details") {
+        return hostDetails(payload);
+    }
+    if (commandName == "test_network") {
+        return unsupported(commandName);
+    }
+    if (commandName == "list_apps") {
+        return listApps(payload);
+    }
+    if (commandName == "launch_app") {
+        return unsupported(commandName);
+    }
+    if (commandName == "quit_running_app") {
+        return quitRunningApp(payload);
+    }
+    if (commandName == "set_app_hidden") {
+        return setAppHidden(payload);
+    }
+    if (commandName == "set_app_direct_launch") {
+        return setAppDirectLaunch(payload);
+    }
+    if (commandName == "load_settings") {
+        return loadSettings();
+    }
+    if (commandName == "save_settings") {
+        return saveSettings(payload);
+    }
+
+    return {{"error", QString("Unknown bridge command: %1").arg(commandName)}};
+}
+
+QJsonObject TauriBridgeHelper::listHosts()
+{
+    QJsonArray hosts;
+    const QVector<FrontendComputer> computers = m_Facade.computers()->computers();
+    for (int i = 0; i < computers.count(); i++) {
+        hosts.append(hostToJson(computers[i], i));
+    }
+    return {{"result", hosts}};
+}
+
+QJsonObject TauriBridgeHelper::hostDetails(const QJsonObject& payload)
+{
+    const int hostIndex = hostIndexFromPayload(payload);
+    if (hostIndex < 0) {
+        return {{"error", "Host was not found."}};
+    }
+
+    const FrontendComputer computer = m_Facade.computers()->computerAt(hostIndex);
+    return {{"result", QJsonObject{
+                           {"name", computer.name},
+                           {"address", hostAddress(computer)},
+                           {"status", hostStatus(computer)},
+                           {"paired", computer.paired},
+                           {"running", computer.busy},
+                           {"serverVersion", QString()},
+                       }}};
+}
+
+QJsonObject TauriBridgeHelper::listApps(const QJsonObject& payload)
+{
+    const int hostIndex = hostIndexFromPayload(payload);
+    if (hostIndex < 0) {
+        return {{"error", "Host was not found."}};
+    }
+
+    const bool showHidden = payload.value("show_hidden").toBool();
+    QScopedPointer<AppListFacade> appList(m_Facade.createAppList(hostIndex, showHidden));
+    if (appList.isNull()) {
+        return {{"error", "Unable to create app list."}};
+    }
+
+    QJsonArray apps;
+    const QVector<FrontendApp> snapshot = appList->apps();
+    for (const FrontendApp& app : snapshot) {
+        apps.append(appToJson(app));
+    }
+    return {{"result", apps}};
+}
+
+QJsonObject TauriBridgeHelper::pairHost(const QJsonObject& payload)
+{
+    const int hostIndex = hostIndexFromPayload(payload);
+    if (hostIndex < 0) {
+        return {{"error", "Host was not found."}};
+    }
+
+    const QString pin = m_Facade.computers()->generatePinString();
+    m_Facade.computers()->pairComputer(hostIndex, pin);
+    return {{"result", QJsonObject{
+                           {"pin", pin},
+                           {"message", tr("Enter PIN %1 on the host to complete pairing.").arg(pin)},
+                       }}};
+}
+
+QJsonObject TauriBridgeHelper::wakeHost(const QJsonObject& payload)
+{
+    const int hostIndex = hostIndexFromPayload(payload);
+    if (hostIndex < 0) {
+        return {{"error", "Host was not found."}};
+    }
+
+    m_Facade.computers()->wakeComputer(hostIndex);
+    return {{"result", status(tr("Wake requested."))}};
+}
+
+QJsonObject TauriBridgeHelper::renameHost(const QJsonObject& payload)
+{
+    const int hostIndex = hostIndexFromPayload(payload);
+    const QString name = payload.value("name").toString();
+    if (hostIndex < 0) {
+        return {{"error", "Host was not found."}};
+    }
+    if (name.isEmpty()) {
+        return {{"error", "Host name is required."}};
+    }
+
+    m_Facade.computers()->renameComputer(hostIndex, name);
+    return {{"result", status(tr("Host renamed."))}};
+}
+
+QJsonObject TauriBridgeHelper::deleteHost(const QJsonObject& payload)
+{
+    const int hostIndex = hostIndexFromPayload(payload);
+    if (hostIndex < 0) {
+        return {{"error", "Host was not found."}};
+    }
+
+    m_Facade.computers()->deleteComputer(hostIndex);
+    return {{"result", status(tr("Host deleted."))}};
+}
+
+QJsonObject TauriBridgeHelper::quitRunningApp(const QJsonObject& payload)
+{
+    const int hostIndex = hostIndexFromPayload(payload);
+    if (hostIndex < 0) {
+        return {{"error", "Host was not found."}};
+    }
+
+    QScopedPointer<AppListFacade> appList(m_Facade.createAppList(hostIndex, true));
+    if (appList.isNull()) {
+        return {{"error", "Unable to create app list."}};
+    }
+
+    appList->quitRunningApp();
+    return {{"result", status(tr("Quit requested for the running app."))}};
+}
+
+QJsonObject TauriBridgeHelper::setAppHidden(const QJsonObject& payload)
+{
+    const int hostIndex = hostIndexFromPayload(payload);
+    if (hostIndex < 0) {
+        return {{"error", "Host was not found."}};
+    }
+
+    QScopedPointer<AppListFacade> appList(m_Facade.createAppList(hostIndex, true));
+    const int appIndex = appIndexFromPayload(appList.data(), payload);
+    if (appIndex < 0) {
+        return {{"error", "App was not found."}};
+    }
+
+    appList->setAppHidden(appIndex, payload.value("hidden").toBool());
+    return {{"result", status(tr("App visibility updated."))}};
+}
+
+QJsonObject TauriBridgeHelper::setAppDirectLaunch(const QJsonObject& payload)
+{
+    const int hostIndex = hostIndexFromPayload(payload);
+    if (hostIndex < 0) {
+        return {{"error", "Host was not found."}};
+    }
+
+    QScopedPointer<AppListFacade> appList(m_Facade.createAppList(hostIndex, true));
+    const int appIndex = appIndexFromPayload(appList.data(), payload);
+    if (appIndex < 0) {
+        return {{"error", "App was not found."}};
+    }
+
+    appList->setAppDirectLaunch(appIndex, payload.value("direct_launch").toBool());
+    return {{"result", status(tr("Direct-launch app updated."))}};
+}
+
+QJsonObject TauriBridgeHelper::loadSettings()
+{
+    const FrontendStreamingPreferences preferences = m_Facade.preferences()->preferences();
+    return {{"result", QJsonObject{
+                           {"width", preferences.width},
+                           {"height", preferences.height},
+                           {"fps", preferences.fps},
+                           {"bitrateKbps", preferences.bitrateKbps},
+                           {"enableHdr", preferences.enableHdr},
+                           {"gamepadMouse", preferences.gamepadMouse},
+                       }}};
+}
+
+QJsonObject TauriBridgeHelper::saveSettings(const QJsonObject& payload)
+{
+    const QJsonObject settings = payload.value("settings").toObject();
+    FrontendStreamingPreferences preferences = m_Facade.preferences()->preferences();
+    preferences.width = settings.value("width").toInt(preferences.width);
+    preferences.height = settings.value("height").toInt(preferences.height);
+    preferences.fps = settings.value("fps").toInt(preferences.fps);
+    preferences.bitrateKbps = settings.value("bitrateKbps").toInt(preferences.bitrateKbps);
+    preferences.enableHdr = settings.value("enableHdr").toBool(preferences.enableHdr);
+    preferences.gamepadMouse = settings.value("gamepadMouse").toBool(preferences.gamepadMouse);
+
+    m_Facade.preferences()->applyPreferences(preferences, true);
+    return {{"result", status(tr("Settings saved."))}};
+}
+
+QJsonObject TauriBridgeHelper::status(const QString& message) const
+{
+    return {{"message", message}};
+}
+
+QJsonObject TauriBridgeHelper::hostToJson(const FrontendComputer& computer, int index) const
+{
+    return {
+        {"id", QString::number(index)},
+        {"name", computer.name},
+        {"address", hostAddress(computer)},
+        {"status", hostStatus(computer)},
+        {"paired", computer.paired},
+        {"running", computer.busy},
+    };
+}
+
+QJsonObject TauriBridgeHelper::appToJson(const FrontendApp& app) const
+{
+    return {
+        {"id", QString::number(app.appId)},
+        {"name", app.name},
+        {"hidden", app.hidden},
+        {"directLaunch", app.directLaunch},
+        {"running", app.running},
+    };
+}
+
+QString TauriBridgeHelper::hostStatus(const FrontendComputer& computer) const
+{
+    if (!computer.paired) {
+        return "Pairing required";
+    }
+    return computer.online ? "Online" : "Offline";
+}
+
+QString TauriBridgeHelper::hostAddress(const FrontendComputer& computer) const
+{
+    const QString prefix = tr("Active Address: ");
+    const QStringList lines = computer.details.split('\n');
+    for (const QString& line : lines) {
+        if (line.startsWith(prefix)) {
+            const QString address = line.mid(prefix.length());
+            return address == "<NULL>" ? QString() : address;
+        }
+    }
+    return QString();
+}
+
+int TauriBridgeHelper::hostIndexFromPayload(const QJsonObject& payload)
+{
+    bool ok = false;
+    const int hostIndex = payload.value("host_id").toString().toInt(&ok);
+    if (!ok || hostIndex < 0 || hostIndex >= m_Facade.computers()->count()) {
+        return -1;
+    }
+    return hostIndex;
+}
+
+int TauriBridgeHelper::appIndexFromPayload(AppListFacade* appList, const QJsonObject& payload) const
+{
+    if (appList == nullptr) {
+        return -1;
+    }
+
+    bool ok = false;
+    const int appId = payload.value("app_id").toString().toInt(&ok);
+    if (!ok) {
+        return -1;
+    }
+
+    const QVector<FrontendApp> apps = appList->apps();
+    for (int i = 0; i < apps.count(); i++) {
+        if (apps[i].appId == appId) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+QJsonObject TauriBridgeHelper::unsupported(const QString& command) const
+{
+    return {{"error", QString("Bridge command is not implemented by the native helper yet: %1").arg(command)}};
+}

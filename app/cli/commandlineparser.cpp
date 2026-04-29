@@ -155,6 +155,10 @@ GlobalCommandLineParser::~GlobalCommandLineParser()
 
 GlobalCommandLineParser::ParseResult GlobalCommandLineParser::parse(const QStringList &args)
 {
+    if (args.contains("--tauri-bridge-helper")) {
+        return TauriBridgeHelperRequested;
+    }
+
     CommandLineParser parser;
     parser.setupCommonOptions();
     parser.setApplicationDescription(

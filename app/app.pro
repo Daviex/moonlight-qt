@@ -191,6 +191,7 @@ SOURCES += \
     frontend/sdlcontrollernavigation.cpp \
     frontend/sessioncoordinator.cpp \
     frontend/systemfacade.cpp \
+    frontend/tauribridgehelper.cpp \
     frontend/updatefacade.cpp \
     cli/commandlineparser.cpp \
     cli/listapps.cpp \
@@ -242,6 +243,7 @@ HEADERS += \
     frontend/sdlcontrollernavigation.h \
     frontend/sessioncoordinator.h \
     frontend/systemfacade.h \
+    frontend/tauribridgehelper.h \
     frontend/updatefacade.h \
     cli/commandlineparser.h \
     cli/listapps.h \
