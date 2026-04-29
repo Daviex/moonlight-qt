@@ -48,8 +48,38 @@ const fallbackSettings: StreamingSettings = {
   height: 1080,
   fps: 60,
   bitrateKbps: 20000,
+  packetSize: 0,
+  audioConfig: 0,
+  videoCodecConfig: 0,
+  videoDecoderSelection: 0,
+  windowMode: 1,
+  uiDisplayMode: 0,
+  captureSysKeysMode: 1,
+  unlockBitrate: false,
+  autoAdjustBitrate: false,
+  enableVsync: true,
+  gameOptimizations: false,
+  playAudioOnHost: false,
+  multiController: true,
+  enableMdns: true,
+  quitAppAfter: false,
+  absoluteMouseMode: false,
+  absoluteTouchMode: true,
+  framePacing: false,
+  connectionWarnings: true,
+  configurationWarnings: true,
+  richPresence: true,
   enableHdr: false,
   gamepadMouse: true,
+  detectNetworkBlocking: true,
+  showPerformanceOverlay: false,
+  swapMouseButtons: false,
+  muteOnFocusLoss: false,
+  backgroundGamepad: false,
+  reverseScrollDirection: false,
+  swapFaceButtons: false,
+  keepAwake: true,
+  enableYUV444: false,
 };
 
 const controllerTestActions: ControllerAction[] = [
@@ -77,6 +107,43 @@ const setupGuideUrl = 'https://github.com/moonlight-stream/moonlight-docs/wiki/S
 const discordUrl = 'https://moonlight-stream.org/discord';
 const hardwareDecodingHelpUrl = 'https://github.com/moonlight-stream/moonlight-docs/wiki/Fixing-Hardware-Decoding-Problems';
 const gamepadMappingHelpUrl = 'https://github.com/moonlight-stream/moonlight-docs/wiki/Gamepad-Mapping';
+
+const audioConfigOptions = [
+  { value: 0, label: 'Stereo' },
+  { value: 1, label: '5.1 surround' },
+  { value: 2, label: '7.1 surround' },
+];
+
+const videoCodecOptions = [
+  { value: 0, label: 'Automatic' },
+  { value: 1, label: 'Force H.264' },
+  { value: 2, label: 'Force HEVC' },
+  { value: 4, label: 'Force AV1' },
+];
+
+const videoDecoderOptions = [
+  { value: 0, label: 'Automatic' },
+  { value: 1, label: 'Force hardware' },
+  { value: 2, label: 'Force software' },
+];
+
+const windowModeOptions = [
+  { value: 0, label: 'Fullscreen' },
+  { value: 1, label: 'Borderless fullscreen' },
+  { value: 2, label: 'Windowed' },
+];
+
+const uiDisplayModeOptions = [
+  { value: 0, label: 'Windowed' },
+  { value: 1, label: 'Maximized' },
+  { value: 2, label: 'Fullscreen' },
+];
+
+const captureSysKeysOptions = [
+  { value: 0, label: 'Off' },
+  { value: 1, label: 'Fullscreen only' },
+  { value: 2, label: 'Always' },
+];
 
 function writeDebugLog(message: string) {
   void bridge.debugLog(message).catch(() => undefined);
@@ -168,6 +235,10 @@ export default function App() {
     () => hosts.find((host) => host.id === selectedHostId),
     [hosts, selectedHostId],
   );
+
+  const updateSetting = useCallback(<K extends keyof StreamingSettings,>(key: K, value: StreamingSettings[K]) => {
+    setSettings((currentSettings) => ({ ...currentSettings, [key]: value }));
+  }, []);
 
   const refreshHosts = useCallback(async () => {
     writeDebugLog(`refreshHosts begin; selectedHostId=${selectedHostId}`);
@@ -1197,27 +1268,159 @@ export default function App() {
           </div>
           <label>
             Width
-            <input value={settings.width} type="number" onChange={(event) => setSettings({ ...settings, width: Number(event.target.value) })} />
+            <input value={settings.width} type="number" min={1} max={16384} onChange={(event) => updateSetting('width', Number(event.target.value))} />
           </label>
           <label>
             Height
-            <input value={settings.height} type="number" onChange={(event) => setSettings({ ...settings, height: Number(event.target.value) })} />
+            <input value={settings.height} type="number" min={1} max={16384} onChange={(event) => updateSetting('height', Number(event.target.value))} />
           </label>
           <label>
             FPS
-            <input value={settings.fps} type="number" onChange={(event) => setSettings({ ...settings, fps: Number(event.target.value) })} />
+            <input value={settings.fps} type="number" min={10} max={480} onChange={(event) => updateSetting('fps', Number(event.target.value))} />
           </label>
           <label>
-            Bitrate
-            <input value={settings.bitrateKbps} type="number" onChange={(event) => setSettings({ ...settings, bitrateKbps: Number(event.target.value) })} />
+            Bitrate (Kbps)
+            <input value={settings.bitrateKbps} type="number" min={500} max={500000} onChange={(event) => updateSetting('bitrateKbps', Number(event.target.value))} />
+          </label>
+          <label>
+            Packet size
+            <input value={settings.packetSize} type="number" min={0} max={9000} onChange={(event) => updateSetting('packetSize', Number(event.target.value))} />
+          </label>
+          <label>
+            Audio
+            <select value={settings.audioConfig} onChange={(event) => updateSetting('audioConfig', Number(event.target.value))}>
+              {audioConfigOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <label>
+            Video codec
+            <select value={settings.videoCodecConfig} onChange={(event) => updateSetting('videoCodecConfig', Number(event.target.value))}>
+              {videoCodecOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <label>
+            Video decoder
+            <select value={settings.videoDecoderSelection} onChange={(event) => updateSetting('videoDecoderSelection', Number(event.target.value))}>
+              {videoDecoderOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <label>
+            Stream window mode
+            <select value={settings.windowMode} onChange={(event) => updateSetting('windowMode', Number(event.target.value))}>
+              {windowModeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <label>
+            UI startup mode
+            <select value={settings.uiDisplayMode} onChange={(event) => updateSetting('uiDisplayMode', Number(event.target.value))}>
+              {uiDisplayModeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <label>
+            Capture system keys
+            <select value={settings.captureSysKeysMode} onChange={(event) => updateSetting('captureSysKeysMode', Number(event.target.value))}>
+              {captureSysKeysOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
           </label>
           <label className="checkbox">
-            <input checked={settings.enableHdr} type="checkbox" onChange={(event) => setSettings({ ...settings, enableHdr: event.target.checked })} />
+            <input checked={settings.unlockBitrate} type="checkbox" onChange={(event) => updateSetting('unlockBitrate', event.target.checked)} />
+            Unlock bitrate limit
+          </label>
+          <label className="checkbox">
+            <input checked={settings.autoAdjustBitrate} type="checkbox" onChange={(event) => updateSetting('autoAdjustBitrate', event.target.checked)} />
+            Automatically adjust bitrate
+          </label>
+          <label className="checkbox">
+            <input checked={settings.enableVsync} type="checkbox" onChange={(event) => updateSetting('enableVsync', event.target.checked)} />
+            V-Sync
+          </label>
+          <label className="checkbox">
+            <input checked={settings.gameOptimizations} type="checkbox" onChange={(event) => updateSetting('gameOptimizations', event.target.checked)} />
+            Optimize game settings
+          </label>
+          <label className="checkbox">
+            <input checked={settings.playAudioOnHost} type="checkbox" onChange={(event) => updateSetting('playAudioOnHost', event.target.checked)} />
+            Play audio on host
+          </label>
+          <label className="checkbox">
+            <input checked={settings.multiController} type="checkbox" onChange={(event) => updateSetting('multiController', event.target.checked)} />
+            Multiple controllers
+          </label>
+          <label className="checkbox">
+            <input checked={settings.enableMdns} type="checkbox" onChange={(event) => updateSetting('enableMdns', event.target.checked)} />
+            mDNS discovery
+          </label>
+          <label className="checkbox">
+            <input checked={settings.quitAppAfter} type="checkbox" onChange={(event) => updateSetting('quitAppAfter', event.target.checked)} />
+            Quit app after stream
+          </label>
+          <label className="checkbox">
+            <input checked={settings.absoluteMouseMode} type="checkbox" onChange={(event) => updateSetting('absoluteMouseMode', event.target.checked)} />
+            Absolute mouse mode
+          </label>
+          <label className="checkbox">
+            <input checked={settings.absoluteTouchMode} type="checkbox" onChange={(event) => updateSetting('absoluteTouchMode', event.target.checked)} />
+            Absolute touch mode
+          </label>
+          <label className="checkbox">
+            <input checked={settings.framePacing} type="checkbox" onChange={(event) => updateSetting('framePacing', event.target.checked)} />
+            Frame pacing
+          </label>
+          <label className="checkbox">
+            <input checked={settings.connectionWarnings} type="checkbox" onChange={(event) => updateSetting('connectionWarnings', event.target.checked)} />
+            Connection warnings
+          </label>
+          <label className="checkbox">
+            <input checked={settings.configurationWarnings} type="checkbox" onChange={(event) => updateSetting('configurationWarnings', event.target.checked)} />
+            Configuration warnings
+          </label>
+          <label className="checkbox">
+            <input checked={settings.richPresence} type="checkbox" onChange={(event) => updateSetting('richPresence', event.target.checked)} />
+            Discord rich presence
+          </label>
+          <label className="checkbox">
+            <input checked={settings.enableHdr} type="checkbox" onChange={(event) => updateSetting('enableHdr', event.target.checked)} />
             HDR
           </label>
           <label className="checkbox">
-            <input checked={settings.gamepadMouse} type="checkbox" onChange={(event) => setSettings({ ...settings, gamepadMouse: event.target.checked })} />
+            <input checked={settings.gamepadMouse} type="checkbox" onChange={(event) => updateSetting('gamepadMouse', event.target.checked)} />
             Gamepad mouse
+          </label>
+          <label className="checkbox">
+            <input checked={settings.detectNetworkBlocking} type="checkbox" onChange={(event) => updateSetting('detectNetworkBlocking', event.target.checked)} />
+            Detect network blocking
+          </label>
+          <label className="checkbox">
+            <input checked={settings.showPerformanceOverlay} type="checkbox" onChange={(event) => updateSetting('showPerformanceOverlay', event.target.checked)} />
+            Performance overlay
+          </label>
+          <label className="checkbox">
+            <input checked={settings.swapMouseButtons} type="checkbox" onChange={(event) => updateSetting('swapMouseButtons', event.target.checked)} />
+            Swap mouse buttons
+          </label>
+          <label className="checkbox">
+            <input checked={settings.muteOnFocusLoss} type="checkbox" onChange={(event) => updateSetting('muteOnFocusLoss', event.target.checked)} />
+            Mute on focus loss
+          </label>
+          <label className="checkbox">
+            <input checked={settings.backgroundGamepad} type="checkbox" onChange={(event) => updateSetting('backgroundGamepad', event.target.checked)} />
+            Background gamepad input
+          </label>
+          <label className="checkbox">
+            <input checked={settings.reverseScrollDirection} type="checkbox" onChange={(event) => updateSetting('reverseScrollDirection', event.target.checked)} />
+            Reverse scroll direction
+          </label>
+          <label className="checkbox">
+            <input checked={settings.swapFaceButtons} type="checkbox" onChange={(event) => updateSetting('swapFaceButtons', event.target.checked)} />
+            Swap controller face buttons
+          </label>
+          <label className="checkbox">
+            <input checked={settings.keepAwake} type="checkbox" onChange={(event) => updateSetting('keepAwake', event.target.checked)} />
+            Keep display awake
+          </label>
+          <label className="checkbox">
+            <input checked={settings.enableYUV444} type="checkbox" onChange={(event) => updateSetting('enableYUV444', event.target.checked)} />
+            YUV 4:4:4
           </label>
         </section>
       )}

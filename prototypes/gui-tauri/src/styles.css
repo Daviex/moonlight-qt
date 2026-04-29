@@ -13,7 +13,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -301,7 +302,8 @@ nav {
   color: #c9d1d9;
 }
 
-.settings input {
+.settings input,
+.settings select {
   color: #f5f7fb;
   background: #0d1117;
   border: 1px solid #30363d;

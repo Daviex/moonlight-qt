@@ -629,9 +629,39 @@ QJsonObject TauriBridgeHelper::loadSettings()
                            {"height", preferences.height},
                            {"fps", preferences.fps},
                            {"bitrateKbps", preferences.bitrateKbps},
+                           {"packetSize", preferences.packetSize},
+                           {"audioConfig", preferences.audioConfig},
+                           {"videoCodecConfig", preferences.videoCodecConfig},
+                           {"videoDecoderSelection", preferences.videoDecoderSelection},
+                           {"windowMode", preferences.windowMode},
+                           {"uiDisplayMode", preferences.uiDisplayMode},
+                           {"captureSysKeysMode", preferences.captureSysKeysMode},
+                           {"unlockBitrate", preferences.unlockBitrate},
+                           {"autoAdjustBitrate", preferences.autoAdjustBitrate},
+                           {"enableVsync", preferences.enableVsync},
+                           {"gameOptimizations", preferences.gameOptimizations},
+                           {"playAudioOnHost", preferences.playAudioOnHost},
+                           {"multiController", preferences.multiController},
+                           {"enableMdns", preferences.enableMdns},
+                           {"quitAppAfter", preferences.quitAppAfter},
+                           {"absoluteMouseMode", preferences.absoluteMouseMode},
+                           {"absoluteTouchMode", preferences.absoluteTouchMode},
+                           {"framePacing", preferences.framePacing},
+                           {"connectionWarnings", preferences.connectionWarnings},
+                           {"configurationWarnings", preferences.configurationWarnings},
+                           {"richPresence", preferences.richPresence},
                            {"enableHdr", preferences.enableHdr},
                            {"gamepadMouse", preferences.gamepadMouse},
-                       }}};
+                           {"detectNetworkBlocking", preferences.detectNetworkBlocking},
+                           {"showPerformanceOverlay", preferences.showPerformanceOverlay},
+                           {"swapMouseButtons", preferences.swapMouseButtons},
+                           {"muteOnFocusLoss", preferences.muteOnFocusLoss},
+                           {"backgroundGamepad", preferences.backgroundGamepad},
+                           {"reverseScrollDirection", preferences.reverseScrollDirection},
+                           {"swapFaceButtons", preferences.swapFaceButtons},
+                           {"keepAwake", preferences.keepAwake},
+                           {"enableYUV444", preferences.enableYUV444},
+                        }}};
 }
 
 QJsonObject TauriBridgeHelper::saveSettings(const QJsonObject& payload)
@@ -642,8 +672,38 @@ QJsonObject TauriBridgeHelper::saveSettings(const QJsonObject& payload)
     preferences.height = settings.value("height").toInt(preferences.height);
     preferences.fps = settings.value("fps").toInt(preferences.fps);
     preferences.bitrateKbps = settings.value("bitrateKbps").toInt(preferences.bitrateKbps);
+    preferences.packetSize = settings.value("packetSize").toInt(preferences.packetSize);
+    preferences.audioConfig = settings.value("audioConfig").toInt(preferences.audioConfig);
+    preferences.videoCodecConfig = settings.value("videoCodecConfig").toInt(preferences.videoCodecConfig);
+    preferences.videoDecoderSelection = settings.value("videoDecoderSelection").toInt(preferences.videoDecoderSelection);
+    preferences.windowMode = settings.value("windowMode").toInt(preferences.windowMode);
+    preferences.uiDisplayMode = settings.value("uiDisplayMode").toInt(preferences.uiDisplayMode);
+    preferences.captureSysKeysMode = settings.value("captureSysKeysMode").toInt(preferences.captureSysKeysMode);
+    preferences.unlockBitrate = settings.value("unlockBitrate").toBool(preferences.unlockBitrate);
+    preferences.autoAdjustBitrate = settings.value("autoAdjustBitrate").toBool(preferences.autoAdjustBitrate);
+    preferences.enableVsync = settings.value("enableVsync").toBool(preferences.enableVsync);
+    preferences.gameOptimizations = settings.value("gameOptimizations").toBool(preferences.gameOptimizations);
+    preferences.playAudioOnHost = settings.value("playAudioOnHost").toBool(preferences.playAudioOnHost);
+    preferences.multiController = settings.value("multiController").toBool(preferences.multiController);
+    preferences.enableMdns = settings.value("enableMdns").toBool(preferences.enableMdns);
+    preferences.quitAppAfter = settings.value("quitAppAfter").toBool(preferences.quitAppAfter);
+    preferences.absoluteMouseMode = settings.value("absoluteMouseMode").toBool(preferences.absoluteMouseMode);
+    preferences.absoluteTouchMode = settings.value("absoluteTouchMode").toBool(preferences.absoluteTouchMode);
+    preferences.framePacing = settings.value("framePacing").toBool(preferences.framePacing);
+    preferences.connectionWarnings = settings.value("connectionWarnings").toBool(preferences.connectionWarnings);
+    preferences.configurationWarnings = settings.value("configurationWarnings").toBool(preferences.configurationWarnings);
+    preferences.richPresence = settings.value("richPresence").toBool(preferences.richPresence);
     preferences.enableHdr = settings.value("enableHdr").toBool(preferences.enableHdr);
     preferences.gamepadMouse = settings.value("gamepadMouse").toBool(preferences.gamepadMouse);
+    preferences.detectNetworkBlocking = settings.value("detectNetworkBlocking").toBool(preferences.detectNetworkBlocking);
+    preferences.showPerformanceOverlay = settings.value("showPerformanceOverlay").toBool(preferences.showPerformanceOverlay);
+    preferences.swapMouseButtons = settings.value("swapMouseButtons").toBool(preferences.swapMouseButtons);
+    preferences.muteOnFocusLoss = settings.value("muteOnFocusLoss").toBool(preferences.muteOnFocusLoss);
+    preferences.backgroundGamepad = settings.value("backgroundGamepad").toBool(preferences.backgroundGamepad);
+    preferences.reverseScrollDirection = settings.value("reverseScrollDirection").toBool(preferences.reverseScrollDirection);
+    preferences.swapFaceButtons = settings.value("swapFaceButtons").toBool(preferences.swapFaceButtons);
+    preferences.keepAwake = settings.value("keepAwake").toBool(preferences.keepAwake);
+    preferences.enableYUV444 = settings.value("enableYUV444").toBool(preferences.enableYUV444);
 
     m_Facade.preferences()->applyPreferences(preferences, true);
     const QString message = tr("Settings saved.");

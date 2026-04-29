@@ -35,8 +35,38 @@ export interface StreamingSettings {
   height: number;
   fps: number;
   bitrateKbps: number;
+  packetSize: number;
+  audioConfig: number;
+  videoCodecConfig: number;
+  videoDecoderSelection: number;
+  windowMode: number;
+  uiDisplayMode: number;
+  captureSysKeysMode: number;
+  unlockBitrate: boolean;
+  autoAdjustBitrate: boolean;
+  enableVsync: boolean;
+  gameOptimizations: boolean;
+  playAudioOnHost: boolean;
+  multiController: boolean;
+  enableMdns: boolean;
+  quitAppAfter: boolean;
+  absoluteMouseMode: boolean;
+  absoluteTouchMode: boolean;
+  framePacing: boolean;
+  connectionWarnings: boolean;
+  configurationWarnings: boolean;
+  richPresence: boolean;
   enableHdr: boolean;
   gamepadMouse: boolean;
+  detectNetworkBlocking: boolean;
+  showPerformanceOverlay: boolean;
+  swapMouseButtons: boolean;
+  muteOnFocusLoss: boolean;
+  backgroundGamepad: boolean;
+  reverseScrollDirection: boolean;
+  swapFaceButtons: boolean;
+  keepAwake: boolean;
+  enableYUV444: boolean;
 }
 
 export interface DisplayInfo {
