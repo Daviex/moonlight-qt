@@ -48,6 +48,10 @@ private slots:
     void refreshApps();
     void launchSelectedApp();
     void quitRunningApp();
+    void runStartupChecks();
+    void handleHardwareAccelerationChanged();
+    void handleUnmappedGamepadsChanged();
+    void handleUpdateAvailable(const QString& newVersion, const QString& url);
 
 private:
     int selectedHostIndex() const;
@@ -107,4 +111,7 @@ private:
     QCheckBox* m_HdrCheckBox = nullptr;
     QCheckBox* m_Yuv444CheckBox = nullptr;
     int m_CurrentComputerIndex = -1;
+    bool m_StartupChecksStarted = false;
+    bool m_HardwareWarningShown = false;
+    bool m_UnmappedGamepadWarningShown = false;
 };

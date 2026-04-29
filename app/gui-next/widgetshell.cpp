@@ -7,6 +7,7 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QDesktopServices>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -16,6 +17,8 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSpinBox>
+#include <QTimer>
+#include <QUrl>
 #include <QVBoxLayout>
 
 namespace {
@@ -92,6 +95,12 @@ GuiNextWindow::GuiNextWindow(QWidget* parent)
     });
     connect(m_Facade.sessions(), &FrontendSessionCoordinator::quitApplicationRequested,
             qApp, &QCoreApplication::quit);
+    connect(m_Facade.system(), &SystemFacade::hasHardwareAccelerationChanged,
+            this, &GuiNextWindow::handleHardwareAccelerationChanged);
+    connect(m_Facade.system(), &SystemFacade::unmappedGamepadsChanged,
+            this, &GuiNextWindow::handleUnmappedGamepadsChanged);
+    connect(m_Facade.updates(), &UpdateFacade::updateAvailable,
+            this, &GuiNextWindow::handleUpdateAvailable);
 
     m_ComputerManager->startPolling();
     refreshHosts();
@@ -627,6 +636,87 @@ void GuiNextWindow::quitRunningApp()
     }
 }
 
+void GuiNextWindow::runStartupChecks()
+{
+    const FrontendSystemProperties system = m_Facade.system()->properties();
+    if (system.isWow64) {
+        const QMessageBox::StandardButton result = QMessageBox::question(
+            this,
+            tr("Moonlight"),
+            tr("This version of Moonlight isn't optimized for your PC. Please download the '%1' version of Moonlight for the best streaming performance.").arg(system.friendlyNativeArchName),
+            QMessageBox::Ok | QMessageBox::Cancel);
+        if (result == QMessageBox::Ok) {
+            QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/moonlight-stream/moonlight-qt/releases")));
+        }
+    }
+
+    m_Facade.system()->startAsyncLoad();
+    m_Facade.updates()->start();
+}
+
+void GuiNextWindow::handleHardwareAccelerationChanged()
+{
+    if (m_HardwareWarningShown) {
+        return;
+    }
+
+    const FrontendSystemProperties system = m_Facade.system()->properties();
+    const FrontendStreamingPreferences preferences = m_Facade.preferences()->preferences();
+    if (system.hasHardwareAcceleration ||
+            preferences.videoDecoderSelection == StreamingPreferences::VDS_FORCE_SOFTWARE) {
+        return;
+    }
+
+    m_HardwareWarningShown = true;
+    if (system.isRunningXWayland) {
+        QMessageBox::warning(this,
+                             tr("Hardware Acceleration"),
+                             tr("Hardware acceleration doesn't work on XWayland. Continuing on XWayland may result in poor streaming performance. Try running with QT_QPA_PLATFORM=wayland or switch to X11."));
+    }
+    else {
+        QMessageBox::warning(this,
+                             tr("Hardware Acceleration"),
+                             tr("No functioning hardware accelerated video decoder was detected by Moonlight. Your streaming performance may be severely degraded in this configuration."));
+    }
+}
+
+void GuiNextWindow::handleUnmappedGamepadsChanged()
+{
+    if (m_UnmappedGamepadWarningShown) {
+        return;
+    }
+
+    const QString unmappedGamepads = m_Facade.system()->properties().unmappedGamepads;
+    if (unmappedGamepads.isEmpty()) {
+        return;
+    }
+
+    m_UnmappedGamepadWarningShown = true;
+    QMessageBox::warning(this,
+                         tr("Gamepad Mapping"),
+                         tr("Moonlight detected gamepads without a mapping:") + QLatin1String("\n") + unmappedGamepads);
+}
+
+void GuiNextWindow::handleUpdateAvailable(const QString& newVersion, const QString& url)
+{
+    const FrontendSystemProperties system = m_Facade.system()->properties();
+    if (system.hasBrowser) {
+        const QMessageBox::StandardButton result = QMessageBox::question(
+            this,
+            tr("Update Available"),
+            tr("Update available for Moonlight: Version %1").arg(newVersion),
+            QMessageBox::Open | QMessageBox::Cancel);
+        if (result == QMessageBox::Open) {
+            QDesktopServices::openUrl(QUrl(url));
+        }
+    }
+    else {
+        QMessageBox::information(this,
+                                 tr("Update Available"),
+                                 tr("Update available for Moonlight: Version %1").arg(newVersion));
+    }
+}
+
 int GuiNextWindow::selectedHostIndex() const
 {
     QListWidgetItem* item = m_HostList != nullptr ? m_HostList->currentItem() : nullptr;
@@ -681,6 +771,10 @@ void GuiNextWindow::showEvent(QShowEvent* event)
     QMainWindow::showEvent(event);
     m_ControllerAdapter.enable();
     m_ControllerAdapter.notifyWindowFocus(isActiveWindow());
+    if (!m_StartupChecksStarted) {
+        m_StartupChecksStarted = true;
+        QTimer::singleShot(0, this, &GuiNextWindow::runStartupChecks);
+    }
 }
 
 void GuiNextWindow::setStatusText(const QString& text)
