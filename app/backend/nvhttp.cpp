@@ -479,10 +479,9 @@ NvHTTP::openConnection(QUrl baseUrl,
     QUrl url(baseUrl);
     url.setPath("/" + command);
 
-    // Use a common UID for Moonlight clients to allow them to quit
-    // games for each other (otherwise GFE gets screwed up and it requires
-    // manual intervention to solve).
-    url.setQuery("uniqueid=0123456789ABCDEF&uuid=" +
+    // Sunshine validates pairing against the persisted client identity, so
+    // the request unique ID must match the client certificate state.
+    url.setQuery("uniqueid=" + IdentityManager::get()->getUniqueId() + "&uuid=" +
                  QUuid::createUuid().toRfc4122().toHex() +
                  ((arguments != nullptr) ? ("&" + arguments) : ""));
 
