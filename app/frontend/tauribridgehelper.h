@@ -42,6 +42,7 @@ private:
     QJsonObject setAppDirectLaunch(const QJsonObject& payload);
     QJsonObject loadSettings();
     QJsonObject saveSettings(const QJsonObject& payload);
+    QJsonObject defaultBitrate(const QJsonObject& payload);
     QJsonObject systemInfo();
     QJsonObject openUrl(const QJsonObject& payload);
 

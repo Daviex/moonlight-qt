@@ -215,6 +215,13 @@ pub trait MoonlightBackend: Send {
     ) -> Result<CommandStatus, String>;
     fn load_settings(&mut self) -> Result<StreamingSettings, String>;
     fn save_settings(&mut self, settings: StreamingSettings) -> Result<CommandStatus, String>;
+    fn default_bitrate(
+        &mut self,
+        width: u32,
+        height: u32,
+        fps: u32,
+        yuv444: bool,
+    ) -> Result<u32, String>;
     fn system_info(&mut self) -> Result<SystemInfo, String>;
     fn open_url(&mut self, url: &str) -> Result<CommandStatus, String>;
 }

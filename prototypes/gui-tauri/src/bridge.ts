@@ -171,6 +171,8 @@ export const bridge = {
     invoke<CommandStatus>('set_app_direct_launch', { hostId, appId, directLaunch }),
   loadSettings: () => invoke<StreamingSettings>('load_settings'),
   saveSettings: (settings: StreamingSettings) => invoke<CommandStatus>('save_settings', { settings }),
+  defaultBitrate: (width: number, height: number, fps: number, yuv444: boolean) =>
+    invoke<number>('default_bitrate', { width, height, fps, yuv444 }),
   systemInfo: () => invoke<SystemInfo>('system_info'),
   openUrl: (url: string) => invoke<CommandStatus>('open_url', { url }),
   emitControllerAction: (action: ControllerAction) =>

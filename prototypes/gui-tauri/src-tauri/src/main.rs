@@ -533,6 +533,30 @@ fn load_settings(backend: tauri::State<'_, BackendState>) -> Result<StreamingSet
 }
 
 #[tauri::command]
+fn default_bitrate(
+    width: u32,
+    height: u32,
+    fps: u32,
+    yuv444: bool,
+    backend: tauri::State<'_, BackendState>,
+) -> Result<u32, String> {
+    logger::log(format!(
+        "command default_bitrate begin; width={width}; height={height}; fps={fps}; yuv444={yuv444}"
+    ));
+    let result = backend
+        .lock()
+        .map_err(|error| error.to_string())?
+        .default_bitrate(width, height, fps, yuv444);
+    match &result {
+        Ok(bitrate) => logger::log(format!(
+            "command default_bitrate complete; bitrate={bitrate}"
+        )),
+        Err(error) => logger::log(format!("command default_bitrate failed; error={error}")),
+    }
+    result
+}
+
+#[tauri::command]
 fn system_info(backend: tauri::State<'_, BackendState>) -> Result<SystemInfo, String> {
     logger::log("command system_info begin");
     let result = backend
@@ -640,6 +664,7 @@ fn main() {
             set_app_hidden,
             set_app_direct_launch,
             load_settings,
+            default_bitrate,
             system_info,
             open_url,
             save_settings,

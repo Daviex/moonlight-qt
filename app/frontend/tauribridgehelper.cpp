@@ -295,6 +295,9 @@ QJsonObject TauriBridgeHelper::handleCommand(const QJsonObject& command)
     if (commandName == "save_settings") {
         return saveSettings(payload);
     }
+    if (commandName == "default_bitrate") {
+        return defaultBitrate(payload);
+    }
     if (commandName == "system_info") {
         return systemInfo();
     }
@@ -708,6 +711,19 @@ QJsonObject TauriBridgeHelper::saveSettings(const QJsonObject& payload)
     m_Facade.preferences()->applyPreferences(preferences, true);
     const QString message = tr("Settings saved.");
     return resultWithEvent(status(message), bridgeEvent("settingsChanged", message));
+}
+
+QJsonObject TauriBridgeHelper::defaultBitrate(const QJsonObject& payload)
+{
+    const int width = payload.value("width").toInt();
+    const int height = payload.value("height").toInt();
+    const int fps = payload.value("fps").toInt();
+    const bool yuv444 = payload.value("yuv444").toBool();
+    if (width <= 0 || height <= 0 || fps <= 0) {
+        return {{"error", "Width, height, and FPS must be greater than zero."}};
+    }
+
+    return {{"result", m_Facade.preferences()->getDefaultBitrate(width, height, fps, yuv444)}};
 }
 
 QJsonObject TauriBridgeHelper::systemInfo()

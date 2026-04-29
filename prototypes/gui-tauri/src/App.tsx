@@ -490,6 +490,26 @@ export default function App() {
     }
   }, []);
 
+  const applyDefaultBitrate = useCallback(async () => {
+    try {
+      const bitrateKbps = await bridge.defaultBitrate(
+        settings.width,
+        settings.height,
+        settings.fps,
+        settings.enableYUV444,
+      );
+      setSettings((currentSettings) => ({
+        ...currentSettings,
+        bitrateKbps,
+        autoAdjustBitrate: true,
+      }));
+      setStatus(`Default bitrate set to ${(bitrateKbps / 1000).toFixed(1)} Mbps.`);
+    }
+    catch (error) {
+      setStatus(String(error));
+    }
+  }, [settings.enableYUV444, settings.fps, settings.height, settings.width]);
+
   const saveSettings = useCallback(async () => {
     try {
       const result = await bridge.saveSettings(settings);
@@ -1282,6 +1302,9 @@ export default function App() {
             Bitrate (Kbps)
             <input value={settings.bitrateKbps} type="number" min={500} max={500000} onChange={(event) => updateSetting('bitrateKbps', Number(event.target.value))} />
           </label>
+          <div className="setting-action">
+            <button type="button" onClick={applyDefaultBitrate}>Use Default Bitrate</button>
+          </div>
           <label>
             Packet size
             <input value={settings.packetSize} type="number" min={0} max={9000} onChange={(event) => updateSetting('packetSize', Number(event.target.value))} />
@@ -1327,7 +1350,12 @@ export default function App() {
             Unlock bitrate limit
           </label>
           <label className="checkbox">
-            <input checked={settings.autoAdjustBitrate} type="checkbox" onChange={(event) => updateSetting('autoAdjustBitrate', event.target.checked)} />
+            <input checked={settings.autoAdjustBitrate} type="checkbox" onChange={(event) => {
+              updateSetting('autoAdjustBitrate', event.target.checked);
+              if (event.target.checked) {
+                void applyDefaultBitrate();
+              }
+            }} />
             Automatically adjust bitrate
           </label>
           <label className="checkbox">

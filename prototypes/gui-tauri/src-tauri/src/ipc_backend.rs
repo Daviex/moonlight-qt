@@ -420,6 +420,21 @@ impl MoonlightBackend for IpcBackend {
         self.request(IpcCommand::SaveSettings { settings })
     }
 
+    fn default_bitrate(
+        &mut self,
+        width: u32,
+        height: u32,
+        fps: u32,
+        yuv444: bool,
+    ) -> Result<u32, String> {
+        self.request(IpcCommand::DefaultBitrate {
+            width,
+            height,
+            fps,
+            yuv444,
+        })
+    }
+
     fn system_info(&mut self) -> Result<SystemInfo, String> {
         self.request(IpcCommand::SystemInfo)
     }
@@ -489,6 +504,12 @@ enum IpcCommand {
     SaveSettings {
         settings: StreamingSettings,
     },
+    DefaultBitrate {
+        width: u32,
+        height: u32,
+        fps: u32,
+        yuv444: bool,
+    },
     SystemInfo,
     OpenUrl {
         url: String,
@@ -514,6 +535,7 @@ impl IpcCommand {
             Self::SetAppDirectLaunch { .. } => "set_app_direct_launch",
             Self::LoadSettings => "load_settings",
             Self::SaveSettings { .. } => "save_settings",
+            Self::DefaultBitrate { .. } => "default_bitrate",
             Self::SystemInfo => "system_info",
             Self::OpenUrl { .. } => "open_url",
         }
