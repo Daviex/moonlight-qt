@@ -6,6 +6,8 @@
 #include "streaming/qtwidgetwindowcontext.h"
 
 #include <QDesktopServices>
+#include <QCoreApplication>
+#include <QEventLoop>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -17,6 +19,11 @@
 #include <QWidget>
 
 #include <cmath>
+#ifndef Q_OS_WIN
+#include <cerrno>
+#include <sys/select.h>
+#include <unistd.h>
+#endif
 #include <limits>
 
 static bool validateIntegerSetting(const QJsonObject& settings,
@@ -257,6 +264,49 @@ static bool writeBridgeLine(HANDLE outputHandle, const QByteArray& line)
 }
 #endif
 
+#ifndef Q_OS_WIN
+static bool readBridgeLine(QByteArray& line)
+{
+    line.clear();
+
+    char ch = 0;
+    while (true) {
+        fd_set readSet;
+        FD_ZERO(&readSet);
+        FD_SET(STDIN_FILENO, &readSet);
+
+        timeval timeout;
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 10000;
+
+        int ready = select(STDIN_FILENO + 1, &readSet, nullptr, nullptr, &timeout);
+        if (ready < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return !line.isEmpty();
+        }
+        if (ready == 0) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            continue;
+        }
+
+        const ssize_t bytesRead = read(STDIN_FILENO, &ch, 1);
+        if (bytesRead <= 0) {
+            break;
+        }
+        if (ch == '\n') {
+            break;
+        }
+        if (ch != '\r') {
+            line.append(ch);
+        }
+    }
+
+    return !line.isEmpty();
+}
+#endif
+
 TauriBridgeHelper::TauriBridgeHelper()
     : m_ComputerManager(StreamingPreferences::get())
 {
@@ -296,6 +346,22 @@ TauriBridgeHelper::TauriBridgeHelper()
                 tr("Network test completed with result %1.").arg(result) :
                 tr("Network test completed with result %1. Blocked ports: %2").arg(result).arg(blockedPorts);
             writeEventFrame(bridgeEvent("status", message));
+        }
+    });
+    QObject::connect(&m_ComputerManager, &ComputerManager::computerAddCompleted,
+                     [this](const QVariant& success, const QVariant& detectedPortBlocking) {
+        if (!m_SuppressFacadeEvents) {
+            QString message;
+            if (success.toBool()) {
+                message = tr("Host add completed.");
+            }
+            else if (detectedPortBlocking.toBool()) {
+                message = tr("Failed to add host. The network may be blocking Moonlight ports.");
+            }
+            else {
+                message = tr("Failed to add host. Check the IP address and make sure Sunshine or GameStream is running.");
+            }
+            writeEventFrame(bridgeEvent(success.toBool() ? "hostChanged" : "status", message));
         }
     });
 
@@ -437,11 +503,11 @@ int TauriBridgeHelper::run()
         }
     }
 #else
-    QTextStream input(stdin, QIODevice::ReadOnly);
     QTextStream output(stdout, QIODevice::WriteOnly);
 
-    while (!input.atEnd()) {
-        const QVector<QByteArray> responses = processLine(input.readLine().toUtf8());
+    QByteArray line;
+    while (readBridgeLine(line)) {
+        const QVector<QByteArray> responses = processLine(line);
         for (const QByteArray& response : responses) {
             if (!response.isEmpty()) {
                 output << QString::fromUtf8(response) << Qt::endl;

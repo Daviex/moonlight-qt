@@ -453,13 +453,16 @@ export default function App() {
 
     setDialog({ ...dialog, submitting: true });
     try {
+      writeDebugLog(`submitAddHost begin; address=${address}`);
       const result = await bridge.addHost(address);
+      writeDebugLog(`submitAddHost success; message=${result.message}`);
       setStatus(result.message);
       setDialog({ kind: 'none' });
       await refreshHosts();
     }
     catch (error) {
       const message = String(error);
+      writeDebugLog(`submitAddHost failed; error=${message}`);
       setStatus(message);
       setDialog({ ...dialog, error: message, submitting: false });
     }
