@@ -63,7 +63,7 @@ The Rust side now separates the production command surface from the in-memory mo
 3. `src-tauri\src\ipc_backend.rs` contains the selected production bridge scaffold. It can spawn a native helper process and forward commands over a line-delimited JSON protocol.
 4. `src-tauri\src\main.rs` owns the Tauri commands, event emission, and backend registration.
 
-The default backend remains the in-memory mock so the prototype launches without extra native processes. To exercise the IPC bridge scaffold later, run the Tauri shell with:
+The default dev backend remains the in-memory mock so the prototype launches without extra native processes. A staged package launched directly from `build\tauri-prototype\MoonlightTauri.exe` auto-selects the IPC backend when `native\Moonlight.exe` is present beside it. To force the IPC bridge from an unstaged dev build, run the Tauri shell with:
 
 ```powershell
 $env:MOONLIGHT_TAURI_BACKEND = 'ipc'

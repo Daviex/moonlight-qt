@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
@@ -27,6 +28,12 @@ pub fn ipc_backend_requested() -> bool {
         .unwrap_or(false)
 }
 
+pub fn mock_backend_requested() -> bool {
+    env::var(BACKEND_MODE_ENV)
+        .map(|value| value.eq_ignore_ascii_case("mock"))
+        .unwrap_or(false)
+}
+
 pub struct IpcBackend {
     process: Child,
     helper_path: String,
@@ -41,6 +48,33 @@ impl IpcBackend {
             format!("{HELPER_PATH_ENV} must point to the native helper executable.")
         })?;
         logger::log(format!("ipc backend requested; helper_path={helper_path}"));
+        Self::from_helper_path(helper_path, app_handle)
+    }
+
+    pub fn staged_helper_path() -> Option<String> {
+        let helper_name = if cfg!(target_os = "windows") {
+            "Moonlight.exe"
+        } else {
+            "Moonlight"
+        };
+        let helper_path: PathBuf = env::current_exe()
+            .ok()?
+            .parent()?
+            .join("native")
+            .join(helper_name);
+
+        helper_path
+            .is_file()
+            .then(|| helper_path.to_string_lossy().into_owned())
+    }
+
+    pub fn from_helper_path(
+        helper_path: String,
+        app_handle: tauri::AppHandle,
+    ) -> Result<Self, String> {
+        logger::log(format!(
+            "creating IPC backend with helper_path={helper_path}"
+        ));
         Self::spawn(helper_path, app_handle)
     }
 
