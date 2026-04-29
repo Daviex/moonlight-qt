@@ -2,6 +2,7 @@
 
 #include "backend/computermanager.h"
 #include "frontend/applicationfacade.h"
+#include "frontend/applistfacade.h"
 #include "frontend/controllernavigation.h"
 
 #include <QJsonObject>
@@ -10,7 +11,6 @@
 #include <QPointer>
 #include <QScopedPointer>
 
-class AppListFacade;
 class QtWidgetWindowContext;
 class SdlControllerNavigation;
 class Session;
@@ -49,6 +49,7 @@ private:
     QJsonObject bridgeEvent(const QString& kind, const QString& message, const QString& hostId = QString(), const QString& appId = QString()) const;
     void writeEventFrame(const QJsonObject& event) const;
     void setControllerNavigationEnabled(bool enabled);
+    void observeAppList(int hostIndex, bool showHiddenGames);
     QString controllerActionName(ControllerNavigationAction action) const;
     QJsonObject hostToJson(const FrontendComputer& computer, int index) const;
     QJsonObject appToJson(const FrontendApp& app) const;
@@ -61,7 +62,10 @@ private:
     ComputerManager m_ComputerManager;
     FrontendApplicationFacade m_Facade;
     QScopedPointer<SdlControllerNavigation> m_ControllerNavigation;
+    QScopedPointer<AppListFacade> m_ObservedAppList;
+    QString m_ObservedAppHostId;
     QScopedPointer<QWidget> m_WindowContextSource;
     QScopedPointer<QtWidgetWindowContext> m_WindowContext;
     QPointer<Session> m_ActiveSession;
+    bool m_SuppressFacadeEvents = false;
 };

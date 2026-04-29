@@ -65,6 +65,39 @@ TauriBridgeHelper::TauriBridgeHelper()
     m_ControllerNavigation->notifyWindowFocus(true);
     m_ControllerNavigation->enable();
 
+    QObject::connect(m_Facade.computers(), &ComputerListFacade::computersReset,
+                     [this]() {
+        if (!m_SuppressFacadeEvents) {
+            writeEventFrame(bridgeEvent("hostChanged", tr("Host list changed.")));
+        }
+    });
+    QObject::connect(m_Facade.computers(), &ComputerListFacade::computerChanged,
+                     [this](int computerIndex) {
+        if (!m_SuppressFacadeEvents) {
+            writeEventFrame(bridgeEvent("hostChanged", tr("Host changed."), QString::number(computerIndex)));
+        }
+    });
+    QObject::connect(m_Facade.computers(), &ComputerListFacade::pairingCompleted,
+                     [this](const QString& error) {
+        if (!m_SuppressFacadeEvents) {
+            if (error.isEmpty()) {
+                writeEventFrame(bridgeEvent("hostChanged", tr("Pairing completed.")));
+            }
+            else {
+                writeEventFrame(bridgeEvent("status", error));
+            }
+        }
+    });
+    QObject::connect(m_Facade.computers(), &ComputerListFacade::connectionTestCompleted,
+                     [this](int result, const QString& blockedPorts) {
+        if (!m_SuppressFacadeEvents) {
+            const QString message = blockedPorts.isEmpty() ?
+                tr("Network test completed with result %1.").arg(result) :
+                tr("Network test completed with result %1. Blocked ports: %2").arg(result).arg(blockedPorts);
+            writeEventFrame(bridgeEvent("status", message));
+        }
+    });
+
     QObject::connect(m_Facade.sessions(), &FrontendSessionCoordinator::stageTextChanged,
                      [this](const QString& stageText) {
         writeEventFrame(bridgeEvent("sessionChanged", stageText));
@@ -127,7 +160,9 @@ int TauriBridgeHelper::run()
         }
         else {
             const QJsonObject command = request.value("command").toObject();
+            m_SuppressFacadeEvents = true;
             const QJsonObject result = handleCommand(command);
+            m_SuppressFacadeEvents = false;
             if (result.contains("error")) {
                 response.insert("error", result.value("error").toString());
             }
@@ -280,13 +315,13 @@ QJsonObject TauriBridgeHelper::listApps(const QJsonObject& payload)
     }
 
     const bool showHidden = payload.value("show_hidden").toBool();
-    QScopedPointer<AppListFacade> appList(m_Facade.createAppList(hostIndex, showHidden));
-    if (appList.isNull()) {
+    observeAppList(hostIndex, showHidden);
+    if (m_ObservedAppList.isNull()) {
         return {{"error", "Unable to create app list."}};
     }
 
     QJsonArray apps;
-    const QVector<FrontendApp> snapshot = appList->apps();
+    const QVector<FrontendApp> snapshot = m_ObservedAppList->apps();
     for (const FrontendApp& app : snapshot) {
         apps.append(appToJson(app));
     }
@@ -555,6 +590,46 @@ void TauriBridgeHelper::setControllerNavigationEnabled(bool enabled)
     else {
         m_ControllerNavigation->disable();
     }
+}
+
+void TauriBridgeHelper::observeAppList(int hostIndex, bool showHiddenGames)
+{
+    m_ObservedAppHostId = QString::number(hostIndex);
+    m_ObservedAppList.reset(m_Facade.createAppList(hostIndex, showHiddenGames));
+    if (m_ObservedAppList.isNull()) {
+        return;
+    }
+
+    QObject::connect(m_ObservedAppList.data(), &AppListFacade::appsReset,
+                     [this]() {
+        if (!m_SuppressFacadeEvents) {
+            writeEventFrame(bridgeEvent("appChanged", tr("App list changed."), m_ObservedAppHostId));
+        }
+    });
+    QObject::connect(m_ObservedAppList.data(), &AppListFacade::appChanged,
+                     [this](int appIndex) {
+        if (m_SuppressFacadeEvents || m_ObservedAppList.isNull()) {
+            return;
+        }
+
+        const FrontendApp app = m_ObservedAppList->appAt(appIndex);
+        writeEventFrame(bridgeEvent("appChanged", tr("App changed."), m_ObservedAppHostId, QString::number(app.appId)));
+    });
+    QObject::connect(m_ObservedAppList.data(), &AppListFacade::appBoxArtChanged,
+                     [this](int appIndex, const QUrl&) {
+        if (m_SuppressFacadeEvents || m_ObservedAppList.isNull()) {
+            return;
+        }
+
+        const FrontendApp app = m_ObservedAppList->appAt(appIndex);
+        writeEventFrame(bridgeEvent("appChanged", tr("App box art changed."), m_ObservedAppHostId, QString::number(app.appId)));
+    });
+    QObject::connect(m_ObservedAppList.data(), &AppListFacade::computerLost,
+                     [this]() {
+        if (!m_SuppressFacadeEvents) {
+            writeEventFrame(bridgeEvent("hostChanged", tr("Selected host is no longer available."), m_ObservedAppHostId));
+        }
+    });
 }
 
 QString TauriBridgeHelper::controllerActionName(ControllerNavigationAction action) const
