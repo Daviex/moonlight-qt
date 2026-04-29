@@ -70,7 +70,13 @@ static bool validateStreamingSettings(const QJsonObject& settings, QString& erro
         validateIntegerSetting(settings, QStringLiteral("height"), QStringLiteral("Height"), 256, 8192, error) &&
         validateIntegerSetting(settings, QStringLiteral("fps"), QStringLiteral("FPS"), 10, 9999, error) &&
         validateIntegerSetting(settings, QStringLiteral("bitrateKbps"), QStringLiteral("Bitrate"), 500, 500000, error) &&
-        validateIntegerSetting(settings, QStringLiteral("packetSize"), QStringLiteral("Packet size"), 0, 9000, error);
+        validateIntegerSetting(settings, QStringLiteral("packetSize"), QStringLiteral("Packet size"), 0, 9000, error) &&
+        validateIntegerSetting(settings, QStringLiteral("audioConfig"), QStringLiteral("Audio configuration"), 0, 2, error) &&
+        validateIntegerSetting(settings, QStringLiteral("videoCodecConfig"), QStringLiteral("Video codec"), 0, 4, error) &&
+        validateIntegerSetting(settings, QStringLiteral("videoDecoderSelection"), QStringLiteral("Video decoder"), 0, 2, error) &&
+        validateIntegerSetting(settings, QStringLiteral("windowMode"), QStringLiteral("Stream window mode"), 0, 2, error) &&
+        validateIntegerSetting(settings, QStringLiteral("uiDisplayMode"), QStringLiteral("UI startup mode"), 0, 2, error) &&
+        validateIntegerSetting(settings, QStringLiteral("captureSysKeysMode"), QStringLiteral("Capture system keys mode"), 0, 2, error);
 }
 
 static bool validateDefaultBitratePayload(const QJsonObject& payload, QString& error)
