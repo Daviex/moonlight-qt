@@ -293,6 +293,32 @@ void GuiNextWindow::buildSettingsPage()
     addComboItem(m_CaptureSysKeysComboBox, tr("Off"), StreamingPreferences::CSK_OFF);
     addComboItem(m_CaptureSysKeysComboBox, tr("Fullscreen only"), StreamingPreferences::CSK_FULLSCREEN);
     addComboItem(m_CaptureSysKeysComboBox, tr("Always"), StreamingPreferences::CSK_ALWAYS);
+    m_LanguageComboBox = new QComboBox(page);
+    addComboItem(m_LanguageComboBox, tr("Automatic"), StreamingPreferences::LANG_AUTO);
+    addComboItem(m_LanguageComboBox, QStringLiteral("Deutsch"), StreamingPreferences::LANG_DE);
+    addComboItem(m_LanguageComboBox, QStringLiteral("English"), StreamingPreferences::LANG_EN);
+    addComboItem(m_LanguageComboBox, QStringLiteral("Français"), StreamingPreferences::LANG_FR);
+    addComboItem(m_LanguageComboBox, QStringLiteral("简体中文"), StreamingPreferences::LANG_ZH_CN);
+    addComboItem(m_LanguageComboBox, QStringLiteral("Norwegian Bokmål"), StreamingPreferences::LANG_NB_NO);
+    addComboItem(m_LanguageComboBox, QStringLiteral("русский"), StreamingPreferences::LANG_RU);
+    addComboItem(m_LanguageComboBox, QStringLiteral("Español"), StreamingPreferences::LANG_ES);
+    addComboItem(m_LanguageComboBox, QStringLiteral("日本語"), StreamingPreferences::LANG_JA);
+    addComboItem(m_LanguageComboBox, QStringLiteral("Tiếng Việt"), StreamingPreferences::LANG_VI);
+    addComboItem(m_LanguageComboBox, QStringLiteral("ภาษาไทย"), StreamingPreferences::LANG_TH);
+    addComboItem(m_LanguageComboBox, QStringLiteral("한국어"), StreamingPreferences::LANG_KO);
+    addComboItem(m_LanguageComboBox, QStringLiteral("Magyar"), StreamingPreferences::LANG_HU);
+    addComboItem(m_LanguageComboBox, QStringLiteral("Nederlands"), StreamingPreferences::LANG_NL);
+    addComboItem(m_LanguageComboBox, QStringLiteral("Svenska"), StreamingPreferences::LANG_SV);
+    addComboItem(m_LanguageComboBox, QStringLiteral("Türkçe"), StreamingPreferences::LANG_TR);
+    addComboItem(m_LanguageComboBox, QStringLiteral("繁體中文"), StreamingPreferences::LANG_ZH_TW);
+    addComboItem(m_LanguageComboBox, QStringLiteral("Português"), StreamingPreferences::LANG_PT);
+    addComboItem(m_LanguageComboBox, QStringLiteral("Português do Brasil"), StreamingPreferences::LANG_PT_BR);
+    addComboItem(m_LanguageComboBox, QStringLiteral("Ελληνικά"), StreamingPreferences::LANG_EL);
+    addComboItem(m_LanguageComboBox, QStringLiteral("Italiano"), StreamingPreferences::LANG_IT);
+    addComboItem(m_LanguageComboBox, QStringLiteral("Język polski"), StreamingPreferences::LANG_PL);
+    addComboItem(m_LanguageComboBox, QStringLiteral("Čeština"), StreamingPreferences::LANG_CS);
+    addComboItem(m_LanguageComboBox, QStringLiteral("Български"), StreamingPreferences::LANG_BG);
+    addComboItem(m_LanguageComboBox, QStringLiteral("தமிழ்"), StreamingPreferences::LANG_TA);
     m_UnlockBitrateCheckBox = new QCheckBox(page);
     m_AutoAdjustBitrateCheckBox = new QCheckBox(page);
     m_VsyncCheckBox = new QCheckBox(page);
@@ -329,6 +355,7 @@ void GuiNextWindow::buildSettingsPage()
     form->addRow(tr("Stream window mode"), m_WindowModeComboBox);
     form->addRow(tr("UI startup mode"), m_UiModeComboBox);
     form->addRow(tr("Capture system keys"), m_CaptureSysKeysComboBox);
+    form->addRow(tr("Language"), m_LanguageComboBox);
     form->addRow(tr("Unlock bitrate limit"), m_UnlockBitrateCheckBox);
     form->addRow(tr("Automatically adjust bitrate"), m_AutoAdjustBitrateCheckBox);
     form->addRow(tr("V-Sync"), m_VsyncCheckBox);
@@ -704,6 +731,7 @@ void GuiNextWindow::showSettings()
     setComboValue(m_WindowModeComboBox, preferences.windowMode);
     setComboValue(m_UiModeComboBox, preferences.uiDisplayMode);
     setComboValue(m_CaptureSysKeysComboBox, preferences.captureSysKeysMode);
+    setComboValue(m_LanguageComboBox, preferences.language);
     m_UnlockBitrateCheckBox->setChecked(preferences.unlockBitrate);
     m_AutoAdjustBitrateCheckBox->setChecked(preferences.autoAdjustBitrate);
     m_VsyncCheckBox->setChecked(preferences.enableVsync);
@@ -736,6 +764,7 @@ void GuiNextWindow::showSettings()
 void GuiNextWindow::saveSettings()
 {
     FrontendStreamingPreferences preferences = m_Facade.preferences()->preferences();
+    const int previousLanguage = preferences.language;
     preferences.width = m_WidthSpinBox->value();
     preferences.height = m_HeightSpinBox->value();
     preferences.fps = m_FpsSpinBox->value();
@@ -747,6 +776,7 @@ void GuiNextWindow::saveSettings()
     preferences.windowMode = comboValue(m_WindowModeComboBox);
     preferences.uiDisplayMode = comboValue(m_UiModeComboBox);
     preferences.captureSysKeysMode = comboValue(m_CaptureSysKeysComboBox);
+    preferences.language = comboValue(m_LanguageComboBox);
     preferences.unlockBitrate = m_UnlockBitrateCheckBox->isChecked();
     preferences.autoAdjustBitrate = m_AutoAdjustBitrateCheckBox->isChecked();
     preferences.enableVsync = m_VsyncCheckBox->isChecked();
@@ -773,6 +803,12 @@ void GuiNextWindow::saveSettings()
     preferences.enableHdr = m_HdrCheckBox->isChecked();
     preferences.enableYUV444 = m_Yuv444CheckBox->isChecked();
     m_Facade.preferences()->applyPreferences(preferences, true);
+    if (preferences.language != previousLanguage) {
+        m_Facade.preferences()->retranslate();
+        QMessageBox::information(this,
+                                 tr("Language"),
+                                 tr("Restart Moonlight for the language change to fully take effect."));
+    }
     showHostsPage();
 }
 

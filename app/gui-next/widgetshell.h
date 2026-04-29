@@ -97,6 +97,7 @@ private:
     QComboBox* m_WindowModeComboBox = nullptr;
     QComboBox* m_UiModeComboBox = nullptr;
     QComboBox* m_CaptureSysKeysComboBox = nullptr;
+    QComboBox* m_LanguageComboBox = nullptr;
     QCheckBox* m_UnlockBitrateCheckBox = nullptr;
     QCheckBox* m_AutoAdjustBitrateCheckBox = nullptr;
     QCheckBox* m_VsyncCheckBox = nullptr;
