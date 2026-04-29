@@ -18,7 +18,22 @@ export interface HostDetails {
   status: HostStatus;
   paired: boolean;
   running: boolean;
+  wakeable: boolean;
+  serverSupported: boolean;
+  uuid: string;
+  localAddress: string;
+  remoteAddress: string;
+  ipv6Address: string;
+  manualAddress: string;
+  macAddress: string;
+  pairState: string;
+  runningGameId: number;
+  httpsPort: number;
+  appVersion: string;
+  gfeVersion: string;
   serverVersion: string;
+  gpuModel: string;
+  details: string;
 }
 
 export interface AppEntry {

@@ -69,6 +69,18 @@ FrontendComputer ComputerListFacade::snapshotComputer(NvComputer* computer) cons
     snapshot.wakeable = !computer->macAddress.isEmpty();
     snapshot.statusUnknown = computer->state == NvComputer::CS_UNKNOWN;
     snapshot.serverSupported = computer->isSupportedServerVersion;
+    snapshot.activeAddress = computer->activeAddress.toString();
+    snapshot.uuid = computer->uuid;
+    snapshot.localAddress = computer->localAddress.toString();
+    snapshot.remoteAddress = computer->remoteAddress.toString();
+    snapshot.ipv6Address = computer->ipv6Address.toString();
+    snapshot.manualAddress = computer->manualAddress.toString();
+    snapshot.macAddress = computer->macAddress.isEmpty() ? tr("Unknown") : QString(computer->macAddress.toHex(':'));
+    snapshot.runningGameId = computer->currentGameId;
+    snapshot.httpsPort = computer->activeHttpsPort;
+    snapshot.appVersion = computer->appVersion;
+    snapshot.gfeVersion = computer->gfeVersion;
+    snapshot.gpuModel = computer->gpuModel;
 
     QString state;
     switch (computer->state) {
@@ -95,6 +107,7 @@ FrontendComputer ComputerListFacade::snapshotComputer(NvComputer* computer) cons
         pairState = tr("Unknown");
         break;
     }
+    snapshot.pairState = pairState;
 
     snapshot.details = tr("Name: %1").arg(computer->name) + '\n' +
                        tr("Status: %1").arg(state) + '\n' +

@@ -374,14 +374,30 @@ QJsonObject TauriBridgeHelper::hostDetails(const QJsonObject& payload)
     }
 
     const FrontendComputer computer = m_Facade.computers()->computerAt(hostIndex);
+    const bool online = computer.online;
     return {{"result", QJsonObject{
-                           {"name", computer.name},
-                           {"address", hostAddress(computer)},
-                           {"status", hostStatus(computer)},
-                           {"paired", computer.paired},
-                           {"running", computer.busy},
-                           {"serverVersion", QString()},
-                       }}};
+                            {"name", computer.name},
+                            {"address", hostAddress(computer)},
+                            {"status", hostStatus(computer)},
+                            {"paired", computer.paired},
+                            {"running", computer.busy},
+                            {"wakeable", computer.wakeable},
+                            {"serverSupported", computer.serverSupported},
+                            {"uuid", computer.uuid},
+                            {"localAddress", computer.localAddress == QStringLiteral("<NULL>") ? QString() : computer.localAddress},
+                            {"remoteAddress", computer.remoteAddress == QStringLiteral("<NULL>") ? QString() : computer.remoteAddress},
+                            {"ipv6Address", computer.ipv6Address == QStringLiteral("<NULL>") ? QString() : computer.ipv6Address},
+                            {"manualAddress", computer.manualAddress == QStringLiteral("<NULL>") ? QString() : computer.manualAddress},
+                            {"macAddress", computer.macAddress},
+                            {"pairState", computer.pairState},
+                            {"runningGameId", online ? computer.runningGameId : 0},
+                            {"httpsPort", online ? computer.httpsPort : 0},
+                            {"appVersion", computer.appVersion},
+                            {"gfeVersion", computer.gfeVersion},
+                            {"serverVersion", computer.appVersion.isEmpty() ? computer.gfeVersion : computer.appVersion},
+                            {"gpuModel", computer.gpuModel},
+                            {"details", computer.details},
+                        }}};
 }
 
 QJsonObject TauriBridgeHelper::listApps(const QJsonObject& payload)
@@ -967,6 +983,10 @@ QString TauriBridgeHelper::hostStatus(const FrontendComputer& computer) const
 
 QString TauriBridgeHelper::hostAddress(const FrontendComputer& computer) const
 {
+    if (!computer.activeAddress.isEmpty() && computer.activeAddress != QStringLiteral("<NULL>")) {
+        return computer.activeAddress;
+    }
+
     const QString prefix = tr("Active Address: ");
     const QStringList lines = computer.details.split('\n');
     for (const QString& line : lines) {

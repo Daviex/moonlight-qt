@@ -205,7 +205,22 @@ impl MoonlightBackend for MockBackend {
             status: host.status.clone(),
             paired: host.paired,
             running: host.running,
+            wakeable: true,
+            server_supported: true,
+            uuid: format!("mock-{}", host.id),
+            local_address: host.address.clone(),
+            remote_address: String::new(),
+            ipv6_address: String::new(),
+            manual_address: host.address.clone(),
+            mac_address: "00:11:22:33:44:55".into(),
+            pair_state: if host.paired { "Paired" } else { "Unpaired" }.into(),
+            running_game_id: if host.running { 1 } else { 0 },
+            https_port: 47984,
+            app_version: "Mock Sunshine 0.0".into(),
+            gfe_version: String::new(),
             server_version: "Mock Sunshine 0.0".into(),
+            gpu_model: "Mock GPU".into(),
+            details: format!("Name: {}\nActive Address: {}", host.name, host.address),
         })
     }
 

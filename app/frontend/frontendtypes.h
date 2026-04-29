@@ -10,6 +10,19 @@ struct FrontendComputer
 {
     QString name;
     QString details;
+    QString activeAddress;
+    QString uuid;
+    QString localAddress;
+    QString remoteAddress;
+    QString ipv6Address;
+    QString manualAddress;
+    QString macAddress;
+    QString pairState;
+    QString appVersion;
+    QString gfeVersion;
+    QString gpuModel;
+    int runningGameId = 0;
+    int httpsPort = 0;
     bool online = false;
     bool paired = false;
     bool busy = false;

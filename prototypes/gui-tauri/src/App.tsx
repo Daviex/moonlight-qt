@@ -998,8 +998,36 @@ export default function App() {
                 <dd>{dialog.details.paired ? 'Yes' : 'No'}</dd>
                 <dt>Running</dt>
                 <dd>{dialog.details.running ? 'Yes' : 'No'}</dd>
+                <dt>Wakeable</dt>
+                <dd>{dialog.details.wakeable ? 'Yes' : 'No'}</dd>
+                <dt>Server supported</dt>
+                <dd>{dialog.details.serverSupported ? 'Yes' : 'No'}</dd>
                 <dt>Server version</dt>
                 <dd>{dialog.details.serverVersion || 'Unknown'}</dd>
+                <dt>App version</dt>
+                <dd>{dialog.details.appVersion || 'Unknown'}</dd>
+                <dt>GFE version</dt>
+                <dd>{dialog.details.gfeVersion || 'Unknown'}</dd>
+                <dt>GPU</dt>
+                <dd>{dialog.details.gpuModel || 'Unknown'}</dd>
+                <dt>UUID</dt>
+                <dd>{dialog.details.uuid || 'Unknown'}</dd>
+                <dt>Local address</dt>
+                <dd>{dialog.details.localAddress || 'Unknown'}</dd>
+                <dt>Remote address</dt>
+                <dd>{dialog.details.remoteAddress || 'Unknown'}</dd>
+                <dt>IPv6 address</dt>
+                <dd>{dialog.details.ipv6Address || 'Unknown'}</dd>
+                <dt>Manual address</dt>
+                <dd>{dialog.details.manualAddress || 'Unknown'}</dd>
+                <dt>MAC address</dt>
+                <dd>{dialog.details.macAddress || 'Unknown'}</dd>
+                <dt>Pair state</dt>
+                <dd>{dialog.details.pairState || 'Unknown'}</dd>
+                <dt>Running game ID</dt>
+                <dd>{dialog.details.runningGameId || 'None'}</dd>
+                <dt>HTTPS port</dt>
+                <dd>{dialog.details.httpsPort || 'Unknown'}</dd>
               </dl>
               <div className="button-row">
                 <button type="button" onClick={closeDialog}>Close</button>

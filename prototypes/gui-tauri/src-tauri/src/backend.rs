@@ -19,7 +19,22 @@ pub struct HostDetails {
     pub status: HostStatus,
     pub paired: bool,
     pub running: bool,
+    pub wakeable: bool,
+    pub server_supported: bool,
+    pub uuid: String,
+    pub local_address: String,
+    pub remote_address: String,
+    pub ipv6_address: String,
+    pub manual_address: String,
+    pub mac_address: String,
+    pub pair_state: String,
+    pub running_game_id: i32,
+    pub https_port: i32,
+    pub app_version: String,
+    pub gfe_version: String,
     pub server_version: String,
+    pub gpu_model: String,
+    pub details: String,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
