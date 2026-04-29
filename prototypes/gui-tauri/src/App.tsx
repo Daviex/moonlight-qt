@@ -200,6 +200,14 @@ function validateSettings(settings: StreamingSettings) {
     });
 }
 
+function canPairHost(host: HostEntry) {
+  return host.status === 'Online' && !host.paired && host.serverSupported;
+}
+
+function canWakeHost(host: HostEntry) {
+  return host.status !== 'Online' && host.wakeable;
+}
+
 function activeDialogRoot(): HTMLElement | null {
   return document.getElementById('active-dialog');
 }
@@ -495,6 +503,19 @@ export default function App() {
   }, []);
 
   const pairHost = useCallback(async (host: HostEntry) => {
+    if (!canPairHost(host)) {
+      if (host.paired) {
+        setStatus(`${host.name} is already paired.`);
+      }
+      else if (host.status !== 'Online') {
+        setStatus(`${host.name} must be online before pairing.`);
+      }
+      else {
+        setStatus(`${host.name} reports an unsupported server version.`);
+      }
+      return;
+    }
+
     try {
       const challenge = await bridge.pairHost(host.id);
       setStatus(challenge.message);
@@ -1315,27 +1336,31 @@ export default function App() {
             </div>
           )}
           <div className="card-grid">
-            {hosts.map((host) => (
-              <article key={host.id} className={`host-card ${host.id === selectedHostId ? 'selected' : ''}`}>
-                <button type="button" className="card-primary" onClick={() => openApps(host)}>
-                  <span className="title">{host.name}</span>
-                  <span>{host.status}</span>
-                  <span>{host.paired ? 'Paired' : 'Pairing required'}</span>
-                  {host.running && <span className="tag">In Game</span>}
-                  {host.wakeable && <span className="tag">Wakeable</span>}
-                  {!host.serverSupported && <span className="tag muted">Unsupported Server</span>}
-                </button>
-                <div className="card-actions">
-                  <button type="button" onClick={() => pairHost(host)}>Pair</button>
-                  {host.running && <button type="button" onClick={() => resumeSession(host)}>Resume</button>}
-                  <button type="button" disabled={!host.wakeable} onClick={() => runHostCommand(() => bridge.wakeHost(host.id))}>Wake</button>
-                  <button type="button" onClick={() => showDetails(host)}>Details</button>
-                  <button type="button" onClick={() => testNetwork(host)}>Test</button>
-                  <button type="button" onClick={() => openRenameHostDialog(host)}>Rename</button>
-                  <button type="button" onClick={() => openDeleteHostDialog(host)}>Delete</button>
-                </div>
-              </article>
-            ))}
+            {hosts.map((host) => {
+              const pairEnabled = canPairHost(host);
+              const wakeEnabled = canWakeHost(host);
+              return (
+                <article key={host.id} className={`host-card ${host.id === selectedHostId ? 'selected' : ''}`}>
+                  <button type="button" className="card-primary" onClick={() => openApps(host)}>
+                    <span className="title">{host.name}</span>
+                    <span>{host.status}</span>
+                    <span>{host.paired ? 'Paired' : 'Pairing required'}</span>
+                    {host.running && <span className="tag">In Game</span>}
+                    {host.wakeable && <span className="tag">Wakeable</span>}
+                    {!host.serverSupported && <span className="tag muted">Unsupported Server</span>}
+                  </button>
+                  <div className="card-actions">
+                    <button type="button" disabled={!pairEnabled} onClick={() => pairHost(host)}>Pair</button>
+                    {host.running && <button type="button" onClick={() => resumeSession(host)}>Resume</button>}
+                    <button type="button" disabled={!wakeEnabled} onClick={() => runHostCommand(() => bridge.wakeHost(host.id))}>Wake</button>
+                    <button type="button" onClick={() => showDetails(host)}>Details</button>
+                    <button type="button" onClick={() => testNetwork(host)}>Test</button>
+                    <button type="button" onClick={() => openRenameHostDialog(host)}>Rename</button>
+                    <button type="button" onClick={() => openDeleteHostDialog(host)}>Delete</button>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         </section>
       )}
@@ -1389,7 +1414,9 @@ export default function App() {
               )}
               <div className="button-row">
                 {selectedHost && !selectedHost.paired && (
-                  <button type="button" onClick={() => pairHost(selectedHost)}>Pair Host</button>
+                  <button type="button" disabled={!canPairHost(selectedHost)} onClick={() => pairHost(selectedHost)}>
+                    Pair Host
+                  </button>
                 )}
                 {selectedHost?.paired && (
                   <button type="button" onClick={() => void refreshApps(selectedHost.id, showHiddenApps)}>
