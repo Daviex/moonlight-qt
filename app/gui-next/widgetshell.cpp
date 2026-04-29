@@ -175,6 +175,8 @@ void GuiNextWindow::buildHostPage()
     auto deleteButton = new QPushButton(tr("Delete"), page);
     auto helpButton = new QPushButton(tr("Help"), page);
     auto discordButton = new QPushButton(tr("Discord"), page);
+    m_UpdateButton = new QPushButton(page);
+    m_UpdateButton->setVisible(false);
     auto settingsButton = new QPushButton(tr("Settings"), page);
     buttons->addWidget(refreshButton);
     buttons->addWidget(addButton);
@@ -187,6 +189,7 @@ void GuiNextWindow::buildHostPage()
     buttons->addWidget(renameButton);
     buttons->addWidget(deleteButton);
     buttons->addStretch();
+    buttons->addWidget(m_UpdateButton);
     buttons->addWidget(discordButton);
     buttons->addWidget(helpButton);
     buttons->addWidget(settingsButton);
@@ -207,6 +210,7 @@ void GuiNextWindow::buildHostPage()
     connect(deleteButton, &QPushButton::clicked, this, &GuiNextWindow::deleteSelectedHost);
     connect(helpButton, &QPushButton::clicked, this, &GuiNextWindow::openHelp);
     connect(discordButton, &QPushButton::clicked, this, &GuiNextWindow::openDiscord);
+    connect(m_UpdateButton, &QPushButton::clicked, this, &GuiNextWindow::openUpdate);
     connect(settingsButton, &QPushButton::clicked, this, &GuiNextWindow::showSettings);
 
     m_Stack->addWidget(page);
@@ -968,6 +972,23 @@ void GuiNextWindow::openDiscord()
     QDesktopServices::openUrl(QUrl(QStringLiteral("https://moonlight-stream.org/discord")));
 }
 
+void GuiNextWindow::openUpdate()
+{
+    if (m_UpdateUrl.isEmpty()) {
+        return;
+    }
+
+    const FrontendSystemProperties system = m_Facade.system()->properties();
+    if (!system.hasBrowser) {
+        QMessageBox::information(this,
+                                 tr("Update Available"),
+                                 tr("No web browser is available to open the Moonlight release page."));
+        return;
+    }
+
+    QDesktopServices::openUrl(m_UpdateUrl);
+}
+
 void GuiNextWindow::saveSettings()
 {
     FrontendStreamingPreferences preferences = m_Facade.preferences()->preferences();
@@ -1331,16 +1352,12 @@ void GuiNextWindow::handleUnmappedGamepadsChanged()
 
 void GuiNextWindow::handleUpdateAvailable(const QString& newVersion, const QString& url)
 {
+    m_UpdateUrl = QUrl(url);
     const FrontendSystemProperties system = m_Facade.system()->properties();
-    if (system.hasBrowser) {
-        const QMessageBox::StandardButton result = QMessageBox::question(
-            this,
-            tr("Update Available"),
-            tr("Update available for Moonlight: Version %1").arg(newVersion),
-            QMessageBox::Open | QMessageBox::Cancel);
-        if (result == QMessageBox::Open) {
-            QDesktopServices::openUrl(QUrl(url));
-        }
+    if (system.hasBrowser && m_UpdateButton != nullptr) {
+        m_UpdateButton->setText(tr("Update %1").arg(newVersion));
+        m_UpdateButton->setVisible(true);
+        setStatusText(tr("Update available for Moonlight: Version %1").arg(newVersion));
     }
     else {
         QMessageBox::information(this,

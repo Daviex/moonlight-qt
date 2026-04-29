@@ -12,6 +12,7 @@
 #include <QPointer>
 #include <QScopedPointer>
 #include <QStackedWidget>
+#include <QUrl>
 
 class QLabel;
 class QKeyEvent;
@@ -19,7 +20,6 @@ class QComboBox;
 class QPushButton;
 class QSpinBox;
 class QCheckBox;
-class QUrl;
 
 class GuiNextWindow : public QMainWindow
 {
@@ -51,6 +51,7 @@ private slots:
     void showSettings();
     void openHelp();
     void openDiscord();
+    void openUpdate();
     void saveSettings();
     void showHostsPage();
     void refreshApps();
@@ -104,6 +105,7 @@ private:
     QListWidget* m_AppListWidget = nullptr;
     QPointer<QMessageBox> m_PairingDialog;
     QPointer<QMessageBox> m_ConnectionTestDialog;
+    QUrl m_UpdateUrl;
     QLabel* m_StatusLabel = nullptr;
     QLabel* m_AppHeaderLabel = nullptr;
     QSpinBox* m_WidthSpinBox = nullptr;
@@ -144,6 +146,7 @@ private:
     QCheckBox* m_KeepAwakeCheckBox = nullptr;
     QCheckBox* m_HdrCheckBox = nullptr;
     QCheckBox* m_Yuv444CheckBox = nullptr;
+    QPushButton* m_UpdateButton = nullptr;
     int m_CurrentComputerIndex = -1;
     int m_PendingLaunchAfterQuitIndex = -1;
     bool m_PairingInProgress = false;
