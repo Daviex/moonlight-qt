@@ -31,6 +31,10 @@ namespace {
     constexpr int HostPageIndex = 0;
     constexpr int AppPageIndex = 1;
     constexpr int SettingsPageIndex = 2;
+    const QUrl SetupGuideUrl(QStringLiteral("https://github.com/moonlight-stream/moonlight-docs/wiki/Setup-Guide"));
+    const QUrl TroubleshootingUrl(QStringLiteral("https://github.com/moonlight-stream/moonlight-docs/wiki/Troubleshooting"));
+    const QUrl HardwareDecodingHelpUrl(QStringLiteral("https://github.com/moonlight-stream/moonlight-docs/wiki/Fixing-Hardware-Decoding-Problems"));
+    const QUrl GamepadMappingHelpUrl(QStringLiteral("https://github.com/moonlight-stream/moonlight-docs/wiki/Gamepad-Mapping"));
 
     void addComboItem(QComboBox* comboBox, const QString& label, int value)
     {
@@ -106,7 +110,10 @@ GuiNextWindow::GuiNextWindow(QWidget* parent)
     connect(m_Facade.sessions(), &FrontendSessionCoordinator::errorTextChanged,
             this, [this](const QString& error) {
         if (!error.isEmpty()) {
-            QMessageBox::warning(this, tr("Stream Error"), error);
+            showMessageWithHelp(QMessageBox::Warning,
+                                tr("Stream Error"),
+                                error,
+                                TroubleshootingUrl);
         }
     });
     connect(m_Facade.sessions(), &FrontendSessionCoordinator::launchWarningsChanged,
@@ -927,7 +934,7 @@ void GuiNextWindow::openHelp()
         return;
     }
 
-    QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/moonlight-stream/moonlight-docs/wiki/Setup-Guide")));
+    QDesktopServices::openUrl(SetupGuideUrl);
 }
 
 void GuiNextWindow::openDiscord()
@@ -1151,7 +1158,10 @@ void GuiNextWindow::handlePairingCompleted(const QString& error)
         setStatusText(tr("Pairing completed."));
     }
     else {
-        QMessageBox::warning(this, tr("Pairing Failed"), error);
+        showMessageWithHelp(QMessageBox::Warning,
+                            tr("Pairing Failed"),
+                            error,
+                            SetupGuideUrl);
     }
     refreshHosts();
 }
@@ -1270,14 +1280,16 @@ void GuiNextWindow::handleHardwareAccelerationChanged()
 
     m_HardwareWarningShown = true;
     if (system.isRunningXWayland) {
-        QMessageBox::warning(this,
-                             tr("Hardware Acceleration"),
-                             tr("Hardware acceleration doesn't work on XWayland. Continuing on XWayland may result in poor streaming performance. Try running with QT_QPA_PLATFORM=wayland or switch to X11."));
+        showMessageWithHelp(QMessageBox::Warning,
+                            tr("Hardware Acceleration"),
+                            tr("Hardware acceleration doesn't work on XWayland. Continuing on XWayland may result in poor streaming performance. Try running with QT_QPA_PLATFORM=wayland or switch to X11."),
+                            HardwareDecodingHelpUrl);
     }
     else {
-        QMessageBox::warning(this,
-                             tr("Hardware Acceleration"),
-                             tr("No functioning hardware accelerated video decoder was detected by Moonlight. Your streaming performance may be severely degraded in this configuration."));
+        showMessageWithHelp(QMessageBox::Warning,
+                            tr("Hardware Acceleration"),
+                            tr("No functioning hardware accelerated video decoder was detected by Moonlight. Your streaming performance may be severely degraded in this configuration."),
+                            HardwareDecodingHelpUrl);
     }
 }
 
@@ -1293,9 +1305,10 @@ void GuiNextWindow::handleUnmappedGamepadsChanged()
     }
 
     m_UnmappedGamepadWarningShown = true;
-    QMessageBox::warning(this,
-                         tr("Gamepad Mapping"),
-                         tr("Moonlight detected gamepads without a mapping:") + QLatin1String("\n") + unmappedGamepads);
+    showMessageWithHelp(QMessageBox::Warning,
+                        tr("Gamepad Mapping"),
+                        tr("Moonlight detected gamepads without a mapping:") + QLatin1String("\n") + unmappedGamepads,
+                        GamepadMappingHelpUrl);
 }
 
 void GuiNextWindow::handleUpdateAvailable(const QString& newVersion, const QString& url)
@@ -1405,5 +1418,20 @@ void GuiNextWindow::setStatusText(const QString& text)
 {
     if (m_StatusLabel != nullptr) {
         m_StatusLabel->setText(text);
+    }
+}
+
+void GuiNextWindow::showMessageWithHelp(QMessageBox::Icon icon,
+                                        const QString& title,
+                                        const QString& text,
+                                        const QUrl& helpUrl)
+{
+    QMessageBox messageBox(icon, title, text, QMessageBox::Ok, this);
+    if (m_Facade.system()->properties().hasBrowser && helpUrl.isValid()) {
+        messageBox.addButton(QMessageBox::Help);
+    }
+
+    if (messageBox.exec() == QMessageBox::Help) {
+        QDesktopServices::openUrl(helpUrl);
     }
 }

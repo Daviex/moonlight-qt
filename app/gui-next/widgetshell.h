@@ -7,6 +7,7 @@
 
 #include <QListWidget>
 #include <QMainWindow>
+#include <QMessageBox>
 #include <QPoint>
 #include <QPointer>
 #include <QScopedPointer>
@@ -15,10 +16,10 @@
 class QLabel;
 class QKeyEvent;
 class QComboBox;
-class QMessageBox;
 class QPushButton;
 class QSpinBox;
 class QCheckBox;
+class QUrl;
 
 class GuiNextWindow : public QMainWindow
 {
@@ -85,6 +86,10 @@ private:
     int defaultBitrateForCurrentSettings();
     void updateDefaultBitrateButton();
     void setStatusText(const QString& text);
+    void showMessageWithHelp(QMessageBox::Icon icon,
+                             const QString& title,
+                             const QString& text,
+                             const QUrl& helpUrl);
 
     QScopedPointer<ComputerManager> m_ComputerManager;
     FrontendApplicationFacade m_Facade;
