@@ -3,8 +3,9 @@ mod ipc_backend;
 mod mock_backend;
 
 use backend::{
-    AppEntry, BridgeEvent, BridgeEventKind, CommandStatus, ControllerAction, HostDetails,
-    HostEntry, MoonlightBackend, NetworkTestResult, PairingChallenge, StreamingSettings,
+    AppEntry, BackendInfo, BridgeEvent, BridgeEventKind, CommandStatus, ControllerAction,
+    HostDetails, HostEntry, MoonlightBackend, NetworkTestResult, PairingChallenge,
+    StreamingSettings,
 };
 use ipc_backend::{ipc_backend_requested, IpcBackend};
 use mock_backend::MockBackend;
@@ -44,6 +45,14 @@ fn emit_bridge_event(
             },
         )
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn backend_info(backend: tauri::State<'_, BackendState>) -> Result<BackendInfo, String> {
+    Ok(backend
+        .lock()
+        .map_err(|error| error.to_string())?
+        .backend_info())
 }
 
 #[tauri::command]
@@ -418,6 +427,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             list_hosts,
+            backend_info,
             add_host,
             pair_host,
             wake_host,

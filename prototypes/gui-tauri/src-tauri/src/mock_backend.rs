@@ -1,5 +1,5 @@
 use crate::backend::{
-    AppEntry, CommandStatus, HostDetails, HostEntry, HostStatus, MoonlightBackend,
+    AppEntry, BackendInfo, CommandStatus, HostDetails, HostEntry, HostStatus, MoonlightBackend,
     NetworkTestResult, PairingChallenge, StreamingSettings,
 };
 
@@ -97,6 +97,13 @@ impl MockBackend {
 }
 
 impl MoonlightBackend for MockBackend {
+    fn backend_info(&self) -> BackendInfo {
+        BackendInfo {
+            mode: "mock".into(),
+            helper_path: None,
+        }
+    }
+
     fn list_hosts(&mut self) -> Result<Vec<HostEntry>, String> {
         Ok(self.hosts.clone())
     }

@@ -78,6 +78,23 @@ nav {
   padding: 0.45rem 0.65rem;
 }
 
+.backend-diagnostics,
+.empty-state {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 1rem;
+  color: #9fb1c7;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 12px;
+  padding: 0.75rem;
+}
+
+.empty-state h3,
+.empty-state p {
+  margin: 0;
+}
+
 .stream-panel {
   display: grid;
   gap: 0.75rem;

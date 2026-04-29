@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   AppEntry,
+  BackendInfo,
   BridgeEvent,
   ControllerAction,
   HostEntry,
@@ -83,6 +84,12 @@ export default function App() {
   const [status, setStatus] = useState('Tauri shell ready.');
   const [eventLog, setEventLog] = useState<BridgeEvent[]>([]);
   const [streamState, setStreamState] = useState<StreamUiState>(idleStreamState);
+  const [backendInfo, setBackendInfo] = useState<BackendInfo | null>(null);
+  const [hostRefreshDiagnostics, setHostRefreshDiagnostics] = useState({
+    attempts: 0,
+    lastCount: 0,
+    lastError: '',
+  });
 
   const selectedHost = useMemo(
     () => hosts.find((host) => host.id === selectedHostId),
@@ -96,12 +103,34 @@ export default function App() {
       if (!nextHosts.some((host) => host.id === selectedHostId)) {
         setSelectedHostId(nextHosts[0]?.id ?? '');
       }
-      setStatus('Host list refreshed.');
+      setHostRefreshDiagnostics((previousDiagnostics) => ({
+        attempts: previousDiagnostics.attempts + 1,
+        lastCount: nextHosts.length,
+        lastError: '',
+      }));
+      setStatus(nextHosts.length > 0 ? 'Host list refreshed.' : 'No hosts found yet. Discovery is still running.');
+      return nextHosts;
     }
     catch (error) {
-      setStatus(`Failed to refresh hosts: ${String(error)}`);
+      const message = String(error);
+      setHostRefreshDiagnostics((previousDiagnostics) => ({
+        ...previousDiagnostics,
+        attempts: previousDiagnostics.attempts + 1,
+        lastError: message,
+      }));
+      setStatus(`Failed to refresh hosts: ${message}`);
+      return [];
     }
   }, [selectedHostId]);
+
+  const refreshBackendInfo = useCallback(async () => {
+    try {
+      setBackendInfo(await bridge.backendInfo());
+    }
+    catch (error) {
+      setStatus(`Failed to load backend info: ${String(error)}`);
+    }
+  }, []);
 
   const refreshApps = useCallback(async (hostId = selectedHostId, includeHidden = showHiddenApps) => {
     if (!hostId) {
@@ -500,8 +529,27 @@ export default function App() {
   }, [handleControllerAction, handleSessionEvent, handleStatusEvent, refreshApps, refreshHosts, refreshSettingsSnapshot, selectedHostId, showHiddenApps, syncWindowForSessionEvent]);
 
   useEffect(() => {
+    void refreshBackendInfo();
     void refreshHosts();
-  }, [refreshHosts]);
+  }, [refreshBackendInfo, refreshHosts]);
+
+  useEffect(() => {
+    if (hosts.length > 0) {
+      return undefined;
+    }
+
+    let attempts = 0;
+    const intervalId = window.setInterval(() => {
+      attempts += 1;
+      void refreshHosts().then((nextHosts) => {
+        if (nextHosts.length > 0 || attempts >= 15) {
+          window.clearInterval(intervalId);
+        }
+      });
+    }, 2000);
+
+    return () => window.clearInterval(intervalId);
+  }, [hosts.length, refreshHosts]);
 
   useEffect(() => {
     let disposed = false;
@@ -594,6 +642,27 @@ export default function App() {
               <button type="button" onClick={addHost}>Add Host</button>
             </div>
           </div>
+          <div className="backend-diagnostics" aria-label="Backend diagnostics">
+            <span>Backend: {backendInfo?.mode ?? 'unknown'}</span>
+            {backendInfo?.helperPath && <span>Helper: {backendInfo.helperPath}</span>}
+            <span>Last host count: {hostRefreshDiagnostics.lastCount}</span>
+            <span>Refresh attempts: {hostRefreshDiagnostics.attempts}</span>
+            {hostRefreshDiagnostics.lastError && <span>Error: {hostRefreshDiagnostics.lastError}</span>}
+          </div>
+          {hosts.length === 0 && (
+            <div className="empty-state">
+              <h3>No hosts found yet</h3>
+              <p>
+                Moonlight is polling saved hosts and listening for Sunshine via mDNS. If this stays empty, confirm the
+                Tauri shell was started with the IPC helper environment variables and that the helper path points at the
+                latest built Moonlight.exe.
+              </p>
+              <p>
+                Refresh attempts: {hostRefreshDiagnostics.attempts}; last host count: {hostRefreshDiagnostics.lastCount}
+                {hostRefreshDiagnostics.lastError && `; last error: ${hostRefreshDiagnostics.lastError}`}
+              </p>
+            </div>
+          )}
           <div className="card-grid">
             {hosts.map((host) => (
               <article key={host.id} className={`host-card ${host.id === selectedHostId ? 'selected' : ''}`}>

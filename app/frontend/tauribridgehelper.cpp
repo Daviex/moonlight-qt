@@ -138,6 +138,8 @@ TauriBridgeHelper::TauriBridgeHelper()
         setControllerNavigationEnabled(true);
         writeEventFrame(bridgeEvent("sessionChanged", tr("Stream session cleanup completed.")));
     });
+
+    m_ComputerManager.startPolling();
 }
 
 int TauriBridgeHelper::run()

@@ -42,6 +42,11 @@ export interface CommandStatus {
   message: string;
 }
 
+export interface BackendInfo {
+  mode: string;
+  helperPath?: string;
+}
+
 export interface NetworkTestResult {
   result: 'ok' | 'blocked' | 'unavailable';
   blockedPorts: string[];
@@ -85,6 +90,7 @@ export interface BridgeEvent {
 export const BRIDGE_EVENT = 'moonlight-bridge-event';
 
 export const bridge = {
+  backendInfo: () => invoke<BackendInfo>('backend_info'),
   listHosts: () => invoke<HostEntry[]>('list_hosts'),
   addHost: (address: string) => invoke<CommandStatus>('add_host', { address }),
   pairHost: (hostId: string) => invoke<PairingChallenge>('pair_host', { hostId }),

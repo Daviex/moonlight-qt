@@ -1,5 +1,5 @@
 use crate::backend::{
-    AppEntry, BridgeEvent, CommandStatus, HostDetails, HostEntry, MoonlightBackend,
+    AppEntry, BackendInfo, BridgeEvent, CommandStatus, HostDetails, HostEntry, MoonlightBackend,
     NetworkTestResult, PairingChallenge, StreamingSettings,
 };
 use serde::de::DeserializeOwned;
@@ -26,6 +26,7 @@ pub fn ipc_backend_requested() -> bool {
 
 pub struct IpcBackend {
     process: Child,
+    helper_path: String,
     stdin: Arc<Mutex<ChildStdin>>,
     pending_responses: PendingResponses,
     next_request_id: u64,
@@ -61,6 +62,7 @@ impl IpcBackend {
 
         Ok(Self {
             process,
+            helper_path,
             stdin: Arc::new(Mutex::new(stdin)),
             pending_responses,
             next_request_id: 1,
@@ -224,6 +226,13 @@ impl Drop for IpcBackend {
 }
 
 impl MoonlightBackend for IpcBackend {
+    fn backend_info(&self) -> BackendInfo {
+        BackendInfo {
+            mode: "ipc".into(),
+            helper_path: Some(self.helper_path.clone()),
+        }
+    }
+
     fn emits_native_events(&self) -> bool {
         true
     }

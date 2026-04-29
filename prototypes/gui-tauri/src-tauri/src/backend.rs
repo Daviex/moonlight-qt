@@ -51,6 +51,13 @@ pub struct CommandStatus {
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BackendInfo {
+    pub mode: String,
+    pub helper_path: Option<String>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NetworkTestResult {
     pub result: String,
     pub blocked_ports: Vec<String>,
@@ -110,6 +117,8 @@ pub enum HostStatus {
 }
 
 pub trait MoonlightBackend: Send {
+    fn backend_info(&self) -> BackendInfo;
+
     fn emits_native_events(&self) -> bool {
         false
     }
