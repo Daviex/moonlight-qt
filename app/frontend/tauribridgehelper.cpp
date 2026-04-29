@@ -2,11 +2,13 @@
 
 #include "frontend/applistfacade.h"
 #include "settings/streamingpreferences.h"
+#include "streaming/qtwidgetwindowcontext.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
-#include <QScopedPointer>
 #include <QTextStream>
+#include <QThread>
+#include <QWidget>
 
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
@@ -17,7 +19,19 @@ static bool readBridgeLine(HANDLE inputHandle, QByteArray& line)
 
     char ch = 0;
     DWORD bytesRead = 0;
-    while (ReadFile(inputHandle, &ch, 1, &bytesRead, nullptr) && bytesRead > 0) {
+    while (true) {
+        DWORD bytesAvailable = 0;
+        if (!PeekNamedPipe(inputHandle, nullptr, 0, nullptr, &bytesAvailable, nullptr)) {
+            return !line.isEmpty();
+        }
+        if (bytesAvailable == 0) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            QThread::msleep(10);
+            continue;
+        }
+        if (!ReadFile(inputHandle, &ch, 1, &bytesRead, nullptr) || bytesRead == 0) {
+            break;
+        }
         if (ch == '\n') {
             break;
         }
@@ -26,7 +40,7 @@ static bool readBridgeLine(HANDLE inputHandle, QByteArray& line)
         }
     }
 
-    return !line.isEmpty() || bytesRead > 0;
+    return !line.isEmpty();
 }
 
 static bool writeBridgeLine(HANDLE outputHandle, const QByteArray& line)
@@ -163,7 +177,7 @@ QJsonObject TauriBridgeHelper::handleCommand(const QJsonObject& command)
         return listApps(payload);
     }
     if (commandName == "launch_app") {
-        return unsupported(commandName);
+        return launchApp(payload);
     }
     if (commandName == "quit_running_app") {
         return quitRunningApp(payload);
@@ -231,6 +245,58 @@ QJsonObject TauriBridgeHelper::listApps(const QJsonObject& payload)
         apps.append(appToJson(app));
     }
     return {{"result", apps}};
+}
+
+QJsonObject TauriBridgeHelper::launchApp(const QJsonObject& payload)
+{
+    const int hostIndex = hostIndexFromPayload(payload);
+    if (hostIndex < 0) {
+        return {{"error", "Host was not found."}};
+    }
+    if (m_ActiveSession != nullptr) {
+        return {{"error", "A stream session is already active."}};
+    }
+
+    QScopedPointer<AppListFacade> appList(m_Facade.createAppList(hostIndex, true));
+    const int appIndex = appIndexFromPayload(appList.data(), payload);
+    if (appIndex < 0) {
+        return {{"error", "App was not found."}};
+    }
+
+    const FrontendApp app = appList->appAt(appIndex);
+    Session* session = appList->createSessionForApp(appIndex);
+    if (session == nullptr) {
+        return {{"error", "Unable to start stream: session was not created."}};
+    }
+
+    m_ActiveSession = session;
+    QObject::connect(session, &Session::readyForDeletion, session, &QObject::deleteLater);
+    QObject::connect(session, &Session::destroyed, [this]() {
+        m_ActiveSession = nullptr;
+    });
+
+    if (m_WindowContextSource.isNull()) {
+        m_WindowContextSource.reset(new QWidget());
+    }
+    m_WindowContext.reset(new QtWidgetWindowContext(m_WindowContextSource.data()));
+
+    m_Facade.system()->waitForAsyncLoad();
+    m_Facade.sessions()->setSession(session, app.name, app.running, false);
+    if (!m_Facade.sessions()->initialize(m_WindowContext.data())) {
+        const QString error = m_Facade.sessions()->errorText().isEmpty() ?
+            tr("Unable to start stream: session initialization failed.") :
+            m_Facade.sessions()->errorText();
+        m_Facade.sessions()->clearSession();
+        session->deleteLater();
+        m_ActiveSession = nullptr;
+        return {{"error", error}};
+    }
+
+    m_Facade.sessions()->start();
+    const QString message = tr("Launch requested for %1.").arg(app.name);
+    return resultWithEvent(
+        status(message),
+        bridgeEvent("sessionChanged", message, QString::number(hostIndex), payload.value("app_id").toString()));
 }
 
 QJsonObject TauriBridgeHelper::pairHost(const QJsonObject& payload)

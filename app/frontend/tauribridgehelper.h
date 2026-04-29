@@ -6,8 +6,13 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QCoreApplication>
+#include <QPointer>
+#include <QScopedPointer>
 
 class AppListFacade;
+class QtWidgetWindowContext;
+class Session;
+class QWidget;
 
 class TauriBridgeHelper
 {
@@ -23,6 +28,7 @@ private:
     QJsonObject listHosts();
     QJsonObject hostDetails(const QJsonObject& payload);
     QJsonObject listApps(const QJsonObject& payload);
+    QJsonObject launchApp(const QJsonObject& payload);
     QJsonObject pairHost(const QJsonObject& payload);
     QJsonObject wakeHost(const QJsonObject& payload);
     QJsonObject renameHost(const QJsonObject& payload);
@@ -46,4 +52,7 @@ private:
 
     ComputerManager m_ComputerManager;
     FrontendApplicationFacade m_Facade;
+    QScopedPointer<QWidget> m_WindowContextSource;
+    QScopedPointer<QtWidgetWindowContext> m_WindowContext;
+    QPointer<Session> m_ActiveSession;
 };
