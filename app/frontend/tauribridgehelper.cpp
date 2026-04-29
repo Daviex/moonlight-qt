@@ -49,6 +49,21 @@ static bool validateIntegerSetting(const QJsonObject& settings,
     return true;
 }
 
+static bool validateRequiredIntegerSetting(const QJsonObject& settings,
+                                           const QString& key,
+                                           const QString& label,
+                                           int minimum,
+                                           int maximum,
+                                           QString& error)
+{
+    if (!settings.contains(key)) {
+        error = QStringLiteral("%1 is required.").arg(label);
+        return false;
+    }
+
+    return validateIntegerSetting(settings, key, label, minimum, maximum, error);
+}
+
 static bool validateStreamingSettings(const QJsonObject& settings, QString& error)
 {
     return validateIntegerSetting(settings, QStringLiteral("width"), QStringLiteral("Width"), 256, 8192, error) &&
@@ -56,6 +71,22 @@ static bool validateStreamingSettings(const QJsonObject& settings, QString& erro
         validateIntegerSetting(settings, QStringLiteral("fps"), QStringLiteral("FPS"), 10, 9999, error) &&
         validateIntegerSetting(settings, QStringLiteral("bitrateKbps"), QStringLiteral("Bitrate"), 500, 500000, error) &&
         validateIntegerSetting(settings, QStringLiteral("packetSize"), QStringLiteral("Packet size"), 0, 9000, error);
+}
+
+static bool validateDefaultBitratePayload(const QJsonObject& payload, QString& error)
+{
+    if (!validateRequiredIntegerSetting(payload, QStringLiteral("width"), QStringLiteral("Width"), 256, 8192, error) ||
+        !validateRequiredIntegerSetting(payload, QStringLiteral("height"), QStringLiteral("Height"), 256, 8192, error) ||
+        !validateRequiredIntegerSetting(payload, QStringLiteral("fps"), QStringLiteral("FPS"), 10, 9999, error)) {
+        return false;
+    }
+
+    if (payload.contains(QStringLiteral("yuv444")) && !payload.value(QStringLiteral("yuv444")).isBool()) {
+        error = QStringLiteral("YUV444 must be a boolean.");
+        return false;
+    }
+
+    return true;
 }
 
 #ifdef Q_OS_WIN
@@ -783,13 +814,15 @@ QJsonObject TauriBridgeHelper::saveSettings(const QJsonObject& payload)
 
 QJsonObject TauriBridgeHelper::defaultBitrate(const QJsonObject& payload)
 {
+    QString validationError;
+    if (!validateDefaultBitratePayload(payload, validationError)) {
+        return {{"error", validationError}};
+    }
+
     const int width = payload.value("width").toInt();
     const int height = payload.value("height").toInt();
     const int fps = payload.value("fps").toInt();
     const bool yuv444 = payload.value("yuv444").toBool();
-    if (width <= 0 || height <= 0 || fps <= 0) {
-        return {{"error", "Width, height, and FPS must be greater than zero."}};
-    }
 
     return {{"result", m_Facade.preferences()->getDefaultBitrate(width, height, fps, yuv444)}};
 }
