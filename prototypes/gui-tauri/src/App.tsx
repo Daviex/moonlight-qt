@@ -15,6 +15,7 @@ type StreamPhase = 'idle' | 'launching' | 'active' | 'quitting' | 'finished' | '
 
 interface StreamUiState {
   phase: StreamPhase;
+  hostId: string;
   hostName: string;
   appName: string;
   message: string;
@@ -43,6 +44,7 @@ const controllerTestActions: ControllerAction[] = [
 
 const idleStreamState: StreamUiState = {
   phase: 'idle',
+  hostId: '',
   hostName: '',
   appName: '',
   message: '',
@@ -250,6 +252,7 @@ export default function App() {
 
     setStreamState({
       phase: 'launching',
+      hostId: selectedHostId,
       hostName: selectedHost?.name ?? selectedHostId,
       appName: app.name,
       message: `Launching ${app.name}...`,
@@ -280,6 +283,7 @@ export default function App() {
     setSelectedHostId(host.id);
     setStreamState({
       phase: 'launching',
+      hostId: host.id,
       hostName: host.name,
       appName: 'Running session',
       message: `Resuming the running session on ${host.name}...`,
@@ -306,26 +310,35 @@ export default function App() {
   }, [refreshHosts]);
 
   const quitRunningApp = useCallback(async () => {
-    if (!selectedHostId) {
+    const hostId = selectedHostId || streamState.hostId;
+    if (!hostId) {
+      setStatus('No active host is selected for quit.');
       return;
     }
 
     setStreamState((previousState) => ({
       ...previousState,
-      phase: previousState.phase === 'idle' ? 'quitting' : previousState.phase,
+      phase: 'quitting',
       message: 'Quit requested...',
     }));
 
     try {
-      const result = await bridge.quitRunningApp(selectedHostId);
+      const result = await bridge.quitRunningApp(hostId);
       setStatus(result.message);
-      await refreshApps(selectedHostId, showHiddenApps);
+      await refreshApps(hostId, showHiddenApps);
       await refreshHosts();
     }
     catch (error) {
-      setStatus(String(error));
+      const message = String(error);
+      setStatus(message);
+      setStreamState((previousState) => ({
+        ...previousState,
+        phase: 'error',
+        message,
+        errors: [...previousState.errors, message],
+      }));
     }
-  }, [refreshApps, refreshHosts, selectedHostId, showHiddenApps]);
+  }, [refreshApps, refreshHosts, selectedHostId, showHiddenApps, streamState.hostId]);
 
   const handleSessionEvent = useCallback((event: BridgeEvent) => {
     setStreamState((previousState) => {

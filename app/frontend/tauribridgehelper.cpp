@@ -508,6 +508,9 @@ QJsonObject TauriBridgeHelper::quitRunningApp(const QJsonObject& payload)
         return {{"error", "Unable to create app list."}};
     }
 
+    if (m_Facade.sessions()->hasSession()) {
+        m_Facade.sessions()->interrupt();
+    }
     appList->quitRunningApp();
     const QString message = tr("Quit requested for the running app.");
     return resultWithEvent(status(message), bridgeEvent("sessionChanged", message, QString::number(hostIndex)));
