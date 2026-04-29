@@ -10,6 +10,8 @@ export interface HostEntry {
   status: HostStatus;
   paired: boolean;
   running: boolean;
+  wakeable: boolean;
+  serverSupported: boolean;
 }
 
 export interface HostDetails {

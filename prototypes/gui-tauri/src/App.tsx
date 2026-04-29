@@ -1236,11 +1236,13 @@ export default function App() {
                   <span>{host.status}</span>
                   <span>{host.paired ? 'Paired' : 'Pairing required'}</span>
                   {host.running && <span className="tag">In Game</span>}
+                  {host.wakeable && <span className="tag">Wakeable</span>}
+                  {!host.serverSupported && <span className="tag muted">Unsupported Server</span>}
                 </button>
                 <div className="card-actions">
                   <button type="button" onClick={() => pairHost(host)}>Pair</button>
                   {host.running && <button type="button" onClick={() => resumeSession(host)}>Resume</button>}
-                  <button type="button" onClick={() => runHostCommand(() => bridge.wakeHost(host.id))}>Wake</button>
+                  <button type="button" disabled={!host.wakeable} onClick={() => runHostCommand(() => bridge.wakeHost(host.id))}>Wake</button>
                   <button type="button" onClick={() => showDetails(host)}>Details</button>
                   <button type="button" onClick={() => testNetwork(host)}>Test</button>
                   <button type="button" onClick={() => openRenameHostDialog(host)}>Rename</button>

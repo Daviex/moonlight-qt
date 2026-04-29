@@ -21,6 +21,8 @@ impl MockBackend {
                     status: HostStatus::Online,
                     paired: true,
                     running: false,
+                    wakeable: true,
+                    server_supported: true,
                 },
                 HostEntry {
                     id: "living-room".into(),
@@ -29,6 +31,8 @@ impl MockBackend {
                     status: HostStatus::Offline,
                     paired: true,
                     running: false,
+                    wakeable: true,
+                    server_supported: true,
                 },
                 HostEntry {
                     id: "new-host".into(),
@@ -37,6 +41,8 @@ impl MockBackend {
                     status: HostStatus::PairingRequired,
                     paired: false,
                     running: false,
+                    wakeable: false,
+                    server_supported: true,
                 },
             ],
             apps: vec![
@@ -154,6 +160,8 @@ impl MoonlightBackend for MockBackend {
             status: HostStatus::PairingRequired,
             paired: false,
             running: false,
+            wakeable: false,
+            server_supported: true,
         });
         Ok((
             CommandStatus {

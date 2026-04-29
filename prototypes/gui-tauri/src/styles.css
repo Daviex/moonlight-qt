@@ -44,6 +44,12 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
+button:disabled {
+  color: #8b949e;
+  background: #30363d;
+  cursor: not-allowed;
+}
+
 button.danger {
   background: #da3633;
 }

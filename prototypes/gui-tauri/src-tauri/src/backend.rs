@@ -9,6 +9,8 @@ pub struct HostEntry {
     pub status: HostStatus,
     pub paired: bool,
     pub running: bool,
+    pub wakeable: bool,
+    pub server_supported: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize)]

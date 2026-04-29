@@ -958,6 +958,8 @@ QJsonObject TauriBridgeHelper::hostToJson(const FrontendComputer& computer, int 
         {"status", hostStatus(computer)},
         {"paired", computer.paired},
         {"running", computer.busy},
+        {"wakeable", computer.wakeable},
+        {"serverSupported", computer.serverSupported},
     };
 }
 
