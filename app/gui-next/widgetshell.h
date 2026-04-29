@@ -14,6 +14,7 @@
 class QLabel;
 class QKeyEvent;
 class QComboBox;
+class QMessageBox;
 class QPushButton;
 class QSpinBox;
 class QCheckBox;
@@ -52,6 +53,7 @@ private slots:
     void toggleSelectedAppHidden();
     void toggleSelectedAppDirectLaunch();
     void runStartupChecks();
+    void handlePairingCompleted(const QString& error);
     void handleHardwareAccelerationChanged();
     void handleUnmappedGamepadsChanged();
     void handleUpdateAvailable(const QString& newVersion, const QString& url);
@@ -76,6 +78,7 @@ private:
     QStackedWidget* m_Stack = nullptr;
     QListWidget* m_HostList = nullptr;
     QListWidget* m_AppListWidget = nullptr;
+    QPointer<QMessageBox> m_PairingDialog;
     QLabel* m_StatusLabel = nullptr;
     QLabel* m_AppHeaderLabel = nullptr;
     QSpinBox* m_WidthSpinBox = nullptr;
@@ -115,6 +118,7 @@ private:
     QCheckBox* m_HdrCheckBox = nullptr;
     QCheckBox* m_Yuv444CheckBox = nullptr;
     int m_CurrentComputerIndex = -1;
+    bool m_PairingInProgress = false;
     bool m_StartupChecksStarted = false;
     bool m_HardwareWarningShown = false;
     bool m_UnmappedGamepadWarningShown = false;

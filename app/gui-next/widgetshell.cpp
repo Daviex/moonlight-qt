@@ -83,15 +83,7 @@ GuiNextWindow::GuiNextWindow(QWidget* parent)
     connect(m_Facade.computers(), &ComputerListFacade::computerChanged,
             this, &GuiNextWindow::refreshHosts);
     connect(m_Facade.computers(), &ComputerListFacade::pairingCompleted,
-            this, [this](const QString& error) {
-        if (error.isEmpty()) {
-            setStatusText(tr("Pairing completed."));
-        }
-        else {
-            QMessageBox::warning(this, tr("Pairing Failed"), error);
-        }
-        refreshHosts();
-    });
+            this, &GuiNextWindow::handlePairingCompleted);
 
     connect(m_Facade.sessions(), &FrontendSessionCoordinator::hideUiRequested,
             this, &QWidget::hide);
@@ -551,15 +543,31 @@ void GuiNextWindow::launchSession(Session* session, const QString& appName, bool
 
 void GuiNextWindow::pairSelectedHost()
 {
+    if (m_PairingInProgress) {
+        QMessageBox::information(this,
+                                 tr("Pair Host"),
+                                 tr("Another pairing attempt is already in progress."));
+        return;
+    }
+
     int index = selectedHostIndex();
     if (index < 0) {
         return;
     }
 
     QString pin = m_Facade.computers()->generatePinString();
+    m_PairingInProgress = true;
+    setStatusText(tr("Pairing in progress..."));
     m_Facade.computers()->pairComputer(index, pin);
-    QMessageBox::information(this, tr("Pair Host"),
-                             tr("Enter this PIN on your host PC when prompted: %1").arg(pin));
+
+    auto dialog = new QMessageBox(QMessageBox::Information,
+                                  tr("Pair Host"),
+                                  tr("Enter this PIN on your host PC when prompted: %1").arg(pin),
+                                  QMessageBox::Ok,
+                                  this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    m_PairingDialog = dialog;
+    dialog->open();
 }
 
 void GuiNextWindow::wakeSelectedHost()
@@ -705,6 +713,23 @@ void GuiNextWindow::quitRunningApp()
     if (m_AppList != nullptr) {
         m_AppList->quitRunningApp();
     }
+}
+
+void GuiNextWindow::handlePairingCompleted(const QString& error)
+{
+    m_PairingInProgress = false;
+    if (!m_PairingDialog.isNull()) {
+        m_PairingDialog->close();
+        m_PairingDialog.clear();
+    }
+
+    if (error.isEmpty()) {
+        setStatusText(tr("Pairing completed."));
+    }
+    else {
+        QMessageBox::warning(this, tr("Pairing Failed"), error);
+    }
+    refreshHosts();
 }
 
 void GuiNextWindow::toggleSelectedAppHidden()
