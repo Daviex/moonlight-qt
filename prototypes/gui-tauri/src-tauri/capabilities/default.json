@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Allow the main Moonlight prototype window to subscribe to native bridge events.",
+  "description": "Allow the main Moonlight prototype window to subscribe to native bridge events and coordinate stream window lifecycle.",
   "windows": ["*"],
-  "permissions": ["core:event:default"]
+  "permissions": ["core:event:default", "core:window:default"]
 }

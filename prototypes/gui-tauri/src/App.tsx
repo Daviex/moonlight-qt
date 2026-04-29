@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   AppEntry,
   BridgeEvent,
@@ -48,6 +49,8 @@ const idleStreamState: StreamUiState = {
   errors: [],
   uiHiddenRequested: false,
 };
+
+const appWindow = getCurrentWindow();
 
 function focusableElements(): HTMLElement[] {
   return Array.from(
@@ -334,6 +337,31 @@ export default function App() {
     });
   }, []);
 
+  const showTauriShell = useCallback(async () => {
+    await appWindow.show();
+    await appWindow.setFocus();
+  }, []);
+
+  const syncWindowForSessionEvent = useCallback(async (event: BridgeEvent) => {
+    if (event.kind === 'sessionChanged' && event.message.includes('hide UI requested')) {
+      await appWindow.hide();
+      return;
+    }
+
+    if (event.kind === 'sessionChanged' && (
+      event.message.includes('UI can be shown') ||
+      event.message.includes('finished') ||
+      event.message.includes('cleanup completed')
+    )) {
+      await showTauriShell();
+      return;
+    }
+
+    if (event.kind === 'status' && /failed|error|terminated|unable|cannot/i.test(event.message)) {
+      await showTauriShell();
+    }
+  }, [showTauriShell]);
+
   const toggleHidden = useCallback(async (app: AppEntry) => {
     if (!selectedHostId) {
       return;
@@ -419,6 +447,13 @@ export default function App() {
         handleStatusEvent(event);
       }
 
+      try {
+        await syncWindowForSessionEvent(event);
+      }
+      catch (error) {
+        setStatus(`Failed to update Tauri window visibility: ${String(error)}`);
+      }
+
       if (event.kind === 'hostChanged' || event.kind === 'sessionChanged') {
         await refreshHosts();
       }
@@ -433,7 +468,7 @@ export default function App() {
 
       setStatus(event.message);
     })();
-  }, [handleControllerAction, handleSessionEvent, handleStatusEvent, refreshApps, refreshHosts, refreshSettingsSnapshot, selectedHostId, showHiddenApps]);
+  }, [handleControllerAction, handleSessionEvent, handleStatusEvent, refreshApps, refreshHosts, refreshSettingsSnapshot, selectedHostId, showHiddenApps, syncWindowForSessionEvent]);
 
   useEffect(() => {
     void refreshHosts();
@@ -512,6 +547,7 @@ export default function App() {
             </div>
           )}
           <div className="button-row">
+            <button type="button" onClick={showTauriShell}>Show Shell</button>
             <button type="button" onClick={quitRunningApp}>Quit Stream</button>
             {(streamState.phase === 'finished' || streamState.phase === 'error') && (
               <button type="button" onClick={() => setStreamState(idleStreamState)}>Dismiss</button>
