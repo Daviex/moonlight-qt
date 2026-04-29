@@ -15,6 +15,14 @@ npm run tauri dev
 
 This prototype has been validated on Windows with Node.js, npm, Rust/Cargo installed by rustup, and the existing MSVC toolchain available to Cargo.
 
+To build and stage the prototype together with the native helper from the repository root:
+
+```powershell
+scripts\build-tauri-prototype.bat
+```
+
+This keeps the production Widgets package unchanged. It builds the native Moonlight helper, builds the Tauri shell with `--no-bundle`, stages both under `build\tauri-prototype`, and writes `Launch-Moonlight-Tauri.bat` with the required `MOONLIGHT_TAURI_BACKEND=ipc` and `MOONLIGHT_TAURI_HELPER` environment variables. If a fresh native build already exists, set `SKIP_NATIVE_BUILD=1` before running the script to reuse `build\deploy-*-release\Moonlight.exe`.
+
 ## Migration notes
 
 The production Tauri migration should keep Moonlight's C++ backend and streaming engine native. The web UI should communicate through a narrow native command/event bridge for:
