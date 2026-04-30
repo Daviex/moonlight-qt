@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import {
@@ -309,6 +309,23 @@ function moveFocus(delta: number) {
   elements[nextIndex].focus();
 }
 
+function focusPreferredElement(root: ParentNode = document) {
+  const preferredElement = root.querySelector<HTMLElement>('[data-controller-focus="true"]');
+  if (preferredElement &&
+      !preferredElement.hasAttribute('disabled') &&
+      preferredElement.tabIndex !== -1 &&
+      preferredElement.offsetParent !== null) {
+    preferredElement.focus();
+    return;
+  }
+
+  focusableElements(root)[0]?.focus();
+}
+
+function focusPage(page: Page) {
+  focusPreferredElement(document.querySelector<HTMLElement>(`[data-page-panel="${page}"]`) ?? document);
+}
+
 export default function App() {
   const [page, setPage] = useState<Page>('hosts');
   const [hosts, setHosts] = useState<HostEntry[]>([]);
@@ -323,6 +340,8 @@ export default function App() {
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [dialog, setDialog] = useState<DialogState>({ kind: 'none' });
+  const dialogOpenerRef = useRef<HTMLElement | null>(null);
+  const previousDialogKindRef = useRef<DialogState['kind']>('none');
   const [hostRefreshDiagnostics, setHostRefreshDiagnostics] = useState({
     attempts: 0,
     lastCount: 0,
@@ -1022,16 +1041,46 @@ export default function App() {
   }, [refreshBackendInfo, refreshHosts]);
 
   useEffect(() => {
-    if (dialog.kind === 'none') {
+    if (dialog.kind !== 'none') {
       return undefined;
     }
 
     const focusTimer = window.setTimeout(() => {
-      focusableElements(activeDialogRoot() ?? document)[0]?.focus();
+      focusPage(page);
     }, 0);
 
     return () => window.clearTimeout(focusTimer);
-  }, [dialog.kind]);
+  }, [page]);
+
+  useEffect(() => {
+    const previousDialogKind = previousDialogKindRef.current;
+    previousDialogKindRef.current = dialog.kind;
+
+    if (previousDialogKind === 'none' && dialog.kind !== 'none') {
+      dialogOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const focusTimer = window.setTimeout(() => {
+        focusPreferredElement(activeDialogRoot() ?? document);
+      }, 0);
+
+      return () => window.clearTimeout(focusTimer);
+    }
+
+    if (previousDialogKind !== 'none' && dialog.kind === 'none') {
+      const focusTimer = window.setTimeout(() => {
+        const opener = dialogOpenerRef.current;
+        if (opener?.isConnected) {
+          opener.focus();
+        }
+        else {
+          focusPage(page);
+        }
+      }, 0);
+
+      return () => window.clearTimeout(focusTimer);
+    }
+
+    return undefined;
+  }, [dialog.kind, page]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1440,11 +1489,11 @@ export default function App() {
       )}
 
       {page === 'hosts' && (
-        <section className="panel" aria-labelledby="hosts-title">
+        <section className="panel" aria-labelledby="hosts-title" data-page-panel="hosts">
           <div className="panel-heading">
             <h2 id="hosts-title">Hosts</h2>
             <div className="button-row">
-              <button type="button" onClick={refreshHosts}>Refresh</button>
+              <button type="button" onClick={refreshHosts} data-controller-focus={hosts.length === 0 ? 'true' : undefined}>Refresh</button>
               <button type="button" onClick={openAddHostDialog}>Add Host</button>
             </div>
           </div>
@@ -1475,7 +1524,12 @@ export default function App() {
               const wakeEnabled = canWakeHost(host);
               return (
                 <article key={host.id} className={`host-card ${host.id === selectedHostId ? 'selected' : ''}`}>
-                  <button type="button" className="card-primary" onClick={() => openApps(host)}>
+                  <button
+                    type="button"
+                    className="card-primary"
+                    data-controller-focus={host.id === selectedHostId ? 'true' : undefined}
+                    onClick={() => openApps(host)}
+                  >
                     <span className="title">{host.name}</span>
                     <span>{host.status}</span>
                     <span>{host.paired ? 'Paired' : 'Pairing required'}</span>
@@ -1500,7 +1554,7 @@ export default function App() {
       )}
 
       {page === 'apps' && (
-        <section className="panel" aria-labelledby="apps-title">
+        <section className="panel" aria-labelledby="apps-title" data-page-panel="apps">
           <div className="panel-heading">
             <div>
               <h2 id="apps-title">{selectedHost?.name ?? 'Apps'}</h2>
@@ -1562,11 +1616,16 @@ export default function App() {
             </div>
           )}
           <div className="card-grid">
-            {apps.map((app) => {
+            {apps.map((app, index) => {
               const imageSrc = boxArtSrc(app);
               return (
                 <article key={app.id} className="app-card">
-                  <button type="button" className="card-primary" onClick={() => launchApp(app)}>
+                  <button
+                    type="button"
+                    className="card-primary"
+                    data-controller-focus={index === 0 ? 'true' : undefined}
+                    onClick={() => launchApp(app)}
+                  >
                     <span className="app-art" aria-hidden="true">
                       {imageSrc ? (
                         <img src={imageSrc} alt="" />
@@ -1597,7 +1656,7 @@ export default function App() {
       )}
 
       {page === 'settings' && (
-        <section className="panel settings" aria-labelledby="settings-title">
+        <section className="panel settings" aria-labelledby="settings-title" data-page-panel="settings">
           <div className="panel-heading">
             <h2 id="settings-title">Settings</h2>
             <div className="button-row">
@@ -1612,7 +1671,7 @@ export default function App() {
           )}
           <label>
             Width
-            <input value={Number.isNaN(settings.width) ? '' : settings.width} type="number" min={numericSettingRules.width.min} max={numericSettingRules.width.max} onChange={(event) => updateNumericSettingFromInput('width', event.target.value)} />
+            <input value={Number.isNaN(settings.width) ? '' : settings.width} type="number" min={numericSettingRules.width.min} max={numericSettingRules.width.max} data-controller-focus="true" onChange={(event) => updateNumericSettingFromInput('width', event.target.value)} />
           </label>
           <label>
             Height
