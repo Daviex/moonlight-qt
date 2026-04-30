@@ -102,6 +102,25 @@ This process boundary is the chosen production direction because it avoids mixin
 
 The native helper validates request envelopes before dispatching commands. Malformed JSON, missing or non-integer request IDs, missing command objects, missing command names, and non-object payloads return explicit error frames instead of being coerced into request ID `0` or an empty command. The Rust IPC backend and native helper use the same command envelope shape: `command.name` contains the snake-case command name and `command.payload` contains the command object. Host/app command IDs and string payloads such as host addresses, host names, and URLs are also validated before facade lookup or native URL handling.
 
+From a Windows checkout, direct helper IPC can be smoke-tested without launching the webview:
+
+```powershell
+scripts\test-tauri-helper-ipc.ps1
+```
+
+Pass `-HelperPath build\tauri-prototype\native\Moonlight.exe` or another `Moonlight.exe` path to test a specific staged helper. The smoke check sends the current `name`/`payload` `list_hosts` request and verifies that invalid `default_bitrate` input returns a validation error.
+
+Inside the Tauri Flatpak, use the same protocol directly against the bundled helper:
+
+```sh
+flatpak run --user --command=sh com.moonlight_stream.Moonlight//master -c '
+  export LD_LIBRARY_PATH=/app/lib/x86_64-linux-gnu:/app/lib:/app/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+  export QT_PLUGIN_PATH=/app/lib/plugins${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}
+  export QT_QPA_PLATFORM=offscreen
+  printf "%s\n" "{\"id\":1,\"command\":{\"name\":\"list_hosts\",\"payload\":{}}}" | /app/bin/native/Moonlight --tauri-bridge-helper
+'
+```
+
 Current helper coverage is intentionally incremental: it can return real settings and host snapshots through the existing frontend facades, start `ComputerManager` polling/discovery when helper mode starts, update the subset of settings used by the prototype, route basic host/app mutations that already have facade methods, start network tests, resume a currently running native session through `ComputerListFacade::createSessionForCurrentGame()`, and emit native event frames for those mutations. Host snapshots collapse exact duplicate bridge records and same-name placeholder records so a discovered host does not appear twice when one backend entry has only empty placeholder address data. It also forwards `ComputerListFacade` discovery/state, pairing, manual-add completion/failure, and connection-test signals as host/status events. On Linux, the helper pumps the Qt event loop while waiting for IPC input so mDNS, polling, manual-add, box-art, and session signals can be delivered even when the process is otherwise idle on stdin. The latest `list_apps` request is kept as the observed app list, so later app-list resets, app changes, box-art changes, and selected-host loss are forwarded as app/host events without requiring another explicit command. `FrontendSessionCoordinator` lifecycle signals are forwarded as session/status events, including stage text, launch warnings, asynchronous errors, UI hide/show requests, quit segue requests, session finish, and cleanup readiness. Controller navigation events come from `SdlControllerNavigation` and are forwarded as `controllerAction` events with the same action vocabulary used by the TypeScript bridge. The Rust IPC backend reads helper stdout on a dedicated thread, correlates response frames by request ID, and forwards helper event frames to the existing `moonlight-bridge-event` Tauri channel. Command handlers still synthesize events for the mock backend, but skip those synthetic events when the active backend already forwards native helper events. With `MOONLIGHT_TAURI_DEBUG=1`, Rust/Tauri logs are written both to the configured log file and stderr, which makes `flatpak run ... 2>&1 | tee ...` useful for Steam Deck diagnostics.
 
 `launch_app` and `resume_session` now route through the native helper's `AppListFacade`/`ComputerListFacade`, `FrontendSessionCoordinator`, `QtWidgetWindowContext`, and `Session` path. `quit_running_app` interrupts any active helper-owned native `Session` before asking Sunshine to quit the running app. The helper pumps the Qt event loop while waiting for IPC so native session startup and shutdown can progress after command responses. This keeps stream rendering in the native SDL/window path instead of the webview. The React prototype now turns forwarded session events into active-stream state for launch/resume, active/hide-requested, warning/error, quitting, finished, and cleanup states, and it uses Tauri window APIs to hide/show/focus the webview shell around native stream lifecycle events. The remaining production work is real-world validation on Windows, Linux, and Steam Deck.
