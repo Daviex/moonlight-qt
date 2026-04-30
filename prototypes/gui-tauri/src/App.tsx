@@ -364,6 +364,26 @@ function focusPage(page: Page) {
   focusPreferredElement(document.querySelector<HTMLElement>(`[data-page-panel="${page}"]`) ?? document);
 }
 
+function focusCardActions() {
+  const activeElement = document.activeElement;
+  if (!(activeElement instanceof HTMLElement)) {
+    return false;
+  }
+
+  const card = activeElement.closest<HTMLElement>('[data-controller-card="true"]');
+  if (!card) {
+    return false;
+  }
+
+  const actionElements = focusableElements(card.querySelector<HTMLElement>('.card-actions') ?? card);
+  if (actionElements.length === 0) {
+    return false;
+  }
+
+  actionElements[0].focus();
+  return true;
+}
+
 export default function App() {
   const [page, setPage] = useState<Page>('hosts');
   const [hosts, setHosts] = useState<HostEntry[]>([]);
@@ -1011,7 +1031,9 @@ export default function App() {
       void loadSettings();
       break;
     case 'contextMenu':
-      setStatus('Context menu requested by controller navigation.');
+      if (!focusCardActions()) {
+        setStatus('Focus a host or app card before opening card actions.');
+      }
       break;
     }
   }, [closeDialog, dialog.kind, loadSettings, page]);
@@ -1584,7 +1606,11 @@ export default function App() {
               const pairEnabled = canPairHost(host);
               const wakeEnabled = canWakeHost(host);
               return (
-                <article key={host.id} className={`host-card ${host.id === selectedHostId ? 'selected' : ''}`}>
+                <article
+                  key={host.id}
+                  className={`host-card ${host.id === selectedHostId ? 'selected' : ''}`}
+                  data-controller-card="true"
+                >
                   <button
                     type="button"
                     className="card-primary"
@@ -1680,7 +1706,7 @@ export default function App() {
             {apps.map((app, index) => {
               const imageSrc = boxArtSrc(app);
               return (
-                <article key={app.id} className="app-card">
+                <article key={app.id} className="app-card" data-controller-card="true">
                   <button
                     type="button"
                     className="card-primary"
