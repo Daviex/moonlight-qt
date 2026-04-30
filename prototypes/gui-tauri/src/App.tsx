@@ -1148,13 +1148,18 @@ export default function App() {
   return (
     <main className="shell">
       <header className="toolbar">
-        <div>
-          <h1>Moonlight</h1>
-          <p>Tauri + React migration shell</p>
+        <div className="brand-lockup">
+          <div className="brand-mark" aria-hidden="true">M</div>
+          <div>
+            <span className="eyebrow">Moonlight Tauri</span>
+            <h1>Command Center</h1>
+            <p>Console-first streaming, pairing, and app launch dashboard.</p>
+          </div>
         </div>
         <nav aria-label="Primary">
-          <button type="button" onClick={() => setPage('hosts')}>Hosts</button>
-          <button type="button" onClick={loadSettings}>Settings</button>
+          <button type="button" className={page === 'hosts' ? 'nav-active' : undefined} onClick={() => setPage('hosts')}>Hosts</button>
+          <button type="button" className={page === 'apps' ? 'nav-active' : undefined} onClick={() => setPage('apps')} disabled={!selectedHost}>Library</button>
+          <button type="button" className={page === 'settings' ? 'nav-active' : undefined} onClick={loadSettings}>Settings</button>
           <button type="button" onClick={openHelpDialog}>Help</button>
           <label className="theme-picker">
             Theme
@@ -1166,6 +1171,12 @@ export default function App() {
           </label>
         </nav>
       </header>
+      <section className="quick-status" aria-label="Session summary">
+        <span><strong>{hosts.length}</strong> Hosts</span>
+        <span><strong>{selectedHost?.name ?? 'None'}</strong> Selected</span>
+        <span><strong>{apps.length}</strong> Apps</span>
+        <span><strong>{backendInfo?.mode ?? 'unknown'}</strong> Backend</span>
+      </section>
 
       {showControllerTest && (
         <section className="controller-test" aria-label="Controller navigation test">
@@ -1271,9 +1282,13 @@ export default function App() {
       )}
 
       {page === 'settings' && (
-        <section className="panel settings" aria-labelledby="settings-title" data-page-panel="settings">
+        <section className="panel settings-panel" aria-labelledby="settings-title" data-page-panel="settings">
           <div className="panel-heading">
-            <h2 id="settings-title">Settings</h2>
+            <div>
+              <span className="eyebrow">Preferences</span>
+              <h2 id="settings-title">Settings</h2>
+              <p>Grouped for quick controller navigation. Advanced switches stay visible, Debug controls diagnostics.</p>
+            </div>
             <div className="button-row">
               <button type="button" onClick={() => setPage('hosts')}>Cancel</button>
               <button type="button" onClick={saveSettings} disabled={settingsErrors.length > 0}>Save</button>
@@ -1284,6 +1299,10 @@ export default function App() {
               {settingsErrors.map((error) => <span key={error}>{error}</span>)}
             </div>
           )}
+          <div className="settings-layout">
+            <section className="settings-group">
+              <span className="eyebrow">Display</span>
+              <h3>Stream canvas</h3>
           <label>
             Width
             <input value={Number.isNaN(settings.width) ? '' : settings.width} type="number" min={numericSettingRules.width.min} max={numericSettingRules.width.max} data-controller-focus="true" onChange={(event) => updateNumericSettingFromInput('width', event.target.value)} />
@@ -1307,6 +1326,11 @@ export default function App() {
             Packet size
             <input value={Number.isNaN(settings.packetSize) ? '' : settings.packetSize} type="number" min={numericSettingRules.packetSize.min} max={numericSettingRules.packetSize.max} onChange={(event) => updateNumericSettingFromInput('packetSize', event.target.value)} />
           </label>
+            </section>
+
+            <section className="settings-group">
+              <span className="eyebrow">Audio & video</span>
+              <h3>Quality pipeline</h3>
           <label>
             Audio
             <select value={settings.audioConfig} onChange={(event) => updateSetting('audioConfig', Number(event.target.value))}>
@@ -1325,6 +1349,19 @@ export default function App() {
               {videoDecoderOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           </label>
+          <label className="checkbox">
+            <input checked={settings.enableHdr} type="checkbox" onChange={(event) => updateSetting('enableHdr', event.target.checked)} />
+            HDR
+          </label>
+          <label className="checkbox">
+            <input checked={settings.enableYUV444} type="checkbox" onChange={(event) => updateSetting('enableYUV444', event.target.checked)} />
+            YUV 4:4:4
+          </label>
+            </section>
+
+            <section className="settings-group">
+              <span className="eyebrow">Window & system</span>
+              <h3>Shell behavior</h3>
           <label>
             Stream window mode
             <select value={settings.windowMode} onChange={(event) => updateSetting('windowMode', Number(event.target.value))}>
@@ -1354,6 +1391,15 @@ export default function App() {
             Debug
           </label>
           <label className="checkbox">
+            <input checked={settings.keepAwake} type="checkbox" onChange={(event) => updateSetting('keepAwake', event.target.checked)} />
+            Keep display awake
+          </label>
+            </section>
+
+            <section className="settings-group">
+              <span className="eyebrow">Streaming</span>
+              <h3>Session behavior</h3>
+          <label className="checkbox">
             <input checked={settings.unlockBitrate} type="checkbox" onChange={(event) => updateSetting('unlockBitrate', event.target.checked)} />
             Unlock bitrate limit
           </label>
@@ -1379,16 +1425,21 @@ export default function App() {
             Play audio on host
           </label>
           <label className="checkbox">
-            <input checked={settings.multiController} type="checkbox" onChange={(event) => updateSetting('multiController', event.target.checked)} />
-            Multiple controllers
-          </label>
-          <label className="checkbox">
             <input checked={settings.enableMdns} type="checkbox" onChange={(event) => updateSetting('enableMdns', event.target.checked)} />
             mDNS discovery
           </label>
           <label className="checkbox">
             <input checked={settings.quitAppAfter} type="checkbox" onChange={(event) => updateSetting('quitAppAfter', event.target.checked)} />
             Quit app after stream
+          </label>
+            </section>
+
+            <section className="settings-group">
+              <span className="eyebrow">Input</span>
+              <h3>Controller & pointer</h3>
+          <label className="checkbox">
+            <input checked={settings.multiController} type="checkbox" onChange={(event) => updateSetting('multiController', event.target.checked)} />
+            Multiple controllers
           </label>
           <label className="checkbox">
             <input checked={settings.absoluteMouseMode} type="checkbox" onChange={(event) => updateSetting('absoluteMouseMode', event.target.checked)} />
@@ -1423,20 +1474,8 @@ export default function App() {
             Gamepad mouse
           </label>
           <label className="checkbox">
-            <input checked={settings.detectNetworkBlocking} type="checkbox" onChange={(event) => updateSetting('detectNetworkBlocking', event.target.checked)} />
-            Detect network blocking
-          </label>
-          <label className="checkbox">
-            <input checked={settings.showPerformanceOverlay} type="checkbox" onChange={(event) => updateSetting('showPerformanceOverlay', event.target.checked)} />
-            Performance overlay
-          </label>
-          <label className="checkbox">
             <input checked={settings.swapMouseButtons} type="checkbox" onChange={(event) => updateSetting('swapMouseButtons', event.target.checked)} />
             Swap mouse buttons
-          </label>
-          <label className="checkbox">
-            <input checked={settings.muteOnFocusLoss} type="checkbox" onChange={(event) => updateSetting('muteOnFocusLoss', event.target.checked)} />
-            Mute on focus loss
           </label>
           <label className="checkbox">
             <input checked={settings.backgroundGamepad} type="checkbox" onChange={(event) => updateSetting('backgroundGamepad', event.target.checked)} />
@@ -1450,14 +1489,25 @@ export default function App() {
             <input checked={settings.swapFaceButtons} type="checkbox" onChange={(event) => updateSetting('swapFaceButtons', event.target.checked)} />
             Swap controller face buttons
           </label>
+            </section>
+
+            <section className="settings-group">
+              <span className="eyebrow">Advanced</span>
+              <h3>Warnings & integrations</h3>
           <label className="checkbox">
-            <input checked={settings.keepAwake} type="checkbox" onChange={(event) => updateSetting('keepAwake', event.target.checked)} />
-            Keep display awake
+            <input checked={settings.detectNetworkBlocking} type="checkbox" onChange={(event) => updateSetting('detectNetworkBlocking', event.target.checked)} />
+            Detect network blocking
           </label>
           <label className="checkbox">
-            <input checked={settings.enableYUV444} type="checkbox" onChange={(event) => updateSetting('enableYUV444', event.target.checked)} />
-            YUV 4:4:4
+            <input checked={settings.showPerformanceOverlay} type="checkbox" onChange={(event) => updateSetting('showPerformanceOverlay', event.target.checked)} />
+            Performance overlay
           </label>
+          <label className="checkbox">
+            <input checked={settings.muteOnFocusLoss} type="checkbox" onChange={(event) => updateSetting('muteOnFocusLoss', event.target.checked)} />
+            Mute on focus loss
+          </label>
+            </section>
+          </div>
         </section>
       )}
 

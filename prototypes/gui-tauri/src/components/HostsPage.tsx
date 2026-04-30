@@ -43,10 +43,33 @@ export function HostsPage({
   onRename,
   onDelete,
 }: HostsPageProps) {
+  const selectedHost = hosts.find((host) => host.id === selectedHostId) ?? hosts[0];
+  const readyHosts = hosts.filter((host) => host.paired && host.serverSupported).length;
+
   return (
-    <section className="panel" aria-labelledby="hosts-title" data-page-panel="hosts">
-      <div className="panel-heading">
-        <h2 id="hosts-title">Hosts</h2>
+    <section className="panel dashboard-panel" aria-labelledby="hosts-title" data-page-panel="hosts">
+      <div className="dashboard-hero">
+        <div>
+          <span className="eyebrow">Home theater</span>
+          <h2 id="hosts-title">{selectedHost?.name ?? 'Find your gaming PC'}</h2>
+          <p>
+            {selectedHost
+              ? `${selectedHost.status} - ${selectedHost.paired ? 'paired and ready for the library' : 'pair this host to unlock streaming'}`
+              : 'Discover Sunshine hosts, add one manually, then jump straight into the library.'}
+          </p>
+        </div>
+        <div className="hero-metrics" aria-label="Host summary">
+          <span><strong>{hosts.length}</strong> Found</span>
+          <span><strong>{readyHosts}</strong> Ready</span>
+          <span><strong>{selectedHost?.running ? 'Live' : 'Idle'}</strong> Session</span>
+        </div>
+      </div>
+
+      <div className="panel-heading compact-heading">
+        <div>
+          <span className="eyebrow">Host grid</span>
+          <h3>Choose a system</h3>
+        </div>
         <div className="button-row">
           <button type="button" onClick={onRefreshHosts} data-controller-focus={hosts.length === 0 ? 'true' : undefined}>Refresh</button>
           <button type="button" onClick={onAddHost}>Add Host</button>

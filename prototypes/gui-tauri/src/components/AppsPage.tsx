@@ -32,12 +32,30 @@ export function AppsPage({
   onToggleDirectLaunch,
   onToggleHidden,
 }: AppsPageProps) {
+  const runningApp = apps.find((app) => app.running);
+
   return (
-    <section className="panel" aria-labelledby="apps-title" data-page-panel="apps">
-      <div className="panel-heading">
+    <section className="panel library-panel" aria-labelledby="apps-title" data-page-panel="apps">
+      <div className="dashboard-hero library-hero">
         <div>
+          <span className="eyebrow">Game library</span>
           <h2 id="apps-title">{selectedHost?.name ?? 'Apps'}</h2>
-          <p>Launch, quit, hide, and direct-launch actions map to native commands.</p>
+          <p>
+            {selectedHost
+              ? `${apps.length} visible apps${runningApp ? ` - ${runningApp.name} is running` : ''}`
+              : 'Select a host before opening the library.'}
+          </p>
+        </div>
+        <div className="hero-metrics" aria-label="Library summary">
+          <span><strong>{apps.length}</strong> Apps</span>
+          <span><strong>{showHiddenApps ? 'All' : 'Visible'}</strong> Filter</span>
+          <span><strong>{runningApp ? 'Live' : 'Idle'}</strong> Stream</span>
+        </div>
+      </div>
+      <div className="panel-heading compact-heading">
+        <div>
+          <span className="eyebrow">Launch shelf</span>
+          <h3>Pick a game</h3>
         </div>
         <div className="button-row">
           <button type="button" onClick={() => {

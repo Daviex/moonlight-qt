@@ -29,6 +29,8 @@ export function HostCard({
   onRename,
   onDelete,
 }: HostCardProps) {
+  const stateLabel = host.running ? 'Streaming now' : host.paired ? 'Ready to play' : 'Needs pairing';
+
   return (
     <article
       className={`host-card ${selected ? 'selected' : ''}`}
@@ -40,12 +42,18 @@ export function HostCard({
         data-controller-focus={selected ? 'true' : undefined}
         onClick={() => onOpenApps(host)}
       >
-        <span className="title">{host.name}</span>
-        <span>{host.status}</span>
-        <span>{host.paired ? 'Paired' : 'Pairing required'}</span>
-        {host.running && <span className="tag">In Game</span>}
-        {host.wakeable && <span className="tag">Wakeable</span>}
-        {!host.serverSupported && <span className="tag muted">Unsupported Server</span>}
+        <span className="host-orb" aria-hidden="true">{host.name.slice(0, 1).toUpperCase()}</span>
+        <span className="card-copy">
+          <span className="eyebrow">{stateLabel}</span>
+          <span className="title">{host.name}</span>
+          <span className="card-subtitle">{host.status}</span>
+        </span>
+        <span className="tag-row">
+          <span className={host.paired ? 'tag' : 'tag warning'}>{host.paired ? 'Paired' : 'Pairing required'}</span>
+          {host.running && <span className="tag">In Game</span>}
+          {host.wakeable && <span className="tag">Wakeable</span>}
+          {!host.serverSupported && <span className="tag muted">Unsupported Server</span>}
+        </span>
       </button>
       <div className="card-actions">
         <button type="button" disabled={!pairEnabled} onClick={() => onPair(host)}>Pair</button>
