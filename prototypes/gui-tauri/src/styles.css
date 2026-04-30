@@ -17,13 +17,22 @@
   --color-danger-hover: #f85149;
   --color-danger-bg: #33161c;
   --color-danger-text: #ffdcd7;
+  --color-button-text: #fff;
+  --color-accent-secondary: #8957e5;
+  --gradient-page: radial-gradient(circle at top left, color-mix(in srgb, var(--color-accent) 20%, transparent), transparent 24rem),
+    var(--color-bg);
+  --gradient-button: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
+  --gradient-button-hover: linear-gradient(135deg, var(--color-accent-hover), var(--color-accent-ring));
+  --gradient-card: linear-gradient(145deg, var(--color-surface-raised), var(--color-surface));
+  --gradient-panel: color-mix(in srgb, var(--color-surface) 94%, transparent);
+  --shadow-action: 0 10px 28px rgb(0 0 0 / 20%);
+  --shadow-panel: 0 24px 70px rgb(1 4 9 / 38%);
   --radius-sm: 8px;
   --radius-md: 10px;
   --radius-lg: 14px;
   --radius-xl: 18px;
   color: var(--color-text);
-  background: radial-gradient(circle at top left, color-mix(in srgb, var(--color-accent) 20%, transparent), transparent 24rem),
-    var(--color-bg);
+  background: var(--gradient-page);
   font-family: "Segoe UI", system-ui, sans-serif;
 }
 
@@ -44,23 +53,35 @@
 
 :root[data-theme="deckOled"] {
   --color-bg: #000;
-  --color-surface: #090d14;
-  --color-surface-raised: #111927;
-  --color-surface-muted: #05080d;
-  --color-border: #26384d;
-  --color-text: #f4f8fb;
-  --color-muted: #aab8c6;
-  --color-accent: #66c0f4;
-  --color-accent-hover: #7cc7ee;
-  --color-accent-ring: #b8e7ff;
-  --color-success-bg: #0b2417;
-  --color-success-border: #4fd07a;
-  --color-warning-bg: #2a220f;
-  --color-warning-border: #d7a93a;
-  --color-danger: #df4c55;
-  --color-danger-hover: #ef6a72;
-  --color-danger-bg: #2a1015;
-  --color-danger-text: #ffe4e6;
+  --color-surface: #080914;
+  --color-surface-raised: #13162a;
+  --color-surface-muted: #05060d;
+  --color-border: #27304a;
+  --color-text: #f8fbff;
+  --color-muted: #b7bfd3;
+  --color-accent: #8b5cf6;
+  --color-accent-hover: #38bdf8;
+  --color-accent-ring: #f0abfc;
+  --color-accent-secondary: #22d3ee;
+  --color-button-text: #fff;
+  --color-success-bg: #061d18;
+  --color-success-border: #34d399;
+  --color-warning-bg: #24170a;
+  --color-warning-border: #fb923c;
+  --color-danger: #fb477e;
+  --color-danger-hover: #ff6b9a;
+  --color-danger-bg: #230812;
+  --color-danger-text: #ffe6ee;
+  --gradient-page: radial-gradient(circle at 12% 0%, rgb(139 92 246 / 34%), transparent 24rem),
+    radial-gradient(circle at 88% 8%, rgb(34 211 238 / 22%), transparent 23rem),
+    radial-gradient(circle at 50% 110%, rgb(244 114 182 / 12%), transparent 28rem),
+    linear-gradient(180deg, #05050a 0%, #000 45%, #02030a 100%);
+  --gradient-button: linear-gradient(135deg, #8b5cf6 0%, #06b6d4 100%);
+  --gradient-button-hover: linear-gradient(135deg, #a78bfa 0%, #38bdf8 52%, #f0abfc 100%);
+  --gradient-card: linear-gradient(145deg, rgb(23 25 48 / 92%) 0%, rgb(10 12 25 / 96%) 58%, rgb(4 5 12 / 98%) 100%);
+  --gradient-panel: linear-gradient(145deg, rgb(13 15 30 / 92%) 0%, rgb(5 6 14 / 96%) 100%);
+  --shadow-action: 0 14px 34px rgb(56 189 248 / 18%), 0 5px 14px rgb(139 92 246 / 18%);
+  --shadow-panel: 0 24px 90px rgb(0 0 0 / 52%), inset 0 1px 0 rgb(255 255 255 / 5%);
 }
 
 :root[data-theme="highContrast"] {
@@ -98,27 +119,29 @@ select {
 }
 
 button {
-  color: var(--color-text);
-  background: var(--color-accent);
+  color: var(--color-button-text);
+  background: var(--gradient-button);
   border: 0;
   border-radius: var(--radius-md);
   padding: 0.7rem 1rem;
   cursor: pointer;
+  box-shadow: var(--shadow-action);
 }
 
 a {
-  color: var(--color-text);
-  background: var(--color-success-border);
+  color: var(--color-button-text);
+  background: var(--gradient-button);
   border-radius: var(--radius-md);
   padding: 0.7rem 1rem;
   text-decoration: none;
+  box-shadow: var(--shadow-action);
 }
 
 button:hover,
 button:focus-visible,
 a:hover,
 a:focus-visible {
-  background: var(--color-accent-hover);
+  background: var(--gradient-button-hover);
   outline: 3px solid var(--color-accent-ring);
   outline-offset: 2px;
 }
@@ -127,15 +150,16 @@ button:disabled {
   color: var(--color-muted);
   background: var(--color-border);
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 button.danger {
-  background: var(--color-danger);
+  background: linear-gradient(135deg, var(--color-danger), var(--color-danger-hover));
 }
 
 button.danger:hover,
 button.danger:focus-visible {
-  background: var(--color-danger-hover);
+  background: linear-gradient(135deg, var(--color-danger-hover), var(--color-danger));
 }
 
 .shell {
@@ -155,7 +179,11 @@ button.danger:focus-visible {
 }
 
 .toolbar {
-  padding: 0.25rem;
+  padding: 0.75rem;
+  background: color-mix(in srgb, var(--color-surface) 66%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-panel);
 }
 
 .toolbar h1,
@@ -191,6 +219,15 @@ nav {
   padding: 0.55rem;
 }
 
+:root[data-theme="deckOled"] .theme-picker select,
+:root[data-theme="deckOled"] .settings input,
+:root[data-theme="deckOled"] .settings select,
+:root[data-theme="deckOled"] .form-field input {
+  background: rgb(3 5 13 / 88%);
+  border-color: rgb(139 92 246 / 35%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 4%);
+}
+
 .controller-test {
   display: flex;
   flex-wrap: wrap;
@@ -200,7 +237,8 @@ nav {
 }
 
 .controller-test button {
-  background: var(--color-border);
+  background: linear-gradient(135deg, var(--color-border), var(--color-surface-raised));
+  box-shadow: none;
   padding: 0.45rem 0.65rem;
 }
 
@@ -210,10 +248,11 @@ nav {
   gap: 0.4rem;
   margin-top: 1rem;
   color: var(--color-muted);
-  background: var(--color-surface-muted);
+  background: var(--gradient-panel);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: 0.75rem;
+  box-shadow: var(--shadow-panel);
 }
 
 .empty-state h3,
@@ -224,10 +263,11 @@ nav {
 .stream-panel {
   display: grid;
   gap: 0.75rem;
-  background: color-mix(in srgb, var(--color-accent) 16%, var(--color-surface));
+  background: color-mix(in srgb, var(--color-accent) 18%, var(--color-surface));
   border: 1px solid var(--color-accent);
   border-radius: var(--radius-lg);
   padding: 1rem;
+  box-shadow: var(--shadow-panel);
 }
 
 .update-banner {
@@ -239,6 +279,7 @@ nav {
   border: 1px solid var(--color-success-border);
   border-radius: var(--radius-lg);
   padding: 1rem;
+  box-shadow: var(--shadow-panel);
 }
 
 .update-banner h2,
@@ -297,11 +338,12 @@ nav {
 }
 
 .panel {
-  background: color-mix(in srgb, var(--color-surface) 94%, transparent);
+  background: var(--gradient-panel);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-xl);
   padding: 1.25rem;
   overflow: auto;
+  box-shadow: var(--shadow-panel);
 }
 
 .card-grid {
@@ -319,15 +361,24 @@ nav {
   align-items: flex-start;
   justify-content: space-between;
   text-align: left;
-  background: var(--color-surface-raised);
+  background: var(--gradient-card);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   padding: 1rem;
   gap: 1rem;
+  box-shadow: var(--shadow-panel);
+  transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+
+.host-card:hover,
+.app-card:hover {
+  border-color: color-mix(in srgb, var(--color-accent) 70%, var(--color-border));
+  transform: translateY(-1px);
 }
 
 .host-card.selected {
   border-color: var(--color-accent-ring);
+  box-shadow: var(--shadow-panel), 0 0 0 1px var(--color-accent-ring);
 }
 
 .card-primary {
@@ -339,8 +390,9 @@ nav {
   align-items: flex-start;
   justify-content: space-between;
   text-align: left;
-  background: transparent;
+  background: color-mix(in srgb, var(--color-surface-muted) 42%, transparent);
   border: 1px solid var(--color-border);
+  box-shadow: none;
 }
 
 .app-card .card-primary {
@@ -361,9 +413,10 @@ nav {
   place-items: center;
   overflow: hidden;
   color: var(--color-text);
-  background: linear-gradient(135deg, var(--color-accent), var(--color-border));
+  background: linear-gradient(145deg, var(--color-accent), var(--color-accent-secondary), var(--color-border));
   border-radius: var(--radius-md);
   font-weight: 700;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 18%), 0 12px 24px rgb(0 0 0 / 28%);
 }
 
 .app-art img {
@@ -379,7 +432,8 @@ nav {
 }
 
 .card-actions button {
-  background: var(--color-border);
+  background: linear-gradient(135deg, var(--color-border), var(--color-surface-raised));
+  box-shadow: none;
   padding: 0.45rem 0.65rem;
 }
 
@@ -463,7 +517,7 @@ nav {
   border: 1px solid var(--color-accent-ring);
   border-radius: 18px;
   padding: 1.25rem;
-  box-shadow: 0 24px 80px rgb(1 4 9 / 65%);
+  box-shadow: var(--shadow-panel), 0 24px 80px rgb(1 4 9 / 65%);
 }
 
 .dialog h2,
