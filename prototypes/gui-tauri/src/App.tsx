@@ -1,387 +1,53 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { convertFileSrc } from '@tauri-apps/api/core';
 import {
   AppEntry,
   BackendInfo,
   BridgeEvent,
   ControllerAction,
-  HostDetails,
   HostEntry,
-  PairingChallenge,
   StreamingSettings,
   SystemInfo,
   bridge,
 } from './bridge';
-
-type Page = 'hosts' | 'apps' | 'settings';
-type StreamPhase = 'idle' | 'launching' | 'active' | 'quitting' | 'cleanup' | 'finished' | 'error';
-
-interface StreamUiState {
-  phase: StreamPhase;
-  hostId: string;
-  hostName: string;
-  appName: string;
-  message: string;
-  warnings: string[];
-  errors: string[];
-  uiHiddenRequested: boolean;
-}
-
-interface UpdateInfo {
-  version: string;
-  url: string;
-  message: string;
-}
-
-type DialogState =
-  | { kind: 'none' }
-  | { kind: 'addHost'; address: string; error: string; submitting: boolean }
-  | { kind: 'renameHost'; host: HostEntry; name: string; error: string; submitting: boolean }
-  | { kind: 'deleteHost'; host: HostEntry; error: string; submitting: boolean }
-  | { kind: 'pairing'; host: HostEntry; challenge: PairingChallenge }
-  | { kind: 'hostDetails'; details: HostDetails }
-  | { kind: 'help' };
-
-const fallbackSettings: StreamingSettings = {
-  width: 1920,
-  height: 1080,
-  fps: 60,
-  bitrateKbps: 20000,
-  packetSize: 0,
-  audioConfig: 0,
-  videoCodecConfig: 0,
-  videoDecoderSelection: 0,
-  windowMode: 1,
-  uiDisplayMode: 0,
-  language: 0,
-  captureSysKeysMode: 1,
-  unlockBitrate: false,
-  autoAdjustBitrate: false,
-  enableVsync: true,
-  gameOptimizations: false,
-  playAudioOnHost: false,
-  multiController: true,
-  enableMdns: true,
-  quitAppAfter: false,
-  absoluteMouseMode: false,
-  absoluteTouchMode: true,
-  framePacing: false,
-  connectionWarnings: true,
-  configurationWarnings: true,
-  richPresence: true,
-  enableHdr: false,
-  gamepadMouse: true,
-  detectNetworkBlocking: true,
-  showPerformanceOverlay: false,
-  swapMouseButtons: false,
-  muteOnFocusLoss: false,
-  backgroundGamepad: false,
-  reverseScrollDirection: false,
-  swapFaceButtons: false,
-  keepAwake: true,
-  enableYUV444: false,
-};
-
-const controllerTestActions: ControllerAction[] = [
-  'previousControl',
-  'nextControl',
-  'accept',
-  'back',
-  'settings',
-  'contextMenu',
-];
-
-const idleStreamState: StreamUiState = {
-  phase: 'idle',
-  hostId: '',
-  hostName: '',
-  appName: '',
-  message: '',
-  warnings: [],
-  errors: [],
-  uiHiddenRequested: false,
-};
+import {
+  audioConfigOptions,
+  captureSysKeysOptions,
+  controllerTestActions,
+  discordUrl,
+  fallbackSettings,
+  gamepadMappingHelpUrl,
+  hardwareDecodingHelpUrl,
+  languageOptions,
+  numericSettingRules,
+  NumericSettingKey,
+  setupGuideUrl,
+  uiDisplayModeOptions,
+  videoCodecOptions,
+  videoDecoderOptions,
+  windowModeOptions,
+} from './ui/constants';
+import { DialogState, Page, StreamPhase, StreamUiState, UpdateInfo } from './ui/types';
+import { normalizeSettings, validateSettings } from './ui/settings';
+import { idleStreamState } from './ui/stream';
+import {
+  activeDialogRoot,
+  focusCardActions,
+  focusPage,
+  focusPreferredElement,
+  focusableElements,
+  moveFocus,
+} from './ui/navigation';
+import { AppsPage } from './components/AppsPage';
+import { HostsPage } from './components/HostsPage';
+import { StreamPanel } from './components/StreamPanel';
+import { applyStoredTheme, readStoredTheme, themeOptions, UiTheme } from './ui/theme';
+import { canPairHost } from './ui/hosts';
 
 const appWindow = getCurrentWindow();
-const setupGuideUrl = 'https://github.com/moonlight-stream/moonlight-docs/wiki/Setup-Guide';
-const discordUrl = 'https://moonlight-stream.org/discord';
-const hardwareDecodingHelpUrl = 'https://github.com/moonlight-stream/moonlight-docs/wiki/Fixing-Hardware-Decoding-Problems';
-const gamepadMappingHelpUrl = 'https://github.com/moonlight-stream/moonlight-docs/wiki/Gamepad-Mapping';
-
-const audioConfigOptions = [
-  { value: 0, label: 'Stereo' },
-  { value: 1, label: '5.1 surround' },
-  { value: 2, label: '7.1 surround' },
-];
-
-const videoCodecOptions = [
-  { value: 0, label: 'Automatic' },
-  { value: 1, label: 'Force H.264' },
-  { value: 2, label: 'Force HEVC' },
-  { value: 4, label: 'Force AV1' },
-];
-
-const videoDecoderOptions = [
-  { value: 0, label: 'Automatic' },
-  { value: 1, label: 'Force hardware' },
-  { value: 2, label: 'Force software' },
-];
-
-const windowModeOptions = [
-  { value: 0, label: 'Fullscreen' },
-  { value: 1, label: 'Borderless fullscreen' },
-  { value: 2, label: 'Windowed' },
-];
-
-const uiDisplayModeOptions = [
-  { value: 0, label: 'Windowed' },
-  { value: 1, label: 'Maximized' },
-  { value: 2, label: 'Fullscreen' },
-];
-
-const languageOptions = [
-  { value: 0, label: 'Automatic' },
-  { value: 1, label: 'English' },
-  { value: 2, label: 'French' },
-  { value: 3, label: 'Simplified Chinese' },
-  { value: 4, label: 'German' },
-  { value: 5, label: 'Norwegian Bokmal' },
-  { value: 6, label: 'Russian' },
-  { value: 7, label: 'Spanish' },
-  { value: 8, label: 'Japanese' },
-  { value: 9, label: 'Vietnamese' },
-  { value: 10, label: 'Thai' },
-  { value: 11, label: 'Korean' },
-  { value: 12, label: 'Hungarian' },
-  { value: 13, label: 'Dutch' },
-  { value: 14, label: 'Swedish' },
-  { value: 15, label: 'Turkish' },
-  { value: 16, label: 'Ukrainian' },
-  { value: 17, label: 'Traditional Chinese' },
-  { value: 18, label: 'Portuguese' },
-  { value: 19, label: 'Brazilian Portuguese' },
-  { value: 20, label: 'Greek' },
-  { value: 21, label: 'Italian' },
-  { value: 22, label: 'Hindi' },
-  { value: 23, label: 'Polish' },
-  { value: 24, label: 'Czech' },
-  { value: 25, label: 'Hebrew' },
-  { value: 26, label: 'Central Kurdish' },
-  { value: 27, label: 'Lithuanian' },
-  { value: 28, label: 'Estonian' },
-  { value: 29, label: 'Bulgarian' },
-  { value: 30, label: 'Esperanto' },
-  { value: 31, label: 'Tamil' },
-];
-
-const captureSysKeysOptions = [
-  { value: 0, label: 'Off' },
-  { value: 1, label: 'Fullscreen only' },
-  { value: 2, label: 'Always' },
-];
-
-const numericSettingRules = {
-  width: { label: 'Width', min: 256, max: 8192 },
-  height: { label: 'Height', min: 256, max: 8192 },
-  fps: { label: 'FPS', min: 10, max: 9999 },
-  bitrateKbps: { label: 'Bitrate', min: 500, max: 500000 },
-  packetSize: { label: 'Packet size', min: 0, max: 9000 },
-} as const;
-
-type NumericSettingKey = keyof typeof numericSettingRules;
 
 function writeDebugLog(message: string) {
   void bridge.debugLog(message).catch(() => undefined);
-}
-
-function clampNumber(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function normalizeNumericSetting(key: NumericSettingKey, value: number) {
-  const rule = numericSettingRules[key];
-  if (!Number.isFinite(value)) {
-    return rule.min;
-  }
-
-  return clampNumber(Math.round(value), rule.min, rule.max);
-}
-
-function normalizeSettings(settings: StreamingSettings): StreamingSettings {
-  return {
-    ...settings,
-    width: normalizeNumericSetting('width', settings.width),
-    height: normalizeNumericSetting('height', settings.height),
-    fps: normalizeNumericSetting('fps', settings.fps),
-    bitrateKbps: normalizeNumericSetting('bitrateKbps', settings.bitrateKbps),
-    packetSize: normalizeNumericSetting('packetSize', settings.packetSize),
-  };
-}
-
-function validateSettings(settings: StreamingSettings) {
-  return (Object.entries(numericSettingRules) as [NumericSettingKey, typeof numericSettingRules[NumericSettingKey]][])
-    .flatMap(([key, rule]) => {
-      const value = settings[key];
-      if (!Number.isFinite(value)) {
-        return [`${rule.label} must be a number.`];
-      }
-      if (!Number.isInteger(value)) {
-        return [`${rule.label} must be a whole number.`];
-      }
-      if (value < rule.min || value > rule.max) {
-        return [`${rule.label} must be between ${rule.min} and ${rule.max}.`];
-      }
-      return [];
-    });
-}
-
-function canPairHost(host: HostEntry) {
-  return (host.status === 'Online' || host.status === 'Pairing required') && !host.paired && host.serverSupported;
-}
-
-function canWakeHost(host: HostEntry) {
-  return host.status !== 'Online' && host.wakeable;
-}
-
-function streamPhaseLabel(phase: StreamPhase) {
-  switch (phase) {
-  case 'launching':
-    return 'Starting';
-  case 'active':
-    return 'Streaming';
-  case 'quitting':
-    return 'Quitting';
-  case 'cleanup':
-    return 'Cleaning up';
-  case 'finished':
-    return 'Finished';
-  case 'error':
-    return 'Needs attention';
-  case 'idle':
-    return 'Idle';
-  }
-}
-
-function streamPhaseHelp(phase: StreamPhase) {
-  switch (phase) {
-  case 'launching':
-    return 'Moonlight asked the native helper to create the streaming session. Keep this shell open until the native stream window takes over.';
-  case 'active':
-    return 'The native stream owns video, audio, and input. The Tauri shell can stay hidden until the native helper requests it again.';
-  case 'quitting':
-    return 'Moonlight is asking the host app and native session to stop. Wait for cleanup before launching another app.';
-  case 'cleanup':
-    return 'The stream has ended and Moonlight is releasing native session resources.';
-  case 'finished':
-    return 'The native session has finished and the Tauri shell is ready for the next action.';
-  case 'error':
-    return 'Moonlight reported a stream problem. Review the messages below, then dismiss the stream state after the native session is no longer active.';
-  case 'idle':
-    return '';
-  }
-}
-
-function activeDialogRoot(): HTMLElement | null {
-  return document.getElementById('active-dialog');
-}
-
-function focusableElements(root: ParentNode = document): HTMLElement[] {
-  return Array.from(
-    root.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'),
-  ).filter((element) =>
-    !element.hasAttribute('disabled') &&
-    element.tabIndex !== -1 &&
-    element.offsetParent !== null,
-  );
-}
-
-function appInitials(appName: string) {
-  return appName
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? '')
-    .join('') || '?';
-}
-
-function boxArtSrc(app: AppEntry) {
-  if (!app.boxArtUrl || app.boxArtUrl.startsWith('qrc:')) {
-    return '';
-  }
-  if (app.boxArtUrl.startsWith('data:image/')) {
-    return app.boxArtUrl;
-  }
-
-  try {
-    const url = new URL(app.boxArtUrl);
-    if (url.protocol === 'file:') {
-      let path = decodeURIComponent(url.pathname);
-      if (url.hostname) {
-        path = `//${url.hostname}${path}`;
-      }
-      if (/^\/[A-Za-z]:\//.test(path)) {
-        path = path.slice(1);
-      }
-      return convertFileSrc(path);
-    }
-    if (url.protocol === 'http:' || url.protocol === 'https:') {
-      return app.boxArtUrl;
-    }
-  }
-  catch {
-    return '';
-  }
-
-  return '';
-}
-
-function moveFocus(delta: number) {
-  const elements = focusableElements(activeDialogRoot() ?? document);
-  if (elements.length === 0) {
-    return;
-  }
-
-  const currentIndex = Math.max(0, elements.indexOf(document.activeElement as HTMLElement));
-  const nextIndex = (currentIndex + delta + elements.length) % elements.length;
-  elements[nextIndex].focus();
-}
-
-function focusPreferredElement(root: ParentNode = document) {
-  const preferredElement = root.querySelector<HTMLElement>('[data-controller-focus="true"]');
-  if (preferredElement &&
-      !preferredElement.hasAttribute('disabled') &&
-      preferredElement.tabIndex !== -1 &&
-      preferredElement.offsetParent !== null) {
-    preferredElement.focus();
-    return;
-  }
-
-  focusableElements(root)[0]?.focus();
-}
-
-function focusPage(page: Page) {
-  focusPreferredElement(document.querySelector<HTMLElement>(`[data-page-panel="${page}"]`) ?? document);
-}
-
-function focusCardActions() {
-  const activeElement = document.activeElement;
-  if (!(activeElement instanceof HTMLElement)) {
-    return false;
-  }
-
-  const card = activeElement.closest<HTMLElement>('[data-controller-card="true"]');
-  if (!card) {
-    return false;
-  }
-
-  const actionElements = focusableElements(card.querySelector<HTMLElement>('.card-actions') ?? card);
-  if (actionElements.length === 0) {
-    return false;
-  }
-
-  actionElements[0].focus();
-  return true;
 }
 
 export default function App() {
@@ -398,6 +64,7 @@ export default function App() {
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [dialog, setDialog] = useState<DialogState>({ kind: 'none' });
+  const [theme, setTheme] = useState<UiTheme>(() => readStoredTheme());
   const dialogOpenerRef = useRef<HTMLElement | null>(null);
   const previousDialogKindRef = useRef<DialogState['kind']>('none');
   const [hostRefreshDiagnostics, setHostRefreshDiagnostics] = useState({
@@ -1122,6 +789,10 @@ export default function App() {
   }, [refreshBackendInfo, refreshHosts]);
 
   useEffect(() => {
+    applyStoredTheme(theme);
+  }, [theme]);
+
+  useEffect(() => {
     if (dialog.kind !== 'none') {
       return undefined;
     }
@@ -1479,6 +1150,14 @@ export default function App() {
           <button type="button" onClick={() => setPage('hosts')}>Hosts</button>
           <button type="button" onClick={loadSettings}>Settings</button>
           <button type="button" onClick={openHelpDialog}>Help</button>
+          <label className="theme-picker">
+            Theme
+            <select value={theme} onChange={(event) => setTheme(event.target.value as UiTheme)}>
+              {themeOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
         </nav>
       </header>
 
@@ -1535,211 +1214,53 @@ export default function App() {
         </section>
       )}
 
-      {streamState.phase !== 'idle' && (
-        <section className={`stream-panel ${streamState.phase}`} aria-label="Native stream state">
-          <div>
-            <h2>Native stream - {streamPhaseLabel(streamState.phase)}</h2>
-            <p>
-              {streamState.appName || 'Session'}
-              {streamState.hostName && ` on ${streamState.hostName}`}
-            </p>
-            <p>{streamPhaseHelp(streamState.phase)}</p>
-          </div>
-          <div className="stream-status">
-            <span className="tag">{streamState.phase}</span>
-            <span>{streamState.message}</span>
-            {streamState.uiHiddenRequested && <span>Native requested the Tauri shell to hide while streaming.</span>}
-          </div>
-          {(streamState.warnings.length > 0 || streamState.errors.length > 0) && (
-            <div className="stream-messages">
-              {streamState.warnings.map((warning, index) => (
-                <span key={`warning-${index}`}>{warning}</span>
-              ))}
-              {streamState.errors.map((error, index) => (
-                <span key={`error-${index}`} className="error">{error}</span>
-              ))}
-            </div>
-          )}
-          <div className="button-row">
-            <button type="button" onClick={showTauriShell}>Show Shell</button>
-            <button type="button" onClick={quitRunningApp} disabled={!canQuitStream}>Quit Stream</button>
-            <button type="button" onClick={() => setPage('hosts')}>Return to Hosts</button>
-            {(streamState.phase === 'finished' || streamState.phase === 'error') && (
-              <button type="button" onClick={dismissStreamState}>Dismiss</button>
-            )}
-          </div>
-        </section>
-      )}
+      <StreamPanel
+        streamState={streamState}
+        canQuitStream={canQuitStream}
+        onShowShell={showTauriShell}
+        onQuitStream={quitRunningApp}
+        onReturnToHosts={() => setPage('hosts')}
+        onDismiss={dismissStreamState}
+      />
 
       {page === 'hosts' && (
-        <section className="panel" aria-labelledby="hosts-title" data-page-panel="hosts">
-          <div className="panel-heading">
-            <h2 id="hosts-title">Hosts</h2>
-            <div className="button-row">
-              <button type="button" onClick={refreshHosts} data-controller-focus={hosts.length === 0 ? 'true' : undefined}>Refresh</button>
-              <button type="button" onClick={openAddHostDialog}>Add Host</button>
-            </div>
-          </div>
-          <div className="backend-diagnostics" aria-label="Backend diagnostics">
-            <span>Backend: {backendInfo?.mode ?? 'unknown'}</span>
-            {backendInfo?.helperPath && <span>Helper: {backendInfo.helperPath}</span>}
-            <span>Last host count: {hostRefreshDiagnostics.lastCount}</span>
-            <span>Refresh attempts: {hostRefreshDiagnostics.attempts}</span>
-            {hostRefreshDiagnostics.lastError && <span>Error: {hostRefreshDiagnostics.lastError}</span>}
-          </div>
-          {hosts.length === 0 && (
-            <div className="empty-state">
-              <h3>No hosts found yet</h3>
-              <p>
-                Moonlight is polling saved hosts and listening for Sunshine via mDNS. If this stays empty, confirm the
-                Tauri shell was started with the IPC helper environment variables and that the helper path points at the
-                latest built Moonlight.exe.
-              </p>
-              <p>
-                Refresh attempts: {hostRefreshDiagnostics.attempts}; last host count: {hostRefreshDiagnostics.lastCount}
-                {hostRefreshDiagnostics.lastError && `; last error: ${hostRefreshDiagnostics.lastError}`}
-              </p>
-            </div>
-          )}
-          <div className="card-grid">
-            {hosts.map((host) => {
-              const pairEnabled = canPairHost(host);
-              const wakeEnabled = canWakeHost(host);
-              return (
-                <article
-                  key={host.id}
-                  className={`host-card ${host.id === selectedHostId ? 'selected' : ''}`}
-                  data-controller-card="true"
-                >
-                  <button
-                    type="button"
-                    className="card-primary"
-                    data-controller-focus={host.id === selectedHostId ? 'true' : undefined}
-                    onClick={() => openApps(host)}
-                  >
-                    <span className="title">{host.name}</span>
-                    <span>{host.status}</span>
-                    <span>{host.paired ? 'Paired' : 'Pairing required'}</span>
-                    {host.running && <span className="tag">In Game</span>}
-                    {host.wakeable && <span className="tag">Wakeable</span>}
-                    {!host.serverSupported && <span className="tag muted">Unsupported Server</span>}
-                  </button>
-                  <div className="card-actions">
-                    <button type="button" disabled={!pairEnabled} onClick={() => pairHost(host)}>Pair</button>
-                    {host.running && <button type="button" onClick={() => resumeSession(host)}>Resume</button>}
-                    <button type="button" disabled={!wakeEnabled} onClick={() => runHostCommand(() => bridge.wakeHost(host.id))}>Wake</button>
-                    <button type="button" onClick={() => showDetails(host)}>Details</button>
-                    <button type="button" onClick={() => testNetwork(host)}>Test</button>
-                    <button type="button" onClick={() => openRenameHostDialog(host)}>Rename</button>
-                    <button type="button" onClick={() => openDeleteHostDialog(host)}>Delete</button>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        </section>
+        <HostsPage
+          backendInfo={backendInfo}
+          diagnostics={hostRefreshDiagnostics}
+          hosts={hosts}
+          selectedHostId={selectedHostId}
+          onRefreshHosts={refreshHosts}
+          onAddHost={openAddHostDialog}
+          onOpenApps={openApps}
+          onPair={pairHost}
+          onResume={resumeSession}
+          onWake={(hostToWake) => {
+            void runHostCommand(() => bridge.wakeHost(hostToWake.id));
+          }}
+          onDetails={showDetails}
+          onTestNetwork={testNetwork}
+          onRename={openRenameHostDialog}
+          onDelete={openDeleteHostDialog}
+        />
       )}
 
       {page === 'apps' && (
-        <section className="panel" aria-labelledby="apps-title" data-page-panel="apps">
-          <div className="panel-heading">
-            <div>
-              <h2 id="apps-title">{selectedHost?.name ?? 'Apps'}</h2>
-              <p>Launch, quit, hide, and direct-launch actions map to native commands.</p>
-            </div>
-            <div className="button-row">
-              <button type="button" onClick={() => {
-                const nextShowHidden = !showHiddenApps;
-                setShowHiddenApps(nextShowHidden);
-                void refreshApps(selectedHostId, nextShowHidden);
-              }}>
-                {showHiddenApps ? 'Hide Hidden Apps' : 'View All Apps'}
-              </button>
-              <button type="button" onClick={quitRunningApp}>Quit Running App</button>
-              <button type="button" onClick={() => setPage('hosts')}>Back</button>
-            </div>
-          </div>
-          {apps.length === 0 && (
-            <div className="empty-state">
-              <h3>
-                {selectedHost
-                  ? selectedHost.paired ? 'No apps returned' : 'Pair this host to load apps'
-                  : 'No host selected'}
-              </h3>
-              {selectedHost ? (
-                selectedHost.paired ? (
-                  <p>
-                    The native helper did not return any visible apps for this host. Try refreshing, show hidden apps,
-                    or confirm the host is online and Sunshine is returning an app list.
-                  </p>
-                ) : (
-                  <p>
-                    {selectedHost.name} is not paired yet. Pair it from here or return to Hosts before trying to load
-                    apps.
-                  </p>
-                )
-              ) : (
-                <p>Select a host before loading apps.</p>
-              )}
-              {selectedHost && (
-                <p>
-                  Host status: {selectedHost.status}; paired: {selectedHost.paired ? 'yes' : 'no'};
-                  server supported: {selectedHost.serverSupported ? 'yes' : 'no'}.
-                </p>
-              )}
-              <div className="button-row">
-                {selectedHost && !selectedHost.paired && (
-                  <button type="button" disabled={!canPairHost(selectedHost)} onClick={() => pairHost(selectedHost)}>
-                    Pair Host
-                  </button>
-                )}
-                {selectedHost?.paired && (
-                  <button type="button" onClick={() => void refreshApps(selectedHost.id, showHiddenApps)}>
-                    Refresh Apps
-                  </button>
-                )}
-                <button type="button" onClick={() => setPage('hosts')}>Back to Hosts</button>
-              </div>
-            </div>
-          )}
-          <div className="card-grid">
-            {apps.map((app, index) => {
-              const imageSrc = boxArtSrc(app);
-              return (
-                <article key={app.id} className="app-card" data-controller-card="true">
-                  <button
-                    type="button"
-                    className="card-primary"
-                    data-controller-focus={index === 0 ? 'true' : undefined}
-                    onClick={() => launchApp(app)}
-                  >
-                    <span className="app-art" aria-hidden="true">
-                      {imageSrc ? (
-                        <img src={imageSrc} alt="" />
-                      ) : (
-                        <span>{appInitials(app.name)}</span>
-                      )}
-                    </span>
-                    <span className="title">{app.name}</span>
-                    <span>{app.running ? 'Running' : 'Ready'}</span>
-                    {app.directLaunch && <span className="tag">Direct Launch</span>}
-                    {app.appCollectorGame && <span className="tag">App Collector</span>}
-                    {app.hidden && <span className="tag muted">Hidden</span>}
-                  </button>
-                  <div className="card-actions">
-                    <button type="button" onClick={() => launchApp(app)}>Launch</button>
-                    <button type="button" onClick={() => toggleDirectLaunch(app)}>
-                      {app.directLaunch ? 'Clear Direct Launch' : 'Direct Launch'}
-                    </button>
-                    <button type="button" onClick={() => toggleHidden(app)}>
-                      {app.hidden ? 'Unhide' : 'Hide'}
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        </section>
+        <AppsPage
+          apps={apps}
+          selectedHost={selectedHost}
+          selectedHostId={selectedHostId}
+          showHiddenApps={showHiddenApps}
+          onSetShowHiddenApps={setShowHiddenApps}
+          onRefreshApps={(hostId, includeHidden) => {
+            void refreshApps(hostId, includeHidden);
+          }}
+          onQuitRunningApp={quitRunningApp}
+          onSetPage={setPage}
+          onPair={pairHost}
+          onLaunch={launchApp}
+          onToggleDirectLaunch={toggleDirectLaunch}
+          onToggleHidden={toggleHidden}
+        />
       )}
 
       {page === 'settings' && (
