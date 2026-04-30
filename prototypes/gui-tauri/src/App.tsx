@@ -1152,13 +1152,12 @@ export default function App() {
           <div className="brand-mark" aria-hidden="true">M</div>
           <div>
             <span className="eyebrow">Moonlight Tauri</span>
-            <h1>Command Center</h1>
-            <p>Console-first streaming, pairing, and app launch dashboard.</p>
+            <h1>Moonlight</h1>
+            <p>Pick a PC, open its library, and start streaming.</p>
           </div>
         </div>
         <nav aria-label="Primary">
           <button type="button" className={page === 'hosts' ? 'nav-active' : undefined} onClick={() => setPage('hosts')}>Hosts</button>
-          <button type="button" className={page === 'apps' ? 'nav-active' : undefined} onClick={() => setPage('apps')} disabled={!selectedHost}>Library</button>
           <button type="button" className={page === 'settings' ? 'nav-active' : undefined} onClick={loadSettings}>Settings</button>
           <button type="button" onClick={openHelpDialog}>Help</button>
           <label className="theme-picker">
@@ -1171,12 +1170,6 @@ export default function App() {
           </label>
         </nav>
       </header>
-      <section className="quick-status" aria-label="Session summary">
-        <span><strong>{hosts.length}</strong> Hosts</span>
-        <span><strong>{selectedHost?.name ?? 'None'}</strong> Selected</span>
-        <span><strong>{apps.length}</strong> Apps</span>
-        <span><strong>{backendInfo?.mode ?? 'unknown'}</strong> Backend</span>
-      </section>
 
       {showControllerTest && (
         <section className="controller-test" aria-label="Controller navigation test">
@@ -1450,26 +1443,6 @@ export default function App() {
             Absolute touch mode
           </label>
           <label className="checkbox">
-            <input checked={settings.framePacing} type="checkbox" onChange={(event) => updateSetting('framePacing', event.target.checked)} />
-            Frame pacing
-          </label>
-          <label className="checkbox">
-            <input checked={settings.connectionWarnings} type="checkbox" onChange={(event) => updateSetting('connectionWarnings', event.target.checked)} />
-            Connection warnings
-          </label>
-          <label className="checkbox">
-            <input checked={settings.configurationWarnings} type="checkbox" onChange={(event) => updateSetting('configurationWarnings', event.target.checked)} />
-            Configuration warnings
-          </label>
-          <label className="checkbox">
-            <input checked={settings.richPresence} type="checkbox" onChange={(event) => updateSetting('richPresence', event.target.checked)} />
-            Discord rich presence
-          </label>
-          <label className="checkbox">
-            <input checked={settings.enableHdr} type="checkbox" onChange={(event) => updateSetting('enableHdr', event.target.checked)} />
-            HDR
-          </label>
-          <label className="checkbox">
             <input checked={settings.gamepadMouse} type="checkbox" onChange={(event) => updateSetting('gamepadMouse', event.target.checked)} />
             Gamepad mouse
           </label>
@@ -1489,11 +1462,27 @@ export default function App() {
             <input checked={settings.swapFaceButtons} type="checkbox" onChange={(event) => updateSetting('swapFaceButtons', event.target.checked)} />
             Swap controller face buttons
           </label>
+          <label className="checkbox">
+            <input checked={settings.framePacing} type="checkbox" onChange={(event) => updateSetting('framePacing', event.target.checked)} />
+            Frame pacing
+          </label>
             </section>
 
             <section className="settings-group">
               <span className="eyebrow">Advanced</span>
               <h3>Warnings & integrations</h3>
+          <label className="checkbox">
+            <input checked={settings.connectionWarnings} type="checkbox" onChange={(event) => updateSetting('connectionWarnings', event.target.checked)} />
+            Connection warnings
+          </label>
+          <label className="checkbox">
+            <input checked={settings.configurationWarnings} type="checkbox" onChange={(event) => updateSetting('configurationWarnings', event.target.checked)} />
+            Configuration warnings
+          </label>
+          <label className="checkbox">
+            <input checked={settings.richPresence} type="checkbox" onChange={(event) => updateSetting('richPresence', event.target.checked)} />
+            Discord rich presence
+          </label>
           <label className="checkbox">
             <input checked={settings.detectNetworkBlocking} type="checkbox" onChange={(event) => updateSetting('detectNetworkBlocking', event.target.checked)} />
             Detect network blocking

@@ -45,30 +45,53 @@ export function HostsPage({
 }: HostsPageProps) {
   const selectedHost = hosts.find((host) => host.id === selectedHostId) ?? hosts[0];
   const readyHosts = hosts.filter((host) => host.paired && host.serverSupported).length;
+  const heroTitle = selectedHost ? 'Ready to stream' : 'Connect a gaming PC';
 
   return (
     <section className="panel dashboard-panel" aria-labelledby="hosts-title" data-page-panel="hosts">
       <div className="dashboard-hero">
-        <div>
-          <span className="eyebrow">Home theater</span>
-          <h2 id="hosts-title">{selectedHost?.name ?? 'Find your gaming PC'}</h2>
+        <div className="hero-content">
+          <span className="eyebrow">{selectedHost ? selectedHost.name : 'Moonlight setup'}</span>
+          <h2 id="hosts-title">{heroTitle}</h2>
           <p>
             {selectedHost
-              ? `${selectedHost.status} - ${selectedHost.paired ? 'paired and ready for the library' : 'pair this host to unlock streaming'}`
-              : 'Discover Sunshine hosts, add one manually, then jump straight into the library.'}
+              ? `${selectedHost.status}. ${selectedHost.paired ? 'Open the library to launch a game, or manage this host below.' : 'Pair this host before loading its library.'}`
+              : 'Moonlight is looking for Sunshine hosts. Add an IP manually if discovery does not find your PC.'}
           </p>
+          <div className="hero-actions">
+            {selectedHost ? (
+              <>
+                <button type="button" onClick={() => onOpenApps(selectedHost)} data-controller-focus="true">
+                  Open Library
+                </button>
+                {!selectedHost.paired && (
+                  <button type="button" disabled={!canPairHost(selectedHost)} onClick={() => onPair(selectedHost)}>
+                    Pair Host
+                  </button>
+                )}
+                {selectedHost.running && <button type="button" onClick={() => onResume(selectedHost)}>Resume</button>}
+                <button type="button" disabled={!canWakeHost(selectedHost)} onClick={() => onWake(selectedHost)}>Wake</button>
+                <button type="button" onClick={() => onDetails(selectedHost)}>Details</button>
+              </>
+            ) : (
+              <>
+                <button type="button" onClick={onRefreshHosts} data-controller-focus="true">Scan Again</button>
+                <button type="button" onClick={onAddHost}>Add by IP</button>
+              </>
+            )}
+          </div>
         </div>
         <div className="hero-metrics" aria-label="Host summary">
           <span><strong>{hosts.length}</strong> Found</span>
           <span><strong>{readyHosts}</strong> Ready</span>
-          <span><strong>{selectedHost?.running ? 'Live' : 'Idle'}</strong> Session</span>
+          <span><strong>{selectedHost?.paired ? 'Paired' : 'Setup'}</strong> State</span>
         </div>
       </div>
 
       <div className="panel-heading compact-heading">
         <div>
-          <span className="eyebrow">Host grid</span>
-          <h3>Choose a system</h3>
+          <span className="eyebrow">Available PCs</span>
+          <h3>{hosts.length === 1 ? 'Your host' : 'Choose a host'}</h3>
         </div>
         <div className="button-row">
           <button type="button" onClick={onRefreshHosts} data-controller-focus={hosts.length === 0 ? 'true' : undefined}>Refresh</button>

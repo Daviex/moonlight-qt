@@ -164,7 +164,7 @@ button.danger:focus-visible {
 
 .shell {
   display: grid;
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto 1fr auto;
   min-height: 100vh;
   padding: clamp(1rem, 2vw, 2rem);
   gap: 1rem;
@@ -247,14 +247,12 @@ nav button.nav-active {
   text-transform: uppercase;
 }
 
-.quick-status,
 .hero-metrics {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
 }
 
-.quick-status span,
 .hero-metrics span {
   display: grid;
   min-width: 7.75rem;
@@ -267,7 +265,6 @@ nav button.nav-active {
   box-shadow: var(--shadow-panel);
 }
 
-.quick-status strong,
 .hero-metrics strong {
   color: var(--color-text);
   font-size: 1.1rem;
@@ -425,9 +422,9 @@ nav button.nav-active {
 .dashboard-hero {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
+  align-items: center;
   gap: 1.25rem;
-  min-height: 13rem;
+  min-height: 10rem;
   padding: clamp(1.25rem, 3vw, 2rem);
   background:
     radial-gradient(circle at 10% 12%, color-mix(in srgb, var(--color-accent) 34%, transparent), transparent 18rem),
@@ -441,7 +438,7 @@ nav button.nav-active {
 
 .dashboard-hero h2 {
   margin: 0.35rem 0;
-  font-size: clamp(2.2rem, 5vw, 4.4rem);
+  font-size: clamp(2rem, 4vw, 3.3rem);
   letter-spacing: -0.075em;
   line-height: 0.95;
 }
@@ -450,6 +447,23 @@ nav button.nav-active {
   max-width: 44rem;
   color: var(--color-muted);
   font-size: 1.02rem;
+}
+
+.hero-content {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.hero-actions button:not(:first-child) {
+  background: linear-gradient(135deg, var(--color-border), var(--color-surface-raised));
+  box-shadow: none;
 }
 
 .compact-heading {
@@ -480,6 +494,11 @@ nav button.nav-active {
   transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
 }
 
+.host-card {
+  min-height: auto;
+  max-width: 42rem;
+}
+
 .host-card:hover,
 .app-card:hover {
   border-color: color-mix(in srgb, var(--color-accent) 70%, var(--color-border));
@@ -504,6 +523,16 @@ nav button.nav-active {
   border: 1px solid var(--color-border);
   box-shadow: none;
   padding: 1rem;
+}
+
+.host-card .card-primary {
+  grid-template-columns: 4rem 1fr;
+  min-height: 7.5rem;
+  align-items: center;
+}
+
+.host-card .tag-row {
+  grid-column: 1 / -1;
 }
 
 .app-card .card-primary {
@@ -564,6 +593,12 @@ nav button.nav-active {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+}
+
+.host-card .card-actions {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
 }
 
 .card-actions button {
