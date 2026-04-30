@@ -42,6 +42,27 @@
   --color-warning-bg: #33250f;
 }
 
+:root[data-theme="deckOled"] {
+  --color-bg: #000;
+  --color-surface: #05080d;
+  --color-surface-raised: #0b111c;
+  --color-surface-muted: #020409;
+  --color-border: #1f3348;
+  --color-text: #f8fbff;
+  --color-muted: #a8bed6;
+  --color-accent: #00d4ff;
+  --color-accent-hover: #46e6ff;
+  --color-accent-ring: #7df9ff;
+  --color-success-bg: #001f12;
+  --color-success-border: #00f58a;
+  --color-warning-bg: #241800;
+  --color-warning-border: #ffb000;
+  --color-danger: #ff3864;
+  --color-danger-hover: #ff5f85;
+  --color-danger-bg: #25000b;
+  --color-danger-text: #ffe8ef;
+}
+
 :root[data-theme="highContrast"] {
   --color-bg: #000;
   --color-surface: #050505;

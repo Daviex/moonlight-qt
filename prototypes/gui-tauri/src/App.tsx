@@ -43,6 +43,7 @@ import { HostsPage } from './components/HostsPage';
 import { StreamPanel } from './components/StreamPanel';
 import { applyStoredTheme, readStoredTheme, themeOptions, UiTheme } from './ui/theme';
 import { canPairHost } from './ui/hosts';
+import { applyStoredDebugUi, readStoredDebugUi } from './ui/debug';
 
 const appWindow = getCurrentWindow();
 
@@ -65,6 +66,7 @@ export default function App() {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [dialog, setDialog] = useState<DialogState>({ kind: 'none' });
   const [theme, setTheme] = useState<UiTheme>(() => readStoredTheme());
+  const [showDebugInfo, setShowDebugInfo] = useState(() => readStoredDebugUi());
   const dialogOpenerRef = useRef<HTMLElement | null>(null);
   const previousDialogKindRef = useRef<DialogState['kind']>('none');
   const [hostRefreshDiagnostics, setHostRefreshDiagnostics] = useState({
@@ -79,7 +81,7 @@ export default function App() {
   );
   const settingsErrors = useMemo(() => validateSettings(settings), [settings]);
   const unmappedGamepads = systemInfo?.unmappedGamepads.trim() ?? '';
-  const showControllerTest = backendInfo?.mode === 'mock';
+  const showControllerTest = showDebugInfo && backendInfo?.mode === 'mock';
   const canQuitStream = streamState.phase === 'launching' ||
     streamState.phase === 'active' ||
     streamState.phase === 'quitting' ||
@@ -793,6 +795,10 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
+    applyStoredDebugUi(showDebugInfo);
+  }, [showDebugInfo]);
+
+  useEffect(() => {
     if (dialog.kind !== 'none') {
       return undefined;
     }
@@ -1229,6 +1235,7 @@ export default function App() {
           diagnostics={hostRefreshDiagnostics}
           hosts={hosts}
           selectedHostId={selectedHostId}
+          showDebugInfo={showDebugInfo}
           onRefreshHosts={refreshHosts}
           onAddHost={openAddHostDialog}
           onOpenApps={openApps}
@@ -1343,6 +1350,10 @@ export default function App() {
             </select>
           </label>
           <label className="checkbox">
+            <input checked={showDebugInfo} type="checkbox" onChange={(event) => setShowDebugInfo(event.target.checked)} />
+            Debug
+          </label>
+          <label className="checkbox">
             <input checked={settings.unlockBitrate} type="checkbox" onChange={(event) => updateSetting('unlockBitrate', event.target.checked)} />
             Unlock bitrate limit
           </label>
@@ -1452,7 +1463,7 @@ export default function App() {
 
       {renderDialog()}
 
-      {eventLog.length > 0 && (
+      {showDebugInfo && eventLog.length > 0 && (
         <aside className="event-log" aria-label="Native event log">
           {eventLog.map((event, index) => (
             <p key={`${event.kind}-${index}`}>

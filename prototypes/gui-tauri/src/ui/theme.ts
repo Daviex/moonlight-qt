@@ -1,8 +1,9 @@
-export type UiTheme = 'moonlight' | 'deck' | 'highContrast';
+export type UiTheme = 'moonlight' | 'deck' | 'deckOled' | 'highContrast';
 
 export const themeOptions: { value: UiTheme; label: string }[] = [
   { value: 'moonlight', label: 'Moonlight' },
   { value: 'deck', label: 'Steam Deck' },
+  { value: 'deckOled', label: 'SteamDeck OLED' },
   { value: 'highContrast', label: 'High contrast' },
 ];
 

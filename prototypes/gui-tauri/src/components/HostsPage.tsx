@@ -13,6 +13,7 @@ interface HostsPageProps {
   diagnostics: HostRefreshDiagnostics;
   hosts: HostEntry[];
   selectedHostId: string;
+  showDebugInfo: boolean;
   onRefreshHosts: () => void;
   onAddHost: () => void;
   onOpenApps: (host: HostEntry) => void;
@@ -30,6 +31,7 @@ export function HostsPage({
   diagnostics,
   hosts,
   selectedHostId,
+  showDebugInfo,
   onRefreshHosts,
   onAddHost,
   onOpenApps,
@@ -50,13 +52,15 @@ export function HostsPage({
           <button type="button" onClick={onAddHost}>Add Host</button>
         </div>
       </div>
-      <div className="backend-diagnostics" aria-label="Backend diagnostics">
-        <span>Backend: {backendInfo?.mode ?? 'unknown'}</span>
-        {backendInfo?.helperPath && <span>Helper: {backendInfo.helperPath}</span>}
-        <span>Last host count: {diagnostics.lastCount}</span>
-        <span>Refresh attempts: {diagnostics.attempts}</span>
-        {diagnostics.lastError && <span>Error: {diagnostics.lastError}</span>}
-      </div>
+      {showDebugInfo && (
+        <div className="backend-diagnostics" aria-label="Backend diagnostics">
+          <span>Backend: {backendInfo?.mode ?? 'unknown'}</span>
+          {backendInfo?.helperPath && <span>Helper: {backendInfo.helperPath}</span>}
+          <span>Last host count: {diagnostics.lastCount}</span>
+          <span>Refresh attempts: {diagnostics.attempts}</span>
+          {diagnostics.lastError && <span>Error: {diagnostics.lastError}</span>}
+        </div>
+      )}
       {hosts.length === 0 && (
         <div className="empty-state">
           <h3>No hosts found yet</h3>
@@ -65,10 +69,12 @@ export function HostsPage({
             Tauri shell was started with the IPC helper environment variables and that the helper path points at the
             latest built Moonlight.exe.
           </p>
-          <p>
-            Refresh attempts: {diagnostics.attempts}; last host count: {diagnostics.lastCount}
-            {diagnostics.lastError && `; last error: ${diagnostics.lastError}`}
-          </p>
+          {showDebugInfo && (
+            <p>
+              Refresh attempts: {diagnostics.attempts}; last host count: {diagnostics.lastCount}
+              {diagnostics.lastError && `; last error: ${diagnostics.lastError}`}
+            </p>
+          )}
         </div>
       )}
       <div className="card-grid">
