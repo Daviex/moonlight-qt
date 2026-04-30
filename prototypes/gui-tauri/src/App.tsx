@@ -15,7 +15,7 @@ import {
 } from './bridge';
 
 type Page = 'hosts' | 'apps' | 'settings';
-type StreamPhase = 'idle' | 'launching' | 'active' | 'quitting' | 'finished' | 'error';
+type StreamPhase = 'idle' | 'launching' | 'active' | 'quitting' | 'cleanup' | 'finished' | 'error';
 
 interface StreamUiState {
   phase: StreamPhase;
@@ -244,6 +244,44 @@ function canWakeHost(host: HostEntry) {
   return host.status !== 'Online' && host.wakeable;
 }
 
+function streamPhaseLabel(phase: StreamPhase) {
+  switch (phase) {
+  case 'launching':
+    return 'Starting';
+  case 'active':
+    return 'Streaming';
+  case 'quitting':
+    return 'Quitting';
+  case 'cleanup':
+    return 'Cleaning up';
+  case 'finished':
+    return 'Finished';
+  case 'error':
+    return 'Needs attention';
+  case 'idle':
+    return 'Idle';
+  }
+}
+
+function streamPhaseHelp(phase: StreamPhase) {
+  switch (phase) {
+  case 'launching':
+    return 'Moonlight asked the native helper to create the streaming session. Keep this shell open until the native stream window takes over.';
+  case 'active':
+    return 'The native stream owns video, audio, and input. The Tauri shell can stay hidden until the native helper requests it again.';
+  case 'quitting':
+    return 'Moonlight is asking the host app and native session to stop. Wait for cleanup before launching another app.';
+  case 'cleanup':
+    return 'The stream has ended and Moonlight is releasing native session resources.';
+  case 'finished':
+    return 'The native session has finished and the Tauri shell is ready for the next action.';
+  case 'error':
+    return 'Moonlight reported a stream problem. Review the messages below, then dismiss the stream state after the native session is no longer active.';
+  case 'idle':
+    return '';
+  }
+}
+
 function activeDialogRoot(): HTMLElement | null {
   return document.getElementById('active-dialog');
 }
@@ -355,6 +393,10 @@ export default function App() {
   const settingsErrors = useMemo(() => validateSettings(settings), [settings]);
   const unmappedGamepads = systemInfo?.unmappedGamepads.trim() ?? '';
   const showControllerTest = backendInfo?.mode === 'mock';
+  const canQuitStream = streamState.phase === 'launching' ||
+    streamState.phase === 'active' ||
+    streamState.phase === 'quitting' ||
+    streamState.phase === 'cleanup';
 
   const updateSetting = useCallback(<K extends keyof StreamingSettings,>(key: K, value: StreamingSettings[K]) => {
     setSettings((currentSettings) => ({ ...currentSettings, [key]: value }));
@@ -786,6 +828,14 @@ export default function App() {
     }
   }, [refreshApps, refreshHosts, selectedHostId, showHiddenApps, streamState.hostId]);
 
+  const dismissStreamState = useCallback(() => {
+    setStreamState(idleStreamState);
+    void refreshHosts();
+    if (selectedHostId) {
+      void refreshApps(selectedHostId, showHiddenApps);
+    }
+  }, [refreshApps, refreshHosts, selectedHostId, showHiddenApps]);
+
   const handleSessionEvent = useCallback((event: BridgeEvent) => {
     setStreamState((previousState) => {
       const message = event.message;
@@ -819,10 +869,19 @@ export default function App() {
         };
       }
 
-      if (message.includes('finished') || message.includes('cleanup completed')) {
+      if (message.includes('cleanup completed')) {
         return {
           ...nextState,
           phase: 'finished',
+          message,
+          uiHiddenRequested: false,
+        };
+      }
+
+      if (message.includes('finished')) {
+        return {
+          ...nextState,
+          phase: 'cleanup',
           message,
           uiHiddenRequested: false,
         };
@@ -1457,11 +1516,12 @@ export default function App() {
       {streamState.phase !== 'idle' && (
         <section className={`stream-panel ${streamState.phase}`} aria-label="Native stream state">
           <div>
-            <h2>Native stream</h2>
+            <h2>Native stream - {streamPhaseLabel(streamState.phase)}</h2>
             <p>
               {streamState.appName || 'Session'}
               {streamState.hostName && ` on ${streamState.hostName}`}
             </p>
+            <p>{streamPhaseHelp(streamState.phase)}</p>
           </div>
           <div className="stream-status">
             <span className="tag">{streamState.phase}</span>
@@ -1480,9 +1540,10 @@ export default function App() {
           )}
           <div className="button-row">
             <button type="button" onClick={showTauriShell}>Show Shell</button>
-            <button type="button" onClick={quitRunningApp}>Quit Stream</button>
+            <button type="button" onClick={quitRunningApp} disabled={!canQuitStream}>Quit Stream</button>
+            <button type="button" onClick={() => setPage('hosts')}>Return to Hosts</button>
             {(streamState.phase === 'finished' || streamState.phase === 'error') && (
-              <button type="button" onClick={() => setStreamState(idleStreamState)}>Dismiss</button>
+              <button type="button" onClick={dismissStreamState}>Dismiss</button>
             )}
           </div>
         </section>
