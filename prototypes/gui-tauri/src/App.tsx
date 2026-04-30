@@ -1147,30 +1147,54 @@ export default function App() {
 
   return (
     <main className="shell">
-      <header className="toolbar">
+      <header className="topbar">
         <div className="brand-lockup">
           <div className="brand-mark" aria-hidden="true">M</div>
           <div>
-            <span className="eyebrow">Moonlight Tauri</span>
-            <h1>Moonlight</h1>
-            <p>Pick a PC, open its library, and start streaming.</p>
+            <span className="eyebrow">Moonlight</span>
+            <h1>{selectedHost ? selectedHost.name : 'Game Streaming'}</h1>
+            <p>{selectedHost ? (selectedHost.paired ? 'Paired host \u2022 ready to stream' : 'Host needs pairing') : 'Discovering hosts on your network'}</p>
           </div>
         </div>
-        <nav aria-label="Primary">
-          <button type="button" className={page === 'hosts' ? 'nav-active' : undefined} onClick={() => setPage('hosts')}>Hosts</button>
-          <button type="button" className={page === 'settings' ? 'nav-active' : undefined} onClick={loadSettings}>Settings</button>
-          <button type="button" onClick={openHelpDialog}>Help</button>
+        <div className="topbar-controls">
           <label className="theme-picker">
-            Theme
+            <span className="eyebrow">Theme</span>
             <select value={theme} onChange={(event) => setTheme(event.target.value as UiTheme)}>
               {themeOptions.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
           </label>
-        </nav>
+        </div>
       </header>
 
+      <aside className="app-rail" aria-label="Primary">
+        <div className="rail-section">
+          <button type="button" className={page === 'hosts' ? 'nav-active' : undefined} onClick={() => setPage('hosts')} aria-label="Hosts">
+            <span className="rail-glyph" aria-hidden="true">⌂</span>
+            <span>Hosts</span>
+          </button>
+          {selectedHost && (
+            <button type="button" className={page === 'apps' ? 'nav-active' : undefined} onClick={() => openApps(selectedHost)} aria-label="Library">
+              <span className="rail-glyph" aria-hidden="true">▦</span>
+              <span>Library</span>
+            </button>
+          )}
+        </div>
+        <div className="rail-divider" aria-hidden="true" />
+        <div className="rail-section">
+          <button type="button" className={page === 'settings' ? 'nav-active' : undefined} onClick={loadSettings} aria-label="Settings">
+            <span className="rail-glyph" aria-hidden="true">⚙</span>
+            <span>Settings</span>
+          </button>
+          <button type="button" onClick={openHelpDialog} aria-label="Help">
+            <span className="rail-glyph" aria-hidden="true">?</span>
+            <span>Help</span>
+          </button>
+        </div>
+      </aside>
+
+      <section className="content">
       {showControllerTest && (
         <section className="controller-test" aria-label="Controller navigation test">
           <span>Controller event test</span>
@@ -1499,6 +1523,15 @@ export default function App() {
           </div>
         </section>
       )}
+      </section>
+
+      <footer className="hint-bar" aria-label="Controller hints">
+        <span className="hint"><span className="hint-key">A</span> Confirm</span>
+        <span className="hint"><span className="hint-key">B</span> Back</span>
+        <span className="hint"><span className="hint-key">Y</span> Actions</span>
+        <span className="hint-spacer" />
+        <span className="hint-status" role="status">{status}</span>
+      </footer>
 
       {renderDialog()}
 
@@ -1513,8 +1546,6 @@ export default function App() {
           ))}
         </aside>
       )}
-
-      <footer className="status" role="status">{status}</footer>
     </main>
   );
 }
