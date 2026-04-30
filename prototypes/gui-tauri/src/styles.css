@@ -110,6 +110,8 @@
 
 body {
   margin: 0;
+  min-width: 100vw;
+  min-height: 100vh;
 }
 
 button,
@@ -166,10 +168,9 @@ button.danger:focus-visible {
   display: grid;
   grid-template-rows: auto 1fr auto;
   min-height: 100vh;
+  width: 100vw;
   padding: clamp(1rem, 2vw, 2rem);
   gap: 1rem;
-  max-width: 1480px;
-  margin: 0 auto;
 }
 
 .toolbar,
@@ -408,6 +409,7 @@ nav button.nav-active {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-xl);
   padding: 1.25rem;
+  min-width: 0;
   overflow: auto;
   box-shadow: var(--shadow-panel);
 }
@@ -472,9 +474,10 @@ nav button.nav-active {
 
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(18rem, 100%), 1fr));
   gap: 1rem;
   margin-top: 1rem;
+  min-width: 0;
 }
 
 .host-card,
@@ -492,6 +495,7 @@ nav button.nav-active {
   gap: 1rem;
   box-shadow: var(--shadow-panel);
   transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+  min-width: 0;
 }
 
 .host-card {
@@ -523,6 +527,7 @@ nav button.nav-active {
   border: 1px solid var(--color-border);
   box-shadow: none;
   padding: 1rem;
+  min-width: 0;
 }
 
 .host-card .card-primary {
@@ -537,7 +542,7 @@ nav button.nav-active {
 
 .app-card .card-primary {
   display: grid;
-  grid-template-columns: 6rem 1fr;
+  grid-template-columns: minmax(4.75rem, 6rem) minmax(0, 1fr);
   align-items: stretch;
 }
 
@@ -577,6 +582,7 @@ nav button.nav-active {
 .card-copy {
   display: grid;
   gap: 0.25rem;
+  min-width: 0;
 }
 
 .card-subtitle {
@@ -593,6 +599,8 @@ nav button.nav-active {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
 }
 
 .host-card .card-actions {
@@ -605,11 +613,22 @@ nav button.nav-active {
   background: linear-gradient(135deg, var(--color-border), var(--color-surface-raised));
   box-shadow: none;
   padding: 0.45rem 0.65rem;
+  min-width: 0;
 }
 
 .title {
   font-size: 1.25rem;
   font-weight: 700;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.app-card .title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .tag {
@@ -639,6 +658,7 @@ nav button.nav-active {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
+  min-width: 0;
 }
 
 .settings-layout {
