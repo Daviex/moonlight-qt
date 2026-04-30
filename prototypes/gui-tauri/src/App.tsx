@@ -335,6 +335,7 @@ export default function App() {
   );
   const settingsErrors = useMemo(() => validateSettings(settings), [settings]);
   const unmappedGamepads = systemInfo?.unmappedGamepads.trim() ?? '';
+  const showControllerTest = backendInfo?.mode === 'mock';
 
   const updateSetting = useCallback(<K extends keyof StreamingSettings,>(key: K, value: StreamingSettings[K]) => {
     setSettings((currentSettings) => ({ ...currentSettings, [key]: value }));
@@ -1351,16 +1352,18 @@ export default function App() {
         </nav>
       </header>
 
-      <section className="controller-test" aria-label="Controller navigation test">
-        <span>Controller event test</span>
-        {controllerTestActions.map((action) => (
-          <button key={action} type="button" onClick={() => {
-            void bridge.emitControllerAction(action);
-          }}>
-            {action}
-          </button>
-        ))}
-      </section>
+      {showControllerTest && (
+        <section className="controller-test" aria-label="Controller navigation test">
+          <span>Controller event test</span>
+          {controllerTestActions.map((action) => (
+            <button key={action} type="button" onClick={() => {
+              void bridge.emitControllerAction(action);
+            }}>
+              {action}
+            </button>
+          ))}
+        </section>
+      )}
 
       {updateInfo && (
         <section className="update-banner" aria-label="Moonlight update available">
