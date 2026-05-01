@@ -8,7 +8,7 @@ mod mock_backend;
 use backend::{
     ActiveStreamSession, AppEntry, BackendInfo, BridgeEvent, BridgeEventKind, CommandStatus,
     ControllerAction, HostDetails, HostEntry, MoonlightBackend, NetworkTestResult,
-    PairingChallenge, StreamWindowDescriptor, StreamingSettings, SystemInfo,
+    PairingChallenge, StreamMediaStats, StreamWindowDescriptor, StreamingSettings, SystemInfo,
 };
 use core::factory::create_backend;
 use std::sync::Mutex;
@@ -731,6 +731,11 @@ fn active_stream_session(
 }
 
 #[tauri::command]
+fn stream_media_stats() -> StreamMediaStats {
+    core::gamestream::stream_media_stats_snapshot()
+}
+
+#[tauri::command]
 fn save_settings(
     settings: StreamingSettings,
     backend: tauri::State<'_, BackendState>,
@@ -804,6 +809,7 @@ fn main() {
             open_url,
             active_stream_window,
             active_stream_session,
+            stream_media_stats,
             save_settings,
             emit_controller_action,
             stream_mouse_move,

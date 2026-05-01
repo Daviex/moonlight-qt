@@ -3,6 +3,7 @@
 use super::error::CoreError;
 use super::events::{BridgeEvent, BridgeEventKind};
 use super::gamestream_sys;
+use serde::{Deserialize, Serialize};
 #[cfg(moonlight_common_c_linked)]
 use std::ffi::CStr;
 use std::ffi::CString;
@@ -94,6 +95,18 @@ pub struct StreamCallbacks {
     pub connection: gamestream_sys::ConnectionListenerCallbacks,
     pub video: gamestream_sys::DecoderRendererCallbacks,
     pub audio: gamestream_sys::AudioRendererCallbacks,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamMediaStats {
+    pub video_started: bool,
+    pub video_frames: u64,
+    pub video_bytes: u64,
+    pub last_video_frame_number: c_int,
+    pub audio_started: bool,
+    pub audio_packets: u64,
+    pub audio_bytes: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -221,6 +234,21 @@ impl StreamOutputMode {
                 audio: headless_audio_callbacks(),
             },
         }
+    }
+}
+
+pub fn stream_media_stats_snapshot() -> StreamMediaStats {
+    let video = video_sink_state_snapshot();
+    let audio = audio_sink_state_snapshot();
+
+    StreamMediaStats {
+        video_started: video.started,
+        video_frames: video.frames_received,
+        video_bytes: video.bytes_received,
+        last_video_frame_number: video.last_frame_number,
+        audio_started: audio.started,
+        audio_packets: audio.samples_received,
+        audio_bytes: audio.bytes_received,
     }
 }
 
@@ -553,7 +581,6 @@ fn store_audio_sink_state(update: impl FnOnce(&mut AudioSinkState)) {
     }
 }
 
-#[cfg(test)]
 fn audio_sink_state_snapshot() -> AudioSinkState {
     AUDIO_SINK_STATE
         .get_or_init(|| Mutex::new(AudioSinkState::default()))
@@ -571,7 +598,6 @@ fn store_video_sink_state(update: impl FnOnce(&mut VideoSinkState)) {
     }
 }
 
-#[cfg(test)]
 fn video_sink_state_snapshot() -> VideoSinkState {
     VIDEO_SINK_STATE
         .get_or_init(|| Mutex::new(VideoSinkState::default()))

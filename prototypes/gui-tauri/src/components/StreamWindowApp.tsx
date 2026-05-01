@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { ActiveStreamSession, bridge, StreamWindowDescriptor } from '../bridge';
+import { ActiveStreamSession, bridge, StreamMediaStats, StreamWindowDescriptor } from '../bridge';
 import { idleStreamState, streamPhaseHelp } from '../ui/stream';
 import { StreamUiState } from '../ui/types';
 import { StreamInputSurface } from './StreamInputSurface';
@@ -24,6 +24,7 @@ function streamWindowState(descriptor: StreamWindowDescriptor | null, message: s
 export function StreamWindowApp() {
   const [descriptor, setDescriptor] = useState<StreamWindowDescriptor | null>(null);
   const [session, setSession] = useState<ActiveStreamSession | null>(null);
+  const [mediaStats, setMediaStats] = useState<StreamMediaStats | null>(null);
   const [message, setMessage] = useState('Preparing Rust stream window...');
 
   useEffect(() => {
@@ -74,10 +75,16 @@ export function StreamWindowApp() {
       }
     };
     window.addEventListener('keydown', onKeyDown);
+    const statsInterval = window.setInterval(() => {
+      void bridge.streamMediaStats()
+        .then(setMediaStats)
+        .catch(() => undefined);
+    }, 1000);
 
     return () => {
       cancelled = true;
       window.removeEventListener('keydown', onKeyDown);
+      window.clearInterval(statsInterval);
       void unlistenPromise.then((unlisten) => unlisten());
     };
   }, [session?.hostId]);
@@ -90,6 +97,13 @@ export function StreamWindowApp() {
         <h1>{descriptor?.title ?? 'Moonlight Stream'}</h1>
         <p>{message}</p>
         <small>{streamPhaseHelp(streamState.phase)}</small>
+        {mediaStats && (
+          <small>
+            Video: {mediaStats.videoFrames} frames / {mediaStats.videoBytes} bytes
+            {' - '}
+            Audio: {mediaStats.audioPackets} packets / {mediaStats.audioBytes} bytes
+          </small>
+        )}
         {session && (
           <button
             className="danger"

@@ -120,6 +120,16 @@ export interface ActiveStreamSession {
   window: StreamWindowDescriptor;
 }
 
+export interface StreamMediaStats {
+  videoStarted: boolean;
+  videoFrames: number;
+  videoBytes: number;
+  lastVideoFrameNumber: number;
+  audioStarted: boolean;
+  audioPackets: number;
+  audioBytes: number;
+}
+
 export interface DisplayInfo {
   nativeWidth: number;
   nativeHeight: number;
@@ -228,6 +238,7 @@ export const bridge = {
   openUrl: (url: string) => invoke<CommandStatus>('open_url', { url }),
   activeStreamWindow: () => invoke<StreamWindowDescriptor | null>('active_stream_window'),
   activeStreamSession: () => invoke<ActiveStreamSession | null>('active_stream_session'),
+  streamMediaStats: () => invoke<StreamMediaStats>('stream_media_stats'),
   emitControllerAction: (action: ControllerAction) =>
     invoke<CommandStatus>('emit_controller_action', { action }),
   streamMouseMove: (deltaX: number, deltaY: number) =>
