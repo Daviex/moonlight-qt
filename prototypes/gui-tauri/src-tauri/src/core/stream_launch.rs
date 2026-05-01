@@ -1,7 +1,10 @@
 #![allow(dead_code)]
 
 use super::error::CoreError;
-use super::gamestream::{RemoteInputCrypto, StreamConfiguration};
+use super::gamestream::{
+    RawSessionConfiguration, RemoteInputCrypto, ServerConnectionConfiguration, StreamConfiguration,
+};
+use super::host_http::{ServerInfo, StartAppSession};
 use super::host_store::StoredHost;
 use super::types::{AppEntry, StreamingSettings};
 
@@ -13,6 +16,14 @@ pub struct StreamLaunchPlan {
     pub app_name: String,
     pub server_certificate_pem: String,
     pub stream_config: StreamConfiguration,
+}
+
+#[derive(Debug)]
+pub struct PreparedStreamSession {
+    pub host_id: String,
+    pub app_id: String,
+    pub server: ServerConnectionConfiguration,
+    pub raw: RawSessionConfiguration,
 }
 
 impl StreamLaunchPlan {
@@ -49,12 +60,43 @@ impl StreamLaunchPlan {
                 .with_remote_input_crypto(RemoteInputCrypto::generate()),
         })
     }
+
+    pub fn prepare_session(
+        &self,
+        server_info: &ServerInfo,
+        start_session: &StartAppSession,
+    ) -> Result<PreparedStreamSession, CoreError> {
+        let server = ServerConnectionConfiguration {
+            address: self.host_address.clone(),
+            app_version: server_info.app_version.clone(),
+            gfe_version: optional_string(server_info.gfe_version.clone()),
+            rtsp_session_url: start_session.rtsp_session_url.clone(),
+            codec_mode_support: server_info.server_codec_mode_support,
+        };
+        let raw = RawSessionConfiguration::new(&server, &self.stream_config)?;
+
+        Ok(PreparedStreamSession {
+            host_id: self.host_id.clone(),
+            app_id: self.app_id.clone(),
+            server,
+            raw,
+        })
+    }
+}
+
+fn optional_string(value: String) -> Option<String> {
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::StreamLaunchPlan;
     use crate::core::gamestream_sys;
+    use crate::core::host_http::{ServerInfo, StartAppSession};
     use crate::core::host_store::StoredHost;
     use crate::core::settings::default_streaming_settings;
     use crate::core::types::AppEntry;
@@ -125,5 +167,33 @@ mod tests {
             "Gaming PC is missing its paired server certificate.",
             error.to_string()
         );
+    }
+
+    #[test]
+    fn launch_plan_prepares_raw_session_inputs_after_http_launch() {
+        let plan = StreamLaunchPlan::new(&host(), &app(), &default_streaming_settings()).unwrap();
+        let server_info = ServerInfo {
+            app_version: "Sunshine".into(),
+            gfe_version: "3.0".into(),
+            unique_id: "uuid".into(),
+            current_game_id: 0,
+            pair_status: "1".into(),
+            server_codec_mode_support: 0x101,
+        };
+        let start_session = StartAppSession {
+            rtsp_session_url: Some("rtsp://session".into()),
+        };
+
+        let prepared = plan.prepare_session(&server_info, &start_session).unwrap();
+
+        assert_eq!("gaming-pc", prepared.host_id);
+        assert_eq!("123", prepared.app_id);
+        assert_eq!("192.168.1.20", prepared.server.address);
+        assert_eq!(
+            Some("rtsp://session".into()),
+            prepared.server.rtsp_session_url
+        );
+        assert_eq!(0x101, prepared.raw.server_info().server_codec_mode_support);
+        assert_eq!(1920, prepared.raw.stream_config().width);
     }
 }
