@@ -79,7 +79,7 @@ export function AppsPage({
           {selectedHost ? (
             selectedHost.paired ? (
               <p>
-                The native helper did not return any visible apps for this host. Try refreshing, show hidden apps,
+                The Rust backend did not return any visible apps for this host. Try refreshing, show hidden apps,
                 or confirm the host is online and Sunshine is returning an app list.
               </p>
             ) : (

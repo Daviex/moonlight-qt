@@ -112,8 +112,7 @@ export function HostsPage({
           <h3>No hosts found yet</h3>
           <p>
             Moonlight is polling saved hosts and listening for Sunshine via mDNS. If this stays empty, confirm the
-            Tauri shell was started with the IPC helper environment variables and that the helper path points at the
-            latest built Moonlight.exe.
+            host is online, Sunshine is running, and mDNS is allowed on your network.
           </p>
           {showDebugInfo && (
             <p>

@@ -1129,7 +1129,7 @@ export default function App() {
               <p>This Tauri shell currently exercises the native bridge for host/app/session/settings flows.</p>
               <p>
                 Use Hosts to refresh discovery, add/pair/wake/test machines, and open Apps. Use Settings to edit the
-                streaming snapshot exposed by the native helper. Controller actions move focus and activate the selected
+                streaming snapshot exposed by the Rust backend. Controller actions move focus and activate the selected
                 control.
               </p>
               <p>

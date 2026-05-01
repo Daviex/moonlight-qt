@@ -26,4 +26,3 @@ x509-parser = "0.18"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
-legacy-ipc = []
