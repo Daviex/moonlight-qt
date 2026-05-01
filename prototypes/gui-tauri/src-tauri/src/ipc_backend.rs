@@ -15,24 +15,11 @@ use std::thread;
 use std::time::Duration;
 use tauri::Emitter;
 
-const BACKEND_MODE_ENV: &str = "MOONLIGHT_TAURI_BACKEND";
 const HELPER_PATH_ENV: &str = "MOONLIGHT_TAURI_HELPER";
 const IPC_TIMEOUT_ENV: &str = "MOONLIGHT_TAURI_IPC_TIMEOUT_SECS";
 const BRIDGE_EVENT: &str = "moonlight-bridge-event";
 
 type PendingResponses = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<serde_json::Value, String>>>>>;
-
-pub fn ipc_backend_requested() -> bool {
-    env::var(BACKEND_MODE_ENV)
-        .map(|value| value.eq_ignore_ascii_case("ipc"))
-        .unwrap_or(false)
-}
-
-pub fn mock_backend_requested() -> bool {
-    env::var(BACKEND_MODE_ENV)
-        .map(|value| value.eq_ignore_ascii_case("mock"))
-        .unwrap_or(false)
-}
 
 pub struct IpcBackend {
     process: Child,

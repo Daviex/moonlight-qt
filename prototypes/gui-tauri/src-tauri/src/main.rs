@@ -9,54 +9,13 @@ use backend::{
     HostDetails, HostEntry, MoonlightBackend, NetworkTestResult, PairingChallenge,
     StreamingSettings, SystemInfo,
 };
-use ipc_backend::{ipc_backend_requested, mock_backend_requested, IpcBackend};
-use mock_backend::MockBackend;
+use core::factory::create_backend;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
 const BRIDGE_EVENT: &str = "moonlight-bridge-event";
 
 type BackendState = Mutex<Box<dyn MoonlightBackend>>;
-
-fn create_backend(app_handle: tauri::AppHandle) -> Box<dyn MoonlightBackend> {
-    if ipc_backend_requested() {
-        logger::log("creating IPC backend");
-        match IpcBackend::from_environment(app_handle) {
-            Ok(backend) => {
-                logger::log("IPC backend ready");
-                Box::new(backend)
-            }
-            Err(error) => {
-                logger::log(format!("IPC backend initialization failed; error={error}"));
-                panic!("failed to initialize IPC backend: {error}");
-            }
-        }
-    } else if !mock_backend_requested() {
-        if let Some(helper_path) = IpcBackend::staged_helper_path() {
-            logger::log(format!(
-                "creating IPC backend from staged helper; helper_path={helper_path}"
-            ));
-            match IpcBackend::from_helper_path(helper_path, app_handle) {
-                Ok(backend) => {
-                    logger::log("staged IPC backend ready");
-                    Box::new(backend)
-                }
-                Err(error) => {
-                    logger::log(format!(
-                        "staged IPC backend initialization failed; error={error}"
-                    ));
-                    panic!("failed to initialize staged IPC backend: {error}");
-                }
-            }
-        } else {
-            logger::log("creating mock backend");
-            Box::new(MockBackend::new())
-        }
-    } else {
-        logger::log("creating mock backend");
-        Box::new(MockBackend::new())
-    }
-}
 
 fn emit_bridge_event(
     app_handle: &tauri::AppHandle,
