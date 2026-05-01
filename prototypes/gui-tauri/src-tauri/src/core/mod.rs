@@ -16,5 +16,6 @@ pub mod rust_backend;
 pub mod session;
 pub mod settings;
 pub mod storage;
+pub mod stream_launch;
 pub mod system;
 pub mod types;

@@ -14,6 +14,7 @@ use super::settings::{default_bitrate_kbps, validate_streaming_settings};
 #[cfg(test)]
 use super::storage::default_app_entries;
 use super::storage::{JsonStateStore, StoredState};
+use super::stream_launch::StreamLaunchPlan;
 use super::types::{
     AppEntry, BackendInfo, CommandStatus, DisplayInfo, HostDetails, HostEntry, HostStatus,
     NetworkTestResult, PairingChallenge, StreamingSettings, SystemInfo,
@@ -182,7 +183,8 @@ fn sample_state() -> StoredState {
         uuid: "rust-gaming-pc".into(),
         paired: true,
         mac_address: "00:11:22:33:44:55".into(),
-        server_certificate_pem: String::new(),
+        server_certificate_pem: "-----BEGIN CERTIFICATE-----\npaired\n-----END CERTIFICATE-----"
+            .into(),
     });
     hosts.add_or_update(StoredHost {
         id: "living-room".into(),
@@ -191,7 +193,8 @@ fn sample_state() -> StoredState {
         uuid: "rust-living-room".into(),
         paired: true,
         mac_address: "00:11:22:33:44:66".into(),
-        server_certificate_pem: String::new(),
+        server_certificate_pem: "-----BEGIN CERTIFICATE-----\npaired\n-----END CERTIFICATE-----"
+            .into(),
     });
     hosts.add_or_update(StoredHost {
         id: "new-host".into(),
@@ -459,21 +462,22 @@ impl MoonlightCore for RustBackend {
             ));
         }
 
-        let app_name = {
-            let app = self.app_mut(app_id)?;
-            app.running = true;
-            app.name.clone()
-        };
+        let stored_host = self.stored_host(host_id)?;
+        let app = self.app_mut(app_id)?.clone();
+        let plan = StreamLaunchPlan::new(&stored_host, &app, &self.settings)
+            .map_err(|error| error.to_string())?;
 
         self.session
-            .launch(host_id.to_string(), app_id.to_string())
+            .launch(plan.host_id.clone(), plan.app_id.clone())
             .map_err(|error| error.to_string())?;
         self.session
             .mark_active()
             .map_err(|error| error.to_string())?;
 
+        self.app_mut(app_id)?.running = true;
+
         Ok(CommandStatus {
-            message: format!("Launch requested for {app_name}."),
+            message: format!("Launch requested for {}.", plan.app_name),
         })
     }
 

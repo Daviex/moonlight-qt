@@ -11,6 +11,14 @@ pub enum AudioConfiguration {
 }
 
 impl AudioConfiguration {
+    pub fn from_raw(value: c_int) -> Self {
+        match value {
+            gamestream_sys::AUDIO_CONFIGURATION_51_SURROUND => Self::Surround51,
+            gamestream_sys::AUDIO_CONFIGURATION_71_SURROUND => Self::Surround71,
+            _ => Self::Stereo,
+        }
+    }
+
     fn as_raw(self) -> c_int {
         match self {
             Self::Stereo => gamestream_sys::AUDIO_CONFIGURATION_STEREO,
@@ -80,6 +88,25 @@ impl StreamConfiguration {
             audio_configuration: self.audio_configuration.as_raw(),
             supported_video_formats: self.supported_video_formats,
             ..gamestream_sys::StreamConfiguration::default()
+        }
+    }
+}
+
+impl From<&crate::core::types::StreamingSettings> for StreamConfiguration {
+    fn from(settings: &crate::core::types::StreamingSettings) -> Self {
+        Self {
+            width: settings.width,
+            height: settings.height,
+            fps: settings.fps,
+            bitrate_kbps: settings.bitrate_kbps,
+            packet_size: settings.packet_size,
+            streaming_remotely: StreamingRemotely::Auto,
+            audio_configuration: AudioConfiguration::from_raw(settings.audio_config),
+            supported_video_formats: if settings.video_codec_config == 0 {
+                gamestream_sys::VIDEO_FORMAT_H264
+            } else {
+                settings.video_codec_config
+            },
         }
     }
 }
@@ -156,6 +183,10 @@ mod tests {
         assert_eq!(
             gamestream_sys::AUDIO_CONFIGURATION_51_SURROUND,
             AudioConfiguration::Surround51.as_raw()
+        );
+        assert_eq!(
+            AudioConfiguration::Surround71,
+            AudioConfiguration::from_raw(gamestream_sys::AUDIO_CONFIGURATION_71_SURROUND)
         );
         assert_eq!(
             gamestream_sys::STREAM_CFG_LOCAL,
