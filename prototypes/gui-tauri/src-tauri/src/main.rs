@@ -1,4 +1,5 @@
 mod backend;
+mod core;
 mod ipc_backend;
 mod logger;
 mod mock_backend;
