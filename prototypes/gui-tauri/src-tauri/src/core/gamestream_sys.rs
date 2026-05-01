@@ -466,6 +466,7 @@ extern "C" {
     pub fn LiStopConnection();
     pub fn LiInterruptConnection();
     pub fn LiGetStageName(stage: c_int) -> *const c_char;
+    pub fn LiGetLaunchUrlQueryParameters() -> *const c_char;
     pub fn LiSendMouseMoveEvent(delta_x: c_short, delta_y: c_short) -> c_int;
     pub fn LiSendMousePositionEvent(
         x: c_short,

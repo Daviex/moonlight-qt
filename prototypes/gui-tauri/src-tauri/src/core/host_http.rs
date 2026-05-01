@@ -7,6 +7,8 @@ use super::types::AppEntry;
 use crate::logger;
 use rand::rngs::OsRng;
 use rand::RngCore;
+#[cfg(moonlight_common_c_linked)]
+use std::ffi::CStr;
 use std::time::Duration;
 
 const DEFAULT_HTTPS_PORT: u16 = 47984;
@@ -186,7 +188,7 @@ impl StartAppRequest {
         ]);
 
         format!(
-            "appid={}&mode={}x{}x{}&additionalStates=1&sops={}&rikey={}&rikeyid={}{}&localAudioPlayMode={}&surroundAudioInfo={}&remoteControllersBitmap={}&gcmap={}&gcpersist={}&corever=1",
+            "appid={}&mode={}x{}x{}&additionalStates=1&sops={}&rikey={}&rikeyid={}{}&localAudioPlayMode={}&surroundAudioInfo={}&remoteControllersBitmap={}&gcmap={}&gcpersist={}{}",
             self.app_id,
             raw.width,
             raw.height,
@@ -200,6 +202,7 @@ impl StartAppRequest {
             self.gamepad_mask,
             self.gamepad_mask,
             bool_as_int(self.persist_game_controllers_on_disconnect),
+            launch_url_query_parameters(),
         )
     }
 }
@@ -232,6 +235,26 @@ fn hdr_query_parameters(supported_video_formats: i32) -> &'static str {
     } else {
         "&hdrMode=1&clientHdrCapVersion=0&clientHdrCapSupportedFlagsInUint32=0&clientHdrCapMetaDataId=NV_STATIC_METADATA_TYPE_1&clientHdrCapDisplayData=0x0x0x0x0x0x0x0x0x0x0"
     }
+}
+
+#[cfg(moonlight_common_c_linked)]
+fn launch_url_query_parameters() -> String {
+    // SAFETY: moonlight-common-c returns a process-static, NUL-terminated string.
+    let ptr = unsafe { gamestream_sys::LiGetLaunchUrlQueryParameters() };
+    if ptr.is_null() {
+        logger::log("moonlight-common-c returned null launch URL query parameters");
+        return String::new();
+    }
+
+    // SAFETY: The C API contract returns a valid NUL-terminated string pointer or NULL.
+    unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[cfg(not(moonlight_common_c_linked))]
+fn launch_url_query_parameters() -> String {
+    "&corever=1".into()
 }
 
 pub trait HostHttpTransport {
