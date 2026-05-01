@@ -136,7 +136,7 @@ export function StreamWindowApp() {
           </button>
         )}
       </section>
-      <StreamInputSurface streamState={streamState} />
+      <StreamInputSurface streamState={streamState} streamWindow={descriptor} />
     </main>
   );
 }

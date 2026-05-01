@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { PointerEvent } from 'react';
 import { bridge } from '../bridge';
-import { StreamUiState } from '../ui/types';
+import type { StreamWindowDescriptor } from '../bridge';
+import type { StreamUiState } from '../ui/types';
 
 interface StreamInputSurfaceProps {
   streamState: StreamUiState;
+  streamWindow?: StreamWindowDescriptor | null;
 }
 
 type StreamMouseButton = 'left' | 'middle' | 'right' | 'x1' | 'x2';
@@ -33,6 +35,34 @@ const buttonFlags = [
 
 function clampInt16(value: number) {
   return Math.max(int16Min, Math.min(int16Max, Math.round(value)));
+}
+
+function clampPosition(value: number, maximum: number) {
+  return clampInt16(Math.max(0, Math.min(maximum, value)));
+}
+
+function scaledVideoRegion(sourceWidth: number, sourceHeight: number, targetWidth: number, targetHeight: number) {
+  const dst = {
+    x: 0,
+    y: 0,
+    width: Math.max(1, targetWidth),
+    height: Math.max(1, targetHeight),
+  };
+  const srcWidth = Math.max(1, sourceWidth);
+  const srcHeight = Math.max(1, sourceHeight);
+  const scaledHeight = Math.ceil((dst.width * srcHeight) / srcWidth);
+  const scaledWidth = Math.ceil((dst.height * srcWidth) / srcHeight);
+
+  if (scaledHeight > dst.height) {
+    dst.x += (dst.width - scaledWidth) / 2;
+    dst.width = scaledWidth;
+  }
+  else {
+    dst.y += (dst.height - scaledHeight) / 2;
+    dst.height = scaledHeight;
+  }
+
+  return dst;
 }
 
 function mouseButton(button: number): StreamMouseButton | null {
@@ -71,7 +101,7 @@ function gamepadFlags(gamepad: Gamepad) {
   }, 0);
 }
 
-export function StreamInputSurface({ streamState }: StreamInputSurfaceProps) {
+export function StreamInputSurface({ streamState, streamWindow }: StreamInputSurfaceProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const active = shouldCapture(streamState);
 
@@ -117,17 +147,20 @@ export function StreamInputSurface({ streamState }: StreamInputSurfaceProps) {
   const sendPointerInput = useCallback((event: PointerEvent<HTMLDivElement>) => {
     const target = event.currentTarget;
     const rect = target.getBoundingClientRect();
-    if (event.pointerType !== 'touch' && event.pointerType !== 'pen') {
-      void bridge.streamMouseMove(clampInt16(event.movementX), clampInt16(event.movementY)).catch(() => undefined);
-      return;
-    }
-
-    const x = clampInt16(event.clientX - rect.left);
-    const y = clampInt16(event.clientY - rect.top);
-    const referenceWidth = clampInt16(rect.width);
-    const referenceHeight = clampInt16(rect.height);
+    const localWidth = Math.max(1, rect.width);
+    const localHeight = Math.max(1, rect.height);
+    const videoRegion = scaledVideoRegion(
+      streamWindow?.width ?? localWidth,
+      streamWindow?.height ?? localHeight,
+      localWidth,
+      localHeight,
+    );
+    const referenceWidth = Math.max(1, clampInt16(videoRegion.width));
+    const referenceHeight = Math.max(1, clampInt16(videoRegion.height));
+    const x = clampPosition(event.clientX - rect.left - videoRegion.x, referenceWidth);
+    const y = clampPosition(event.clientY - rect.top - videoRegion.y, referenceHeight);
     void bridge.streamMousePosition(x, y, referenceWidth, referenceHeight).catch(() => undefined);
-  }, []);
+  }, [streamWindow?.height, streamWindow?.width]);
 
   if (!active) {
     return null;

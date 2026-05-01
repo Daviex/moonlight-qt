@@ -750,18 +750,26 @@ fn poll_native_video_input(
     window: &minifb::Window,
     state: &mut NativeVideoInputState,
     input: &StreamInputSender,
-    _reference_width: usize,
-    _reference_height: usize,
+    reference_width: usize,
+    reference_height: usize,
 ) {
-    if let Some((x, y)) = window.get_mouse_pos(minifb::MouseMode::Clamp) {
-        let x = clamp_f32_to_i16(x);
-        let y = clamp_f32_to_i16(y);
-        if let Some((last_x, last_y)) = state.last_mouse_position {
-            let delta_x = x.saturating_sub(last_x);
-            let delta_y = y.saturating_sub(last_y);
-            if delta_x != 0 || delta_y != 0 {
-                let _ = input.send_mouse_move(delta_x, delta_y);
-            }
+    if let Some((x, y)) = window.get_unscaled_mouse_pos(minifb::MouseMode::Clamp) {
+        let (window_width, window_height) = window.get_size();
+        let video_region = scaled_video_region(
+            reference_width,
+            reference_height,
+            window_width,
+            window_height,
+        );
+        let x = clamp_f32_to_stream_i16(x - video_region.x, video_region.width);
+        let y = clamp_f32_to_stream_i16(y - video_region.y, video_region.height);
+        if state.last_mouse_position != Some((x, y)) {
+            let _ = input.send_mouse_position(
+                x,
+                y,
+                clamp_f32_to_i16(video_region.width),
+                clamp_f32_to_i16(video_region.height),
+            );
         }
         state.last_mouse_position = Some((x, y));
     } else {
@@ -950,6 +958,46 @@ fn minifb_key_to_js_key_code(key: minifb::Key) -> Option<i16> {
 
 fn clamp_f32_to_i16(value: f32) -> i16 {
     value.clamp(i16::MIN as f32, i16::MAX as f32) as i16
+}
+
+fn clamp_f32_to_stream_i16(value: f32, reference: f32) -> i16 {
+    value.clamp(0.0, reference.max(1.0)) as i16
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ScaledVideoRegion {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+fn scaled_video_region(
+    source_width: usize,
+    source_height: usize,
+    target_width: usize,
+    target_height: usize,
+) -> ScaledVideoRegion {
+    let source_width = source_width.max(1) as f32;
+    let source_height = source_height.max(1) as f32;
+    let mut region = ScaledVideoRegion {
+        x: 0.0,
+        y: 0.0,
+        width: target_width.max(1) as f32,
+        height: target_height.max(1) as f32,
+    };
+    let scaled_height = (region.width * source_height / source_width).ceil();
+    let scaled_width = (region.height * source_width / source_height).ceil();
+
+    if scaled_height > region.height {
+        region.x += (region.width - scaled_width) / 2.0;
+        region.width = scaled_width;
+    } else {
+        region.y += (region.height - scaled_height) / 2.0;
+        region.height = scaled_height;
+    }
+
+    region
 }
 
 fn rgba_to_minifb_buffer(frame: &RgbaVideoFrame) -> Result<Vec<u32>, String> {

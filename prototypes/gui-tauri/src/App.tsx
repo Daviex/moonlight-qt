@@ -7,6 +7,7 @@ import {
   BridgeEvent,
   ControllerAction,
   HostEntry,
+  StreamWindowDescriptor,
   StreamingSettings,
   SystemInfo,
   bridge,
@@ -64,6 +65,7 @@ export default function App() {
   const [status, setStatus] = useState('Tauri shell ready.');
   const [eventLog, setEventLog] = useState<BridgeEvent[]>([]);
   const [streamState, setStreamState] = useState<StreamUiState>(idleStreamState);
+  const [streamWindow, setStreamWindow] = useState<StreamWindowDescriptor | null>(null);
   const [backendInfo, setBackendInfo] = useState<BackendInfo | null>(null);
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
@@ -645,6 +647,7 @@ export default function App() {
     const syncStreamWindow = async () => {
       const existing = await WebviewWindow.getByLabel(streamWindowLabel);
       if (!active) {
+        setStreamWindow(null);
         if (existing && (streamState.phase === 'finished' || streamState.phase === 'error')) {
           await existing.close();
         }
@@ -658,6 +661,7 @@ export default function App() {
         }
         return;
       }
+      setStreamWindow(descriptor);
 
       if (existing) {
         await existing.setTitle(descriptor.title);
@@ -1335,7 +1339,7 @@ export default function App() {
         onReturnToHosts={() => setPage('hosts')}
         onDismiss={dismissStreamState}
       />
-      <StreamInputSurface streamState={streamState} />
+      <StreamInputSurface streamState={streamState} streamWindow={streamWindow} />
 
       {page === 'hosts' && (
         <HostsPage
