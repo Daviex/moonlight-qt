@@ -14,8 +14,6 @@ use super::session::SessionMachine;
 #[cfg(test)]
 use super::settings::default_streaming_settings;
 use super::settings::{default_bitrate_kbps, validate_streaming_settings};
-#[cfg(test)]
-use super::storage::default_app_entries;
 use super::storage::{JsonStateStore, StoredState};
 use super::stream_input::{
     ButtonAction, ControllerState, KeyAction, KeyModifiers, MouseButton, StreamInputSender,
@@ -466,11 +464,44 @@ fn sample_state() -> StoredState {
 
     StoredState {
         hosts,
-        apps: default_app_entries(),
+        apps: sample_app_entries(),
         settings: default_streaming_settings(),
         next_host_number: 1,
         ..StoredState::default()
     }
+}
+
+#[cfg(test)]
+fn sample_app_entries() -> Vec<AppEntry> {
+    vec![
+        AppEntry {
+            id: "steam".into(),
+            name: "Steam Big Picture".into(),
+            box_art_url: String::new(),
+            hidden: false,
+            direct_launch: true,
+            running: false,
+            app_collector_game: false,
+        },
+        AppEntry {
+            id: "desktop".into(),
+            name: "Desktop".into(),
+            box_art_url: String::new(),
+            hidden: false,
+            direct_launch: false,
+            running: false,
+            app_collector_game: false,
+        },
+        AppEntry {
+            id: "game".into(),
+            name: "Example Game".into(),
+            box_art_url: String::new(),
+            hidden: false,
+            direct_launch: false,
+            running: false,
+            app_collector_game: true,
+        },
+    ]
 }
 
 impl MoonlightCore for RustBackend {
@@ -728,9 +759,22 @@ impl MoonlightCore for RustBackend {
             .fetch_server_info(&stored_host.manual_address)
             .map(|info| info.current_game_id)
             .unwrap_or(0);
-        // Keep the persisted app list when the host is offline or not reachable yet.
-        let _ =
-            self.refresh_apps_from_host(&stored_host, &stored_host.manual_address, running_game_id);
+        // Keep a persisted app list when the host is offline, but do not mask a fresh empty
+        // production state with the old prototype's sample app list.
+        if let Err(error) =
+            self.refresh_apps_from_host(&stored_host, &stored_host.manual_address, running_game_id)
+        {
+            if self.apps.is_empty() {
+                return Err(format!(
+                    "Unable to refresh app list from {}: {error}",
+                    host.name
+                ));
+            }
+            eprintln!(
+                "Rust backend app list refresh failed for {}: {error}",
+                host.name
+            );
+        }
 
         Ok(self
             .apps

@@ -129,35 +129,7 @@ impl JsonStateStore {
 }
 
 pub fn default_app_entries() -> Vec<AppEntry> {
-    vec![
-        AppEntry {
-            id: "steam".into(),
-            name: "Steam Big Picture".into(),
-            box_art_url: String::new(),
-            hidden: false,
-            direct_launch: true,
-            running: false,
-            app_collector_game: false,
-        },
-        AppEntry {
-            id: "desktop".into(),
-            name: "Desktop".into(),
-            box_art_url: String::new(),
-            hidden: false,
-            direct_launch: false,
-            running: false,
-            app_collector_game: false,
-        },
-        AppEntry {
-            id: "game".into(),
-            name: "Example Game".into(),
-            box_art_url: String::new(),
-            hidden: false,
-            direct_launch: false,
-            running: false,
-            app_collector_game: true,
-        },
-    ]
+    Vec::new()
 }
 
 fn current_state_version() -> u32 {
@@ -183,6 +155,7 @@ fn next_manual_host_number(hosts: &HostStore) -> u32 {
 mod tests {
     use super::{JsonStateStore, StoredState, CURRENT_STATE_VERSION};
     use crate::core::host_store::{HostStore, StoredHost};
+    use crate::core::types::AppEntry;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -217,7 +190,7 @@ mod tests {
 
         assert_eq!(CURRENT_STATE_VERSION, state.version);
         assert!(state.hosts.hosts().is_empty());
-        assert!(state.apps.iter().any(|app| app.id == "steam"));
+        assert!(state.apps.is_empty());
     }
 
     #[test]
@@ -261,7 +234,7 @@ mod tests {
 
         assert_eq!(CURRENT_STATE_VERSION, state.version);
         assert_eq!(1, state.next_host_number);
-        assert!(!state.apps.is_empty());
+        assert!(state.apps.is_empty());
     }
 
     #[test]
@@ -285,7 +258,15 @@ mod tests {
     fn running_state_is_not_persisted_for_apps() {
         let store = JsonStateStore::from_file(unique_state_path("app-running"));
         let mut state = StoredState::default();
-        state.apps[0].running = true;
+        state.apps.push(AppEntry {
+            id: "steam".into(),
+            name: "Steam Big Picture".into(),
+            box_art_url: String::new(),
+            hidden: false,
+            direct_launch: true,
+            running: true,
+            app_collector_game: false,
+        });
 
         store.save(&state).unwrap();
         let loaded = store.load().unwrap();
