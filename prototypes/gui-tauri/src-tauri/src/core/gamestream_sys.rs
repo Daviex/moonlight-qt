@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::os::raw::{c_char, c_int, c_uchar, c_ushort, c_void};
+use std::os::raw::{c_char, c_int, c_schar, c_short, c_uchar, c_uint, c_ushort, c_void};
 
 pub const STREAM_CFG_LOCAL: c_int = 0;
 pub const STREAM_CFG_REMOTE: c_int = 1;
@@ -47,6 +47,57 @@ pub const ML_ERROR_FRAME_CONVERSION: c_int = -104;
 
 pub const CONN_STATUS_OKAY: c_int = 0;
 pub const CONN_STATUS_POOR: c_int = 1;
+
+pub const BUTTON_ACTION_PRESS: c_char = 0x07;
+pub const BUTTON_ACTION_RELEASE: c_char = 0x08;
+pub const BUTTON_LEFT: c_int = 0x01;
+pub const BUTTON_MIDDLE: c_int = 0x02;
+pub const BUTTON_RIGHT: c_int = 0x03;
+pub const BUTTON_X1: c_int = 0x04;
+pub const BUTTON_X2: c_int = 0x05;
+
+pub const KEY_ACTION_DOWN: c_char = 0x03;
+pub const KEY_ACTION_UP: c_char = 0x04;
+pub const MODIFIER_SHIFT: c_char = 0x01;
+pub const MODIFIER_CTRL: c_char = 0x02;
+pub const MODIFIER_ALT: c_char = 0x04;
+pub const MODIFIER_META: c_char = 0x08;
+pub const SS_KBE_FLAG_NON_NORMALIZED: c_char = 0x01;
+
+pub const A_FLAG: c_int = 0x1000;
+pub const B_FLAG: c_int = 0x2000;
+pub const X_FLAG: c_int = 0x4000;
+pub const Y_FLAG: c_int = 0x8000;
+pub const UP_FLAG: c_int = 0x0001;
+pub const DOWN_FLAG: c_int = 0x0002;
+pub const LEFT_FLAG: c_int = 0x0004;
+pub const RIGHT_FLAG: c_int = 0x0008;
+pub const LB_FLAG: c_int = 0x0100;
+pub const RB_FLAG: c_int = 0x0200;
+pub const PLAY_FLAG: c_int = 0x0010;
+pub const BACK_FLAG: c_int = 0x0020;
+pub const LS_CLK_FLAG: c_int = 0x0040;
+pub const RS_CLK_FLAG: c_int = 0x0080;
+pub const SPECIAL_FLAG: c_int = 0x0400;
+pub const PADDLE1_FLAG: c_int = 0x010000;
+pub const PADDLE2_FLAG: c_int = 0x020000;
+pub const PADDLE3_FLAG: c_int = 0x040000;
+pub const PADDLE4_FLAG: c_int = 0x080000;
+pub const TOUCHPAD_FLAG: c_int = 0x100000;
+pub const MISC_FLAG: c_int = 0x200000;
+
+pub const LI_CTYPE_UNKNOWN: c_uchar = 0x00;
+pub const LI_CTYPE_XBOX: c_uchar = 0x01;
+pub const LI_CTYPE_PS: c_uchar = 0x02;
+pub const LI_CTYPE_NINTENDO: c_uchar = 0x03;
+pub const LI_CCAP_ANALOG_TRIGGERS: c_ushort = 0x01;
+pub const LI_CCAP_RUMBLE: c_ushort = 0x02;
+pub const LI_CCAP_TRIGGER_RUMBLE: c_ushort = 0x04;
+pub const LI_CCAP_TOUCHPAD: c_ushort = 0x08;
+pub const LI_CCAP_ACCEL: c_ushort = 0x10;
+pub const LI_CCAP_GYRO: c_ushort = 0x20;
+pub const LI_CCAP_BATTERY_STATE: c_ushort = 0x40;
+pub const LI_CCAP_RGB_LED: c_ushort = 0x80;
 
 pub const fn make_audio_configuration(channel_count: c_int, channel_mask: c_int) -> c_int {
     (channel_mask << 16) | (channel_count << 8) | 0xCA
@@ -362,6 +413,52 @@ extern "C" {
     pub fn LiStopConnection();
     pub fn LiInterruptConnection();
     pub fn LiGetStageName(stage: c_int) -> *const c_char;
+    pub fn LiSendMouseMoveEvent(delta_x: c_short, delta_y: c_short) -> c_int;
+    pub fn LiSendMousePositionEvent(
+        x: c_short,
+        y: c_short,
+        reference_width: c_short,
+        reference_height: c_short,
+    ) -> c_int;
+    pub fn LiSendMouseButtonEvent(action: c_char, button: c_int) -> c_int;
+    pub fn LiSendKeyboardEvent2(
+        key_code: c_short,
+        key_action: c_char,
+        modifiers: c_char,
+        flags: c_char,
+    ) -> c_int;
+    pub fn LiSendUtf8TextEvent(text: *const c_char, length: c_uint) -> c_int;
+    pub fn LiSendControllerEvent(
+        button_flags: c_int,
+        left_trigger: c_uchar,
+        right_trigger: c_uchar,
+        left_stick_x: c_short,
+        left_stick_y: c_short,
+        right_stick_x: c_short,
+        right_stick_y: c_short,
+    ) -> c_int;
+    pub fn LiSendMultiControllerEvent(
+        controller_number: c_short,
+        active_gamepad_mask: c_short,
+        button_flags: c_int,
+        left_trigger: c_uchar,
+        right_trigger: c_uchar,
+        left_stick_x: c_short,
+        left_stick_y: c_short,
+        right_stick_x: c_short,
+        right_stick_y: c_short,
+    ) -> c_int;
+    pub fn LiSendControllerArrivalEvent(
+        controller_number: c_uchar,
+        active_gamepad_mask: c_ushort,
+        controller_type: c_uchar,
+        supported_button_flags: c_uint,
+        capabilities: c_ushort,
+    ) -> c_int;
+    pub fn LiSendScrollEvent(scroll_clicks: c_schar) -> c_int;
+    pub fn LiSendHighResScrollEvent(scroll_amount: c_short) -> c_int;
+    pub fn LiSendHScrollEvent(scroll_clicks: c_schar) -> c_int;
+    pub fn LiSendHighResHScrollEvent(scroll_amount: c_short) -> c_int;
 }
 
 #[cfg(test)]
