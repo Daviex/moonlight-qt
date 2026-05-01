@@ -1,8 +1,9 @@
 @echo off
 setlocal enableDelayedExpansion
 
-rem Build and stage the isolated Tauri prototype with the native Moonlight helper.
-rem Run from the repository root. Set SKIP_NATIVE_BUILD=1 to reuse an existing native build.
+rem Build and stage the isolated Tauri prototype with the in-process Rust backend.
+rem Run from the repository root. Set TAURI_WITH_NATIVE_HELPER=1 to also stage the legacy IPC helper.
+rem When TAURI_WITH_NATIVE_HELPER=1, set SKIP_NATIVE_BUILD=1 to reuse an existing native build.
 rem Set TAURI_PACKAGE_ZIP=1 to also create a portable ZIP from the staged prototype.
 
 set SOURCE_ROOT=%cd%
@@ -11,6 +12,9 @@ set TAURI_ROOT=%SOURCE_ROOT%\prototypes\gui-tauri
 set TAURI_EXE=%TAURI_ROOT%\src-tauri\target\release\moonlight-gui-tauri-prototype.exe
 set PACKAGE_DIR=%SOURCE_ROOT%\build\tauri-prototype
 set INSTALLER_DIR=%SOURCE_ROOT%\build\installer-tauri-prototype-%BUILD_CONFIG%
+set PACKAGE_ARCH=%PROCESSOR_ARCHITECTURE%
+if /I "%PACKAGE_ARCH%"=="AMD64" set PACKAGE_ARCH=x64
+if /I "%PACKAGE_ARCH%"=="ARM64" set PACKAGE_ARCH=arm64
 
 if not exist "%SOURCE_ROOT%\moonlight-qt.pro" (
     echo This script must be run from the moonlight-qt repository root.
@@ -67,7 +71,7 @@ if not defined WEBVIEW2_FOUND (
     echo The Tauri shell may fail to launch on systems without WebView2 installed.
 )
 
-if not "%SKIP_NATIVE_BUILD%"=="1" (
+if "%TAURI_WITH_NATIVE_HELPER%"=="1" if not "%SKIP_NATIVE_BUILD%"=="1" (
     if not exist "%SOURCE_ROOT%\scripts\build-arch.bat" (
         echo Unable to find scripts\build-arch.bat. Run this script from the repository root.
         exit /b 1
@@ -100,26 +104,28 @@ if not exist node_modules\.bin\tauri.cmd (
 )
 popd
 
-if not "%SKIP_NATIVE_BUILD%"=="1" (
+if "%TAURI_WITH_NATIVE_HELPER%"=="1" if not "%SKIP_NATIVE_BUILD%"=="1" (
     call "%SOURCE_ROOT%\scripts\build-arch.bat" %BUILD_CONFIG%
     if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
 )
 
 set HELPER_EXE=
-for %%A in (x64 arm64 x86) do (
-    if not defined HELPER_EXE (
-        if exist "%SOURCE_ROOT%\build\deploy-%%A-%BUILD_CONFIG%\Moonlight.exe" (
-            set HELPER_EXE=%SOURCE_ROOT%\build\deploy-%%A-%BUILD_CONFIG%\Moonlight.exe
-            set HELPER_DIR=%SOURCE_ROOT%\build\deploy-%%A-%BUILD_CONFIG%
-            set HELPER_ARCH=%%A
+if "%TAURI_WITH_NATIVE_HELPER%"=="1" (
+    for %%A in (x64 arm64 x86) do (
+        if not defined HELPER_EXE (
+            if exist "%SOURCE_ROOT%\build\deploy-%%A-%BUILD_CONFIG%\Moonlight.exe" (
+                set HELPER_EXE=%SOURCE_ROOT%\build\deploy-%%A-%BUILD_CONFIG%\Moonlight.exe
+                set HELPER_DIR=%SOURCE_ROOT%\build\deploy-%%A-%BUILD_CONFIG%
+                set PACKAGE_ARCH=%%A
+            )
         )
     )
-)
 
-if not defined HELPER_EXE (
-    echo Unable to find a native helper build under build\deploy-*-release\Moonlight.exe.
-    echo Run scripts\build-arch.bat release first or unset SKIP_NATIVE_BUILD.
-    exit /b 1
+    if not defined HELPER_EXE (
+        echo Unable to find a native helper build under build\deploy-*-release\Moonlight.exe.
+        echo Run scripts\build-arch.bat release first or unset SKIP_NATIVE_BUILD.
+        exit /b 1
+    )
 )
 
 pushd "%TAURI_ROOT%"
@@ -133,42 +139,62 @@ if not exist "%TAURI_EXE%" (
 )
 
 rmdir /s /q "%PACKAGE_DIR%" >nul 2>nul
-mkdir "%PACKAGE_DIR%\native"
+mkdir "%PACKAGE_DIR%"
 if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
 
 copy "%TAURI_EXE%" "%PACKAGE_DIR%\MoonlightTauri.exe" >nul
 if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
 
-xcopy "%HELPER_DIR%\*" "%PACKAGE_DIR%\native\" /E /I /Y >nul
-if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
-
 (
     echo @echo off
-    echo set "MOONLIGHT_TAURI_BACKEND=ipc"
-    echo set "MOONLIGHT_TAURI_HELPER=%%~dp0native\Moonlight.exe"
     echo start "" "%%~dp0MoonlightTauri.exe"
 ) > "%PACKAGE_DIR%\Launch-Moonlight-Tauri.bat"
 
 (
     echo @echo off
-    echo set "MOONLIGHT_TAURI_BACKEND=ipc"
-    echo set "MOONLIGHT_TAURI_HELPER=%%~dp0native\Moonlight.exe"
     echo set "MOONLIGHT_TAURI_DEBUG=1"
     echo set "MOONLIGHT_TAURI_LOG=%%~dp0MoonlightTauri.log"
     echo start "" "%%~dp0MoonlightTauri.exe"
 ) > "%PACKAGE_DIR%\Launch-Moonlight-Tauri-Debug.bat"
 
+if "%TAURI_WITH_NATIVE_HELPER%"=="1" (
+    mkdir "%PACKAGE_DIR%\native"
+    if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
+
+    xcopy "%HELPER_DIR%\*" "%PACKAGE_DIR%\native\" /E /I /Y >nul
+    if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
+
+    (
+        echo @echo off
+        echo set "MOONLIGHT_TAURI_BACKEND=ipc"
+        echo set "MOONLIGHT_TAURI_HELPER=%%~dp0native\Moonlight.exe"
+        echo start "" "%%~dp0MoonlightTauri.exe"
+    ) > "%PACKAGE_DIR%\Launch-Moonlight-Tauri-IPC.bat"
+
+    (
+        echo @echo off
+        echo set "MOONLIGHT_TAURI_BACKEND=ipc"
+        echo set "MOONLIGHT_TAURI_HELPER=%%~dp0native\Moonlight.exe"
+        echo set "MOONLIGHT_TAURI_DEBUG=1"
+        echo set "MOONLIGHT_TAURI_LOG=%%~dp0MoonlightTauri.log"
+        echo start "" "%%~dp0MoonlightTauri.exe"
+    ) > "%PACKAGE_DIR%\Launch-Moonlight-Tauri-IPC-Debug.bat"
+)
+
 echo Tauri prototype package staged at:
 echo %PACKAGE_DIR%
-echo Run Launch-Moonlight-Tauri.bat to start the Tauri shell with the native helper.
+echo Run Launch-Moonlight-Tauri.bat to start the Tauri shell with the in-process Rust backend.
 echo Run Launch-Moonlight-Tauri-Debug.bat to capture MoonlightTauri.log beside the staged executable.
+if "%TAURI_WITH_NATIVE_HELPER%"=="1" (
+    echo Run Launch-Moonlight-Tauri-IPC.bat to start the Tauri shell with the legacy native helper fallback.
+)
 
 if "%TAURI_PACKAGE_ZIP%"=="1" (
     rmdir /s /q "%INSTALLER_DIR%" >nul 2>nul
     mkdir "%INSTALLER_DIR%"
     if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
 
-    set TAURI_ZIP=%INSTALLER_DIR%\MoonlightTauriPrototype-!HELPER_ARCH!-%VERSION%.zip
+    set TAURI_ZIP=%INSTALLER_DIR%\MoonlightTauriPrototype-!PACKAGE_ARCH!-%VERSION%.zip
     7z a "!TAURI_ZIP!" "%PACKAGE_DIR%\*"
     if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
 

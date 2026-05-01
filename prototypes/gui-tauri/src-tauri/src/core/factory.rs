@@ -1,4 +1,5 @@
 use super::backend::MoonlightCore;
+use super::rust_backend::RustBackend;
 use crate::ipc_backend::IpcBackend;
 use crate::logger;
 use crate::mock_backend::MockBackend;
@@ -9,7 +10,7 @@ const BACKEND_MODE_ENV: &str = "MOONLIGHT_TAURI_BACKEND";
 enum BackendSelection {
     ForcedIpc,
     Mock,
-    StagedIpc(String),
+    Rust,
 }
 
 pub fn create_backend(app_handle: tauri::AppHandle) -> Box<dyn MoonlightCore> {
@@ -18,9 +19,7 @@ pub fn create_backend(app_handle: tauri::AppHandle) -> Box<dyn MoonlightCore> {
         IpcBackend::staged_helper_path(),
     ) {
         BackendSelection::ForcedIpc => create_forced_ipc_backend(app_handle),
-        BackendSelection::StagedIpc(helper_path) => {
-            create_staged_ipc_backend(helper_path, app_handle)
-        }
+        BackendSelection::Rust => create_rust_backend(),
         BackendSelection::Mock => create_mock_backend(),
     }
 }
@@ -39,33 +38,19 @@ fn create_forced_ipc_backend(app_handle: tauri::AppHandle) -> Box<dyn MoonlightC
     }
 }
 
-fn create_staged_ipc_backend(
-    helper_path: String,
-    app_handle: tauri::AppHandle,
-) -> Box<dyn MoonlightCore> {
-    logger::log(format!(
-        "creating IPC backend from staged helper; helper_path={helper_path}"
-    ));
-    match IpcBackend::from_helper_path(helper_path, app_handle) {
-        Ok(backend) => {
-            logger::log("staged IPC backend ready");
-            Box::new(backend)
-        }
-        Err(error) => {
-            logger::log(format!(
-                "staged IPC backend initialization failed; error={error}"
-            ));
-            panic!("failed to initialize staged IPC backend: {error}");
-        }
-    }
-}
-
 fn create_mock_backend() -> Box<dyn MoonlightCore> {
     logger::log("creating mock backend");
     Box::new(MockBackend::new())
 }
 
+fn create_rust_backend() -> Box<dyn MoonlightCore> {
+    logger::log("creating in-process Rust backend");
+    Box::new(RustBackend::new())
+}
+
 fn select_backend(mode: Option<&str>, staged_helper_path: Option<String>) -> BackendSelection {
+    let _ = staged_helper_path;
+
     if mode
         .map(|value| value.eq_ignore_ascii_case("ipc"))
         .unwrap_or(false)
@@ -80,9 +65,7 @@ fn select_backend(mode: Option<&str>, staged_helper_path: Option<String>) -> Bac
         return BackendSelection::Mock;
     }
 
-    staged_helper_path
-        .map(BackendSelection::StagedIpc)
-        .unwrap_or(BackendSelection::Mock)
+    BackendSelection::Rust
 }
 
 #[cfg(test)]
@@ -104,19 +87,16 @@ mod tests {
     }
 
     #[test]
-    fn staged_helper_is_used_by_default_when_present() {
+    fn rust_backend_is_default_even_with_staged_helper() {
         let selection = select_backend(None, Some("native/Moonlight.exe".into()));
 
-        assert_eq!(
-            BackendSelection::StagedIpc("native/Moonlight.exe".into()),
-            selection
-        );
+        assert_eq!(BackendSelection::Rust, selection);
     }
 
     #[test]
-    fn mock_backend_is_default_without_staged_helper() {
+    fn rust_backend_is_default_without_staged_helper() {
         let selection = select_backend(None, None);
 
-        assert_eq!(BackendSelection::Mock, selection);
+        assert_eq!(BackendSelection::Rust, selection);
     }
 }

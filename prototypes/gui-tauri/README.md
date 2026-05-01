@@ -15,13 +15,15 @@ npm run tauri dev
 
 This prototype has been validated on Windows with Node.js, npm, Rust/Cargo installed by rustup, and the existing MSVC toolchain available to Cargo.
 
-To build and stage the prototype together with the native helper from the repository root:
+To build and stage the prototype with the default in-process Rust backend from the repository root:
 
 ```powershell
 scripts\build-tauri-prototype.bat
 ```
 
-This keeps the production Widgets package unchanged. The script first checks that it is running from the repository root, that the prototype package/manifests exist, and that npm, Cargo, rustc, and the local Tauri CLI dependency are available. On Windows it also warns if the WebView2 runtime is not detected in the standard registry locations, because the staged Tauri shell needs WebView2 at launch time. It then builds the native Moonlight helper, builds the Tauri shell with `--no-bundle`, stages both under `build\tauri-prototype`, and writes `Launch-Moonlight-Tauri.bat` with the required `MOONLIGHT_TAURI_BACKEND=ipc` and `MOONLIGHT_TAURI_HELPER` environment variables. It also writes `Launch-Moonlight-Tauri-Debug.bat`, which sets `MOONLIGHT_TAURI_DEBUG=1` and writes `MoonlightTauri.log` beside the staged executable. If a fresh native build already exists, set `SKIP_NATIVE_BUILD=1` before running the script to reuse `build\deploy-*-release\Moonlight.exe`. Set `TAURI_PACKAGE_ZIP=1` to also produce `build\installer-tauri-prototype-release\MoonlightTauriPrototype-<arch>-<version>.zip` from the staged package.
+This keeps the production Widgets package unchanged. The script first checks that it is running from the repository root, that the prototype package/manifests exist, and that npm, Cargo, rustc, and the local Tauri CLI dependency are available. On Windows it also warns if the WebView2 runtime is not detected in the standard registry locations, because the staged Tauri shell needs WebView2 at launch time. It then builds the Tauri shell with `--no-bundle`, stages `MoonlightTauri.exe` under `build\tauri-prototype`, and writes `Launch-Moonlight-Tauri.bat` for the default in-process Rust backend. It also writes `Launch-Moonlight-Tauri-Debug.bat`, which sets `MOONLIGHT_TAURI_DEBUG=1` and writes `MoonlightTauri.log` beside the staged executable. Set `TAURI_PACKAGE_ZIP=1` to also produce `build\installer-tauri-prototype-release\MoonlightTauriPrototype-<arch>-<version>.zip` from the staged package.
+
+To stage the legacy native IPC helper for fallback testing, set `TAURI_WITH_NATIVE_HELPER=1` before running `scripts\build-tauri-prototype.bat`. In that mode, the script builds or reuses `build\deploy-*-release\Moonlight.exe`, copies it under `build\tauri-prototype\native`, and writes `Launch-Moonlight-Tauri-IPC.bat` plus `Launch-Moonlight-Tauri-IPC-Debug.bat`. If a fresh native build already exists, set both `TAURI_WITH_NATIVE_HELPER=1` and `SKIP_NATIVE_BUILD=1` to reuse it.
 
 ## Migration notes
 
@@ -58,14 +60,15 @@ App entries include `boxArtUrl` from the native `AppListFacade`. The native help
 
 For mock-backend runs, the prototype exposes a small "Controller event test" toolbar that asks the Rust side to emit controller actions. IPC-backend runs now also receive real controller events from Moonlight's existing SDL controller navigation source in the native helper. The helper disables its GUI controller polling while a native stream owns SDL input, then re-enables it when session lifecycle events return control to the UI.
 
-The Rust side now separates the production command surface from the in-memory mock implementation:
+The Rust side now separates the production command surface from the in-process Rust backend, mock backend, and legacy IPC fallback:
 
-1. `src-tauri\src\backend.rs` defines the DTOs and `MoonlightBackend` trait used by all Tauri commands.
-2. `src-tauri\src\mock_backend.rs` contains the current in-memory mock implementation.
-3. `src-tauri\src\ipc_backend.rs` contains the selected production bridge scaffold. It can spawn a native helper process and forward commands over a line-delimited JSON protocol.
-4. `src-tauri\src\main.rs` owns the Tauri commands, event emission, and backend registration.
+1. `src-tauri\src\backend.rs` keeps compatibility re-exports for DTOs and the `MoonlightBackend` trait.
+2. `src-tauri\src\core\rust_backend.rs` contains the default in-process Rust backend. It uses Rust-owned host storage, settings validation, app/session state, and system-info DTOs without launching a helper process.
+3. `src-tauri\src\mock_backend.rs` contains the explicit in-memory mock implementation for UI-only testing.
+4. `src-tauri\src\ipc_backend.rs` contains the legacy bridge fallback. It can spawn a native helper process and forward commands over a line-delimited JSON protocol when `MOONLIGHT_TAURI_BACKEND=ipc` is set.
+5. `src-tauri\src\main.rs` owns the Tauri commands, event emission, and backend registration.
 
-The default dev backend remains the in-memory mock so the prototype launches without extra native processes. A staged package launched directly from `build\tauri-prototype\MoonlightTauri.exe` auto-selects the IPC backend when `native\Moonlight.exe` is present beside it. To force the IPC bridge from an unstaged dev build, run the Tauri shell with:
+The default dev and packaged backend is now the in-process Rust backend, so the prototype launches without extra native processes and does not auto-select IPC just because `native\Moonlight.exe` is present. Use `MOONLIGHT_TAURI_BACKEND=mock` for UI-only mock testing. To force the IPC bridge from an unstaged dev build, run the Tauri shell with:
 
 ```powershell
 $env:MOONLIGHT_TAURI_BACKEND = 'ipc'
@@ -100,7 +103,7 @@ The helper can also write event frames at any point on stdout:
 {"event":{"kind":"settingsChanged","message":"Settings saved."}}
 ```
 
-This process boundary is the chosen production direction because it avoids mixing Tauri/Rust and Qt/C++ event loops in one process, keeps the existing C++ backend and SDL streaming ownership intact, and prevents TypeScript from reimplementing Moonlight backend logic.
+This process boundary is now a legacy fallback while the Rust backend is gaining parity. It remains useful for comparing behavior against the current Qt/C++ helper, but the migration target is Rust application orchestration with the GameStream C library linked directly through Rust FFI rather than JSON IPC.
 
 The native helper validates request envelopes before dispatching commands. Malformed JSON, missing or non-integer request IDs, missing command objects, missing command names, and non-object payloads return explicit error frames instead of being coerced into request ID `0` or an empty command. The Rust IPC backend and native helper use the same command envelope shape: `command.name` contains the snake-case command name and `command.payload` contains the command object. Host/app command IDs and string payloads such as host addresses, host names, and URLs are also validated before facade lookup or native URL handling.
 
