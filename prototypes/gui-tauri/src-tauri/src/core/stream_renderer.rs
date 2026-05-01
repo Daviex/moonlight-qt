@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use super::error::CoreError;
+use super::stream_libplacebo;
 use super::types::StreamingSettings;
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +17,7 @@ pub enum VideoDecoderPreference {
 #[serde(rename_all = "camelCase")]
 pub enum StreamRendererBackend {
     D3d11,
+    LibplaceboVulkan,
     SoftwareSdl,
 }
 
@@ -34,6 +36,12 @@ impl StreamRendererPlan {
         let decoder_preference =
             VideoDecoderPreference::from_raw(settings.video_decoder_selection)?;
         let backend = select_backend(decoder_preference);
+        crate::logger::stream(format!(
+            "renderer plan selected; backend={backend:?}; decoder_preference={decoder_preference:?}; hdr_requested={}; yuv444_requested={}; libplacebo_status={}",
+            settings.enable_hdr,
+            settings.enable_yuv444,
+            stream_libplacebo::renderer_status_message()
+        ));
 
         Ok(Self {
             decoder_preference,
@@ -42,6 +50,10 @@ impl StreamRendererPlan {
             yuv444_requested: settings.enable_yuv444,
             vsync: settings.enable_vsync,
         })
+    }
+
+    pub fn supports_hdr_formats(&self) -> bool {
+        self.backend.supports_hdr_formats()
     }
 }
 
@@ -60,9 +72,28 @@ impl VideoDecoderPreference {
 
 fn select_backend(preference: VideoDecoderPreference) -> StreamRendererBackend {
     match preference {
-        VideoDecoderPreference::Automatic
-        | VideoDecoderPreference::ForceHardware
-        | VideoDecoderPreference::ForceSoftware => StreamRendererBackend::SoftwareSdl,
+        VideoDecoderPreference::ForceSoftware => StreamRendererBackend::SoftwareSdl,
+        VideoDecoderPreference::Automatic | VideoDecoderPreference::ForceHardware => {
+            platform_hardware_backend()
+        }
+    }
+}
+
+impl StreamRendererBackend {
+    pub fn supports_hdr_formats(self) -> bool {
+        matches!(self, Self::LibplaceboVulkan | Self::D3d11)
+    }
+}
+
+fn platform_hardware_backend() -> StreamRendererBackend {
+    #[cfg(all(target_os = "linux", libplacebo_renderer_linked))]
+    {
+        StreamRendererBackend::LibplaceboVulkan
+    }
+
+    #[cfg(not(all(target_os = "linux", libplacebo_renderer_linked)))]
+    {
+        StreamRendererBackend::SoftwareSdl
     }
 }
 
@@ -72,11 +103,14 @@ mod tests {
     use crate::core::settings::default_streaming_settings;
 
     #[test]
-    fn renderer_plan_reports_active_software_backend_by_default() {
+    fn renderer_plan_reports_available_backend_by_default() {
         let settings = default_streaming_settings();
         let plan = StreamRendererPlan::new(&settings).unwrap();
 
         assert_eq!(VideoDecoderPreference::Automatic, plan.decoder_preference);
+        #[cfg(all(target_os = "linux", libplacebo_renderer_linked))]
+        assert_eq!(StreamRendererBackend::LibplaceboVulkan, plan.backend);
+        #[cfg(not(all(target_os = "linux", libplacebo_renderer_linked)))]
         assert_eq!(StreamRendererBackend::SoftwareSdl, plan.backend);
         assert!(plan.vsync);
     }

@@ -114,7 +114,7 @@ export interface StreamWindowDescriptor {
 }
 
 export type VideoDecoderPreference = 'automatic' | 'forceHardware' | 'forceSoftware';
-export type StreamRendererBackend = 'd3d11' | 'softwareSdl';
+export type StreamRendererBackend = 'd3d11' | 'libplaceboVulkan' | 'softwareSdl';
 
 export interface StreamRendererPlan {
   decoderPreference: VideoDecoderPreference;

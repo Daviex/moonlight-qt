@@ -65,16 +65,17 @@ impl StreamLaunchPlan {
             ));
         }
 
+        let renderer = StreamRendererPlan::new(settings)?;
         Ok(Self {
             host_id: host.id.clone(),
             host_address: host.manual_address.clone(),
             app_id: app.id.clone(),
             app_name: app.name.clone(),
             server_certificate_pem: host.server_certificate_pem.clone(),
-            stream_config: StreamConfiguration::from(settings)
+            stream_config: StreamConfiguration::from_settings_for_renderer(settings, &renderer)
                 .with_remote_input_crypto(RemoteInputCrypto::generate()),
             window: StreamWindowDescriptor::new(&host.name, settings)?,
-            renderer: StreamRendererPlan::new(settings)?,
+            renderer,
         })
     }
 
@@ -82,6 +83,7 @@ impl StreamLaunchPlan {
         &self,
         server_info: &ServerInfo,
         start_session: &StartAppSession,
+        stream_config: &StreamConfiguration,
     ) -> Result<PreparedStreamSession, CoreError> {
         let server = ServerConnectionConfiguration {
             address: self.host_address.clone(),
@@ -90,7 +92,7 @@ impl StreamLaunchPlan {
             rtsp_session_url: start_session.rtsp_session_url.clone(),
             codec_mode_support: server_info.server_codec_mode_support,
         };
-        let raw = RawSessionConfiguration::new(&server, &self.stream_config)?;
+        let raw = RawSessionConfiguration::new(&server, stream_config)?;
 
         Ok(PreparedStreamSession {
             host_id: self.host_id.clone(),
@@ -222,7 +224,13 @@ mod tests {
             rtsp_session_url: Some("rtsp://session".into()),
         };
 
-        let prepared = plan.prepare_session(&server_info, &start_session).unwrap();
+        let stream_config = plan
+            .stream_config
+            .clone()
+            .preferred_for_server(server_info.server_codec_mode_support);
+        let prepared = plan
+            .prepare_session(&server_info, &start_session, &stream_config)
+            .unwrap();
 
         assert_eq!("gaming-pc", prepared.host_id);
         assert_eq!("123", prepared.app_id);

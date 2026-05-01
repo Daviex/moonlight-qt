@@ -1,6 +1,7 @@
 fn main() {
     configure_windows_sdl3_link();
     configure_windows_antihooking_link();
+    configure_linux_libplacebo_link();
     configure_moonlight_common_link();
     tauri_build::build();
 }
@@ -89,6 +90,50 @@ fn detect_antihooking_lib_dir(
     ]
     .into_iter()
     .find(|candidate| candidate.join("AntiHooking.lib").exists())
+}
+
+fn configure_linux_libplacebo_link() {
+    println!("cargo:rustc-check-cfg=cfg(libplacebo_renderer_linked)");
+    println!("cargo:rerun-if-env-changed=MOONLIGHT_TAURI_LIBPLACEBO");
+    println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
+
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    if std::env::var("MOONLIGHT_TAURI_LIBPLACEBO")
+        .map(|value| value == "0")
+        .unwrap_or(false)
+    {
+        return;
+    }
+
+    let Ok(output) = std::process::Command::new("pkg-config")
+        .args(["--libs", "libplacebo"])
+        .output()
+    else {
+        println!("cargo:warning=pkg-config was not found; Linux libplacebo renderer disabled");
+        return;
+    };
+    if !output.status.success() {
+        println!("cargo:warning=libplacebo was not found by pkg-config; Linux libplacebo renderer disabled");
+        return;
+    }
+
+    let libs = String::from_utf8_lossy(&output.stdout);
+    for token in libs.split_whitespace() {
+        if let Some(path) = token.strip_prefix("-L") {
+            println!("cargo:rustc-link-search=native={path}");
+        } else if let Some(lib) = token.strip_prefix("-l") {
+            println!("cargo:rustc-link-lib=dylib={lib}");
+        } else if let Some(arg) = token.strip_prefix("-Wl,") {
+            for linker_arg in arg.split(',') {
+                println!("cargo:rustc-link-arg={linker_arg}");
+            }
+        }
+    }
+
+    println!("cargo:rustc-link-lib=dylib=vulkan");
+    println!("cargo:rustc-cfg=libplacebo_renderer_linked");
 }
 
 fn configure_moonlight_common_link() {

@@ -7,6 +7,7 @@ use super::stream_input::{
     ButtonAction, ControllerCapabilities, ControllerState, ControllerType, KeyAction, KeyModifiers,
     MouseButton as StreamMouseButton, StreamInputSender,
 };
+use super::stream_renderer::StreamRendererPlan;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -34,6 +35,10 @@ const SDL3_CONTROLLER_DIAGNOSTIC_INTERVAL: Duration = Duration::from_secs(2);
 const SDL_SOFTWARE_RENDERER_VIDEO_FORMATS: c_int = gamestream_sys::VIDEO_FORMAT_H264
     | gamestream_sys::VIDEO_FORMAT_H265
     | gamestream_sys::VIDEO_FORMAT_AV1_MAIN8;
+const VIDEO_CODEC_CONFIG_AUTO: c_int = 0;
+const VIDEO_CODEC_CONFIG_FORCE_H264: c_int = 1;
+const VIDEO_CODEC_CONFIG_FORCE_HEVC: c_int = 2;
+const VIDEO_CODEC_CONFIG_FORCE_AV1: c_int = 4;
 
 static STREAM_EVENT_CONTEXT: OnceLock<Mutex<Option<StreamEventContext>>> = OnceLock::new();
 static AUDIO_SINK_STATE: OnceLock<Mutex<AudioSinkState>> = OnceLock::new();
@@ -3349,36 +3354,143 @@ impl StreamConfiguration {
             ..gamestream_sys::StreamConfiguration::default()
         }
     }
+
+    pub fn from_settings_for_renderer(
+        settings: &crate::core::types::StreamingSettings,
+        renderer: &StreamRendererPlan,
+    ) -> Self {
+        stream_configuration_from_settings(settings, renderer.supports_hdr_formats())
+    }
+
+    pub fn preferred_for_server(mut self, server_codec_modes: c_int) -> Self {
+        let Some(preferred_format) =
+            preferred_available_video_format(self.supported_video_formats, server_codec_modes)
+        else {
+            logger::log(format!(
+                "No preferred codec match found; keeping supported formats=0x{:x}; server_modes=0x{server_codec_modes:x}",
+                self.supported_video_formats
+            ));
+            return self;
+        };
+        if preferred_format != self.supported_video_formats {
+            logger::log(format!(
+                "Selected preferred stream codec; requested_formats=0x{:x}; server_modes=0x{server_codec_modes:x}; selected=0x{preferred_format:x}",
+                self.supported_video_formats
+            ));
+        }
+        self.supported_video_formats = preferred_format;
+        self
+    }
 }
 
 impl From<&crate::core::types::StreamingSettings> for StreamConfiguration {
     fn from(settings: &crate::core::types::StreamingSettings) -> Self {
-        let packet_size = if settings.packet_size == 0 {
-            DEFAULT_VIDEO_PACKET_SIZE
-        } else {
-            settings.packet_size
-        };
-        let streaming_remotely = if settings.packet_size == 0 {
-            StreamingRemotely::Auto
-        } else {
-            StreamingRemotely::Local
-        };
+        stream_configuration_from_settings(settings, false)
+    }
+}
 
-        Self {
-            width: settings.width,
-            height: settings.height,
-            fps: settings.fps,
-            bitrate_kbps: settings.bitrate_kbps,
-            packet_size,
-            streaming_remotely,
-            audio_configuration: AudioConfiguration::from_raw(settings.audio_config),
-            supported_video_formats: sdl_software_renderer_video_formats(
-                settings.video_codec_config,
-                settings.enable_hdr,
-            ),
-            remote_input_crypto: RemoteInputCrypto::default(),
+fn stream_configuration_from_settings(
+    settings: &crate::core::types::StreamingSettings,
+    supports_hdr_formats: bool,
+) -> StreamConfiguration {
+    let packet_size = if settings.packet_size == 0 {
+        DEFAULT_VIDEO_PACKET_SIZE
+    } else {
+        settings.packet_size
+    };
+    let streaming_remotely = if settings.packet_size == 0 {
+        StreamingRemotely::Auto
+    } else {
+        StreamingRemotely::Local
+    };
+    let requested_formats = requested_video_formats_for_settings(settings, supports_hdr_formats);
+    let supported_video_formats = if supports_hdr_formats {
+        requested_formats
+    } else {
+        sdl_software_renderer_video_formats(requested_formats, settings.enable_hdr)
+    };
+
+    StreamConfiguration {
+        width: settings.width,
+        height: settings.height,
+        fps: settings.fps,
+        bitrate_kbps: settings.bitrate_kbps,
+        packet_size,
+        streaming_remotely,
+        audio_configuration: AudioConfiguration::from_raw(settings.audio_config),
+        supported_video_formats,
+        remote_input_crypto: RemoteInputCrypto::default(),
+    }
+}
+
+fn requested_video_formats_for_settings(
+    settings: &crate::core::types::StreamingSettings,
+    supports_hdr_formats: bool,
+) -> c_int {
+    match settings.video_codec_config {
+        VIDEO_CODEC_CONFIG_FORCE_H264 => gamestream_sys::VIDEO_FORMAT_H264,
+        VIDEO_CODEC_CONFIG_FORCE_HEVC => {
+            hevc_video_formats_for_renderer(settings, supports_hdr_formats)
+        }
+        VIDEO_CODEC_CONFIG_FORCE_AV1 => {
+            // Match native intent: forced AV1 may fall back to HEVC before H.264 if AV1 is unavailable.
+            av1_video_formats_for_renderer(settings, supports_hdr_formats)
+                | hevc_video_formats_for_renderer(settings, supports_hdr_formats)
+        }
+        VIDEO_CODEC_CONFIG_AUTO => automatic_video_formats_for_renderer(supports_hdr_formats),
+        raw_formats => raw_formats,
+    }
+}
+
+fn automatic_video_formats_for_renderer(supports_hdr_formats: bool) -> c_int {
+    if supports_hdr_formats {
+        gamestream_sys::VIDEO_FORMAT_AV1_HIGH10_444
+            | gamestream_sys::VIDEO_FORMAT_AV1_MAIN10
+            | gamestream_sys::VIDEO_FORMAT_AV1_HIGH8_444
+            | gamestream_sys::VIDEO_FORMAT_AV1_MAIN8
+            | gamestream_sys::VIDEO_FORMAT_HEVC_REXT10_444
+            | gamestream_sys::VIDEO_FORMAT_H265_MAIN10
+            | gamestream_sys::VIDEO_FORMAT_HEVC_REXT8_444
+            | gamestream_sys::VIDEO_FORMAT_H265
+            | gamestream_sys::VIDEO_FORMAT_H264_HIGH8_444
+            | gamestream_sys::VIDEO_FORMAT_H264
+    } else {
+        SDL_SOFTWARE_RENDERER_VIDEO_FORMATS
+    }
+}
+
+fn av1_video_formats_for_renderer(
+    settings: &crate::core::types::StreamingSettings,
+    supports_hdr_formats: bool,
+) -> c_int {
+    let mut formats = gamestream_sys::VIDEO_FORMAT_AV1_MAIN8;
+    if supports_hdr_formats && settings.enable_yuv444 {
+        formats |= gamestream_sys::VIDEO_FORMAT_AV1_HIGH8_444;
+    }
+    if supports_hdr_formats && settings.enable_hdr {
+        formats |= gamestream_sys::VIDEO_FORMAT_AV1_MAIN10;
+        if settings.enable_yuv444 {
+            formats |= gamestream_sys::VIDEO_FORMAT_AV1_HIGH10_444;
         }
     }
+    formats
+}
+
+fn hevc_video_formats_for_renderer(
+    settings: &crate::core::types::StreamingSettings,
+    supports_hdr_formats: bool,
+) -> c_int {
+    let mut formats = gamestream_sys::VIDEO_FORMAT_H265;
+    if supports_hdr_formats && settings.enable_yuv444 {
+        formats |= gamestream_sys::VIDEO_FORMAT_HEVC_REXT8_444;
+    }
+    if supports_hdr_formats && settings.enable_hdr {
+        formats |= gamestream_sys::VIDEO_FORMAT_H265_MAIN10;
+        if settings.enable_yuv444 {
+            formats |= gamestream_sys::VIDEO_FORMAT_HEVC_REXT10_444;
+        }
+    }
+    formats
 }
 
 fn sdl_software_renderer_video_formats(requested_formats: c_int, hdr_requested: bool) -> c_int {
@@ -3399,6 +3511,35 @@ fn sdl_software_renderer_video_formats(requested_formats: c_int, hdr_requested: 
         ));
     }
     supported_formats
+}
+
+fn preferred_available_video_format(
+    requested_formats: c_int,
+    server_codec_modes: c_int,
+) -> Option<c_int> {
+    const PREFERRED_FORMATS: [c_int; 10] = [
+        gamestream_sys::VIDEO_FORMAT_AV1_HIGH10_444,
+        gamestream_sys::VIDEO_FORMAT_AV1_MAIN10,
+        gamestream_sys::VIDEO_FORMAT_AV1_HIGH8_444,
+        gamestream_sys::VIDEO_FORMAT_AV1_MAIN8,
+        gamestream_sys::VIDEO_FORMAT_HEVC_REXT10_444,
+        gamestream_sys::VIDEO_FORMAT_H265_MAIN10,
+        gamestream_sys::VIDEO_FORMAT_HEVC_REXT8_444,
+        gamestream_sys::VIDEO_FORMAT_H265,
+        gamestream_sys::VIDEO_FORMAT_H264_HIGH8_444,
+        gamestream_sys::VIDEO_FORMAT_H264,
+    ];
+    let available_formats = requested_formats & server_codec_modes;
+    PREFERRED_FORMATS
+        .iter()
+        .copied()
+        .find(|format| available_formats & *format != 0)
+        .or_else(|| {
+            PREFERRED_FORMATS
+                .iter()
+                .copied()
+                .find(|format| requested_formats & *format != 0)
+        })
 }
 
 impl RawSessionConfiguration {
@@ -3640,6 +3781,54 @@ mod tests {
                 gamestream_sys::VIDEO_FORMAT_H265_MAIN10,
                 true
             )
+        );
+    }
+
+    #[test]
+    fn automatic_codec_selection_prefers_av1_then_hevc_then_h264() {
+        let requested = StreamConfiguration::from(&default_streaming_settings());
+
+        assert_eq!(
+            gamestream_sys::VIDEO_FORMAT_AV1_MAIN8,
+            requested
+                .clone()
+                .preferred_for_server(
+                    gamestream_sys::VIDEO_FORMAT_H264
+                        | gamestream_sys::VIDEO_FORMAT_H265
+                        | gamestream_sys::VIDEO_FORMAT_AV1_MAIN8
+                )
+                .supported_video_formats
+        );
+        assert_eq!(
+            gamestream_sys::VIDEO_FORMAT_H265,
+            requested
+                .clone()
+                .preferred_for_server(
+                    gamestream_sys::VIDEO_FORMAT_H264 | gamestream_sys::VIDEO_FORMAT_H265
+                )
+                .supported_video_formats
+        );
+        assert_eq!(
+            gamestream_sys::VIDEO_FORMAT_H264,
+            requested
+                .preferred_for_server(gamestream_sys::VIDEO_FORMAT_H264)
+                .supported_video_formats
+        );
+    }
+
+    #[test]
+    fn forced_codec_settings_map_to_real_video_format_masks() {
+        let mut settings = default_streaming_settings();
+        settings.video_codec_config = super::VIDEO_CODEC_CONFIG_FORCE_HEVC;
+        assert_eq!(
+            gamestream_sys::VIDEO_FORMAT_H265,
+            StreamConfiguration::from(&settings).supported_video_formats
+        );
+
+        settings.video_codec_config = super::VIDEO_CODEC_CONFIG_FORCE_AV1;
+        assert_eq!(
+            gamestream_sys::VIDEO_FORMAT_AV1_MAIN8 | gamestream_sys::VIDEO_FORMAT_H265,
+            StreamConfiguration::from(&settings).supported_video_formats
         );
     }
 
