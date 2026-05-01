@@ -2,6 +2,8 @@
 
 use super::error::CoreError;
 use super::gamestream_sys;
+#[cfg(moonlight_common_c_linked)]
+use std::ffi::CStr;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int};
 
@@ -107,6 +109,17 @@ pub struct RawSessionConfiguration {
 }
 
 impl StreamCallbacks {
+    pub fn connection_lifecycle() -> Self {
+        let mut callbacks = Self::default();
+        callbacks.connection.stage_starting = Some(connection_stage_starting);
+        callbacks.connection.stage_complete = Some(connection_stage_complete);
+        callbacks.connection.stage_failed = Some(connection_stage_failed);
+        callbacks.connection.connection_started = Some(connection_started);
+        callbacks.connection.connection_terminated = Some(connection_terminated);
+        callbacks.connection.connection_status_update = Some(connection_status_update);
+        callbacks
+    }
+
     pub fn as_raw_parts(
         &mut self,
     ) -> (
@@ -115,6 +128,71 @@ impl StreamCallbacks {
         *mut gamestream_sys::AudioRendererCallbacks,
     ) {
         (&mut self.connection, &mut self.video, &mut self.audio)
+    }
+}
+
+unsafe extern "C" fn connection_stage_starting(stage: c_int) {
+    eprintln!("GameStream stage starting: {}", stage_name(stage));
+}
+
+unsafe extern "C" fn connection_stage_complete(stage: c_int) {
+    eprintln!("GameStream stage complete: {}", stage_name(stage));
+}
+
+unsafe extern "C" fn connection_stage_failed(stage: c_int, error_code: c_int) {
+    eprintln!(
+        "GameStream stage failed: {} (error {error_code})",
+        stage_name(stage)
+    );
+}
+
+unsafe extern "C" fn connection_started() {
+    eprintln!("GameStream connection started.");
+}
+
+unsafe extern "C" fn connection_terminated(error_code: c_int) {
+    eprintln!("GameStream connection terminated with code {error_code}.");
+}
+
+unsafe extern "C" fn connection_status_update(connection_status: c_int) {
+    eprintln!("GameStream connection status update: {connection_status}.");
+}
+
+fn stage_name(stage: c_int) -> String {
+    #[cfg(moonlight_common_c_linked)]
+    {
+        // SAFETY: LiGetStageName returns either a static null-terminated string or null.
+        let ptr = unsafe { gamestream_sys::LiGetStageName(stage) };
+        if ptr.is_null() {
+            return format!("stage {stage}");
+        }
+        // SAFETY: Non-null stage names returned by Limelight are C strings.
+        return unsafe { CStr::from_ptr(ptr) }
+            .to_string_lossy()
+            .into_owned();
+    }
+
+    #[cfg(not(moonlight_common_c_linked))]
+    {
+        fallback_stage_name(stage).to_string()
+    }
+}
+
+fn fallback_stage_name(stage: c_int) -> &'static str {
+    match stage {
+        gamestream_sys::STAGE_NONE => "none",
+        gamestream_sys::STAGE_PLATFORM_INIT => "platform initialization",
+        gamestream_sys::STAGE_NAME_RESOLUTION => "name resolution",
+        gamestream_sys::STAGE_AUDIO_STREAM_INIT => "audio stream initialization",
+        gamestream_sys::STAGE_RTSP_HANDSHAKE => "RTSP handshake",
+        gamestream_sys::STAGE_CONTROL_STREAM_INIT => "control stream initialization",
+        gamestream_sys::STAGE_VIDEO_STREAM_INIT => "video stream initialization",
+        gamestream_sys::STAGE_INPUT_STREAM_INIT => "input stream initialization",
+        gamestream_sys::STAGE_CONTROL_STREAM_START => "control stream start",
+        gamestream_sys::STAGE_VIDEO_STREAM_START => "video stream start",
+        gamestream_sys::STAGE_AUDIO_STREAM_START => "audio stream start",
+        gamestream_sys::STAGE_INPUT_STREAM_START => "input stream start",
+        _ => "unknown stage",
     }
 }
 
@@ -520,5 +598,26 @@ mod tests {
         assert!(!connection.is_null());
         assert!(!video.is_null());
         assert!(!audio.is_null());
+    }
+
+    #[test]
+    fn connection_lifecycle_callbacks_install_observability_hooks() {
+        let callbacks = super::StreamCallbacks::connection_lifecycle();
+
+        assert!(callbacks.connection.stage_starting.is_some());
+        assert!(callbacks.connection.stage_complete.is_some());
+        assert!(callbacks.connection.stage_failed.is_some());
+        assert!(callbacks.connection.connection_started.is_some());
+        assert!(callbacks.connection.connection_terminated.is_some());
+        assert!(callbacks.connection.connection_status_update.is_some());
+    }
+
+    #[test]
+    fn fallback_stage_names_cover_known_limelight_stages() {
+        assert_eq!(
+            "RTSP handshake",
+            super::fallback_stage_name(gamestream_sys::STAGE_RTSP_HANDSHAKE)
+        );
+        assert_eq!("unknown stage", super::fallback_stage_name(12345));
     }
 }
