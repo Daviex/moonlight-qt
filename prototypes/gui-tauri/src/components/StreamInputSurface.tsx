@@ -114,18 +114,19 @@ export function StreamInputSurface({ streamState }: StreamInputSurfaceProps) {
     return () => window.cancelAnimationFrame(animationFrame);
   }, [active]);
 
-  const sendPosition = useCallback((event: PointerEvent<HTMLDivElement>) => {
+  const sendPointerInput = useCallback((event: PointerEvent<HTMLDivElement>) => {
     const target = event.currentTarget;
     const rect = target.getBoundingClientRect();
+    if (event.pointerType !== 'touch' && event.pointerType !== 'pen') {
+      void bridge.streamMouseMove(clampInt16(event.movementX), clampInt16(event.movementY)).catch(() => undefined);
+      return;
+    }
+
     const x = clampInt16(event.clientX - rect.left);
     const y = clampInt16(event.clientY - rect.top);
     const referenceWidth = clampInt16(rect.width);
     const referenceHeight = clampInt16(rect.height);
     void bridge.streamMousePosition(x, y, referenceWidth, referenceHeight).catch(() => undefined);
-
-    if (event.movementX !== 0 || event.movementY !== 0) {
-      void bridge.streamMouseMove(clampInt16(event.movementX), clampInt16(event.movementY)).catch(() => undefined);
-    }
   }, []);
 
   if (!active) {
@@ -143,15 +144,15 @@ export function StreamInputSurface({ streamState }: StreamInputSurfaceProps) {
       onPointerDown={(event) => {
         event.currentTarget.setPointerCapture(event.pointerId);
         event.currentTarget.focus();
-        sendPosition(event);
+        sendPointerInput(event);
         const button = mouseButton(event.button);
         if (button) {
           void bridge.streamMouseButton(button, true).catch(() => undefined);
         }
       }}
-      onPointerMove={sendPosition}
+      onPointerMove={sendPointerInput}
       onPointerUp={(event) => {
-        sendPosition(event);
+        sendPointerInput(event);
         const button = mouseButton(event.button);
         if (button) {
           void bridge.streamMouseButton(button, false).catch(() => undefined);

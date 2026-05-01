@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
-use std::os::raw::{c_char, c_float, c_int, c_schar, c_short, c_uchar, c_uint, c_ushort, c_void};
+#[cfg(moonlight_common_c_linked)]
+use std::os::raw::c_float;
+use std::os::raw::{c_char, c_int, c_schar, c_short, c_uchar, c_uint, c_ushort, c_void};
 
 pub const STREAM_CFG_LOCAL: c_int = 0;
 pub const STREAM_CFG_REMOTE: c_int = 1;

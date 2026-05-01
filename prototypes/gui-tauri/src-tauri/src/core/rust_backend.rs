@@ -28,6 +28,7 @@ use crate::logger;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs;
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
@@ -458,6 +459,14 @@ impl RustBackend {
             .app_id
             .parse::<u32>()
             .map_err(|_| format!("App ID '{}' is not numeric.", plan.app_id))?;
+        let local_audio =
+            self.settings.play_audio_on_host || is_self_stream_address(&plan.host_address);
+        if local_audio && !self.settings.play_audio_on_host {
+            logger::log(format!(
+                "enabling host-local audio for self-stream address {}",
+                plan.host_address
+            ));
+        }
         let request = StartAppRequest {
             app_id,
             is_gfe: server_info.state.contains("MJOLNIR"),
@@ -466,7 +475,7 @@ impl RustBackend {
             } else {
                 self.settings.game_optimizations
             },
-            local_audio: self.settings.play_audio_on_host,
+            local_audio,
             gamepad_mask: 0,
             persist_game_controllers_on_disconnect: !self.settings.multi_controller,
         };
@@ -1331,6 +1340,34 @@ fn parse_mouse_button(button: &str) -> Result<MouseButton, String> {
     }
 }
 
+fn is_self_stream_address(address: &str) -> bool {
+    let Ok(mut candidates) = (address, 9).to_socket_addrs() else {
+        return false;
+    };
+    candidates.any(|target| is_self_stream_socket_addr(target))
+}
+
+fn is_self_stream_socket_addr(target: SocketAddr) -> bool {
+    if target.ip().is_loopback() {
+        return true;
+    }
+
+    let bind_address = match target.ip() {
+        IpAddr::V4(_) => "0.0.0.0:0",
+        IpAddr::V6(_) => "[::]:0",
+    };
+    let Ok(socket) = UdpSocket::bind(bind_address) else {
+        return false;
+    };
+    if socket.connect(target).is_err() {
+        return false;
+    }
+    socket
+        .local_addr()
+        .map(|local| local.ip() == target.ip())
+        .unwrap_or(false)
+}
+
 fn start_stream_runner_thread(
     mut prepared_stream: PreparedStreamSession,
     event_sender: Option<Sender<BridgeEvent>>,
@@ -1475,7 +1512,7 @@ fn system_url_command(url: &str) -> (&'static str, Vec<&str>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{system_url_command, validate_external_url, RustBackend};
+    use super::{is_self_stream_address, system_url_command, validate_external_url, RustBackend};
     use crate::core::backend::MoonlightCore;
     #[cfg(not(moonlight_common_c_linked))]
     use crate::core::storage::JsonStateStore;
@@ -1501,6 +1538,12 @@ mod tests {
 
         assert_eq!("rust", info.mode);
         assert_eq!(None, info.helper_path);
+    }
+
+    #[test]
+    fn loopback_address_is_treated_as_self_stream() {
+        assert!(is_self_stream_address("127.0.0.1"));
+        assert!(is_self_stream_address("localhost"));
     }
 
     #[test]

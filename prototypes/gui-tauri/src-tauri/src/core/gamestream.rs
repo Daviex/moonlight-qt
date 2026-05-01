@@ -13,7 +13,9 @@ use std::collections::VecDeque;
 #[cfg(moonlight_common_c_linked)]
 use std::ffi::CStr;
 use std::ffi::CString;
-use std::os::raw::{c_char, c_int, c_uchar, c_void};
+#[cfg(moonlight_common_c_linked)]
+use std::os::raw::c_uchar;
+use std::os::raw::{c_char, c_int, c_void};
 use std::sync::mpsc::{self, Sender, SyncSender};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -748,21 +750,22 @@ fn poll_native_video_input(
     window: &minifb::Window,
     state: &mut NativeVideoInputState,
     input: &StreamInputSender,
-    reference_width: usize,
-    reference_height: usize,
+    _reference_width: usize,
+    _reference_height: usize,
 ) {
     if let Some((x, y)) = window.get_mouse_pos(minifb::MouseMode::Clamp) {
         let x = clamp_f32_to_i16(x);
         let y = clamp_f32_to_i16(y);
-        if state.last_mouse_position != Some((x, y)) {
-            let _ = input.send_mouse_position(
-                x,
-                y,
-                clamp_usize_to_i16(reference_width),
-                clamp_usize_to_i16(reference_height),
-            );
-            state.last_mouse_position = Some((x, y));
+        if let Some((last_x, last_y)) = state.last_mouse_position {
+            let delta_x = x.saturating_sub(last_x);
+            let delta_y = y.saturating_sub(last_y);
+            if delta_x != 0 || delta_y != 0 {
+                let _ = input.send_mouse_move(delta_x, delta_y);
+            }
         }
+        state.last_mouse_position = Some((x, y));
+    } else {
+        state.last_mouse_position = None;
     }
 
     update_native_mouse_button(
@@ -947,10 +950,6 @@ fn minifb_key_to_js_key_code(key: minifb::Key) -> Option<i16> {
 
 fn clamp_f32_to_i16(value: f32) -> i16 {
     value.clamp(i16::MIN as f32, i16::MAX as f32) as i16
-}
-
-fn clamp_usize_to_i16(value: usize) -> i16 {
-    value.min(i16::MAX as usize) as i16
 }
 
 fn rgba_to_minifb_buffer(frame: &RgbaVideoFrame) -> Result<Vec<u32>, String> {
