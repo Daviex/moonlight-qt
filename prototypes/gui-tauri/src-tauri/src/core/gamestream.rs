@@ -14,6 +14,7 @@ const DEFAULT_VIDEO_PACKET_SIZE: u32 = 1392;
 
 static STREAM_EVENT_CONTEXT: OnceLock<Mutex<Option<StreamEventContext>>> = OnceLock::new();
 static AUDIO_SINK_STATE: OnceLock<Mutex<AudioSinkState>> = OnceLock::new();
+static VIDEO_SINK_STATE: OnceLock<Mutex<VideoSinkState>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AudioConfiguration {
@@ -189,6 +190,24 @@ struct AudioSinkState {
     bytes_received: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct VideoSinkConfiguration {
+    video_format: c_int,
+    width: c_int,
+    height: c_int,
+    redraw_rate: c_int,
+    flags: c_int,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct VideoSinkState {
+    configuration: Option<VideoSinkConfiguration>,
+    started: bool,
+    frames_received: u64,
+    bytes_received: u64,
+    last_frame_number: c_int,
+}
+
 impl StreamOutputMode {
     fn callbacks(self) -> StreamOutputCallbacks {
         match self {
@@ -315,6 +334,18 @@ unsafe extern "C" fn headless_video_setup(
     _context: *mut c_void,
     _dr_flags: c_int,
 ) -> c_int {
+    store_video_sink_state(|state| {
+        *state = VideoSinkState {
+            configuration: Some(VideoSinkConfiguration {
+                video_format,
+                width,
+                height,
+                redraw_rate,
+                flags: _dr_flags,
+            }),
+            ..VideoSinkState::default()
+        };
+    });
     emit_stream_event(
         BridgeEventKind::Status,
         format!(
@@ -325,6 +356,9 @@ unsafe extern "C" fn headless_video_setup(
 }
 
 unsafe extern "C" fn headless_video_start() {
+    store_video_sink_state(|state| {
+        state.started = true;
+    });
     emit_stream_event(
         BridgeEventKind::Status,
         "Headless video sink started.".into(),
@@ -332,6 +366,9 @@ unsafe extern "C" fn headless_video_start() {
 }
 
 unsafe extern "C" fn headless_video_stop() {
+    store_video_sink_state(|state| {
+        state.started = false;
+    });
     emit_stream_event(
         BridgeEventKind::Status,
         "Headless video sink stopped.".into(),
@@ -339,6 +376,9 @@ unsafe extern "C" fn headless_video_stop() {
 }
 
 unsafe extern "C" fn headless_video_cleanup() {
+    store_video_sink_state(|state| {
+        *state = VideoSinkState::default();
+    });
     emit_stream_event(
         BridgeEventKind::Status,
         "Headless video sink cleaned up.".into(),
@@ -346,9 +386,37 @@ unsafe extern "C" fn headless_video_cleanup() {
 }
 
 unsafe extern "C" fn headless_video_submit_decode_unit(
-    _decode_unit: *mut gamestream_sys::DecodeUnit,
+    decode_unit: *mut gamestream_sys::DecodeUnit,
 ) -> c_int {
+    if decode_unit.is_null() {
+        return gamestream_sys::DR_OK;
+    }
+
+    // SAFETY: Limelight owns the decode unit for the duration of this callback.
+    let decode_unit = unsafe { &*decode_unit };
+    let bytes_received = decode_unit_bytes(decode_unit);
+    store_video_sink_state(|state| {
+        state.frames_received = state.frames_received.saturating_add(1);
+        state.bytes_received = state.bytes_received.saturating_add(bytes_received);
+        state.last_frame_number = decode_unit.frame_number;
+    });
     gamestream_sys::DR_OK
+}
+
+fn decode_unit_bytes(decode_unit: &gamestream_sys::DecodeUnit) -> u64 {
+    let mut total = 0_u64;
+    let mut entry = decode_unit.buffer_list;
+    let mut entries_seen = 0;
+    while !entry.is_null() && entries_seen < 256 {
+        // SAFETY: Limelight supplies a valid linked list for the callback duration.
+        let current = unsafe { &*entry };
+        if current.length > 0 {
+            total = total.saturating_add(current.length as u64);
+        }
+        entry = current.next;
+        entries_seen += 1;
+    }
+    total
 }
 
 unsafe extern "C" fn headless_audio_init(
@@ -443,6 +511,24 @@ fn store_audio_sink_state(update: impl FnOnce(&mut AudioSinkState)) {
 fn audio_sink_state_snapshot() -> AudioSinkState {
     AUDIO_SINK_STATE
         .get_or_init(|| Mutex::new(AudioSinkState::default()))
+        .lock()
+        .map(|state| state.clone())
+        .unwrap_or_default()
+}
+
+fn store_video_sink_state(update: impl FnOnce(&mut VideoSinkState)) {
+    if let Ok(mut state) = VIDEO_SINK_STATE
+        .get_or_init(|| Mutex::new(VideoSinkState::default()))
+        .lock()
+    {
+        update(&mut state);
+    }
+}
+
+#[cfg(test)]
+fn video_sink_state_snapshot() -> VideoSinkState {
+    VIDEO_SINK_STATE
+        .get_or_init(|| Mutex::new(VideoSinkState::default()))
         .lock()
         .map(|state| state.clone())
         .unwrap_or_default()
@@ -929,6 +1015,20 @@ mod tests {
     fn headless_media_callbacks_are_safe_noop_sinks() {
         let video = super::headless_video_callbacks();
         let audio = super::headless_audio_callbacks();
+        let mut second_entry = gamestream_sys::LEntry {
+            length: 20,
+            ..gamestream_sys::LEntry::default()
+        };
+        let mut first_entry = gamestream_sys::LEntry {
+            next: &mut second_entry,
+            length: 10,
+            ..gamestream_sys::LEntry::default()
+        };
+        let mut decode_unit = gamestream_sys::DecodeUnit {
+            frame_number: 7,
+            buffer_list: &mut first_entry,
+            ..gamestream_sys::DecodeUnit::default()
+        };
         let mut opus = gamestream_sys::OpusMultistreamConfiguration {
             sample_rate: 48_000,
             channel_count: 2,
@@ -939,6 +1039,9 @@ mod tests {
         };
 
         let video_setup = video.setup.unwrap();
+        let video_start = video.start.unwrap();
+        let video_stop = video.stop.unwrap();
+        let video_cleanup = video.cleanup.unwrap();
         let video_submit = video.submit_decode_unit.unwrap();
         let audio_init = audio.init.unwrap();
         let audio_start = audio.start.unwrap();
@@ -947,7 +1050,10 @@ mod tests {
         let decode_and_play_sample = audio.decode_and_play_sample.unwrap();
 
         let video_result = unsafe { video_setup(1, 1920, 1080, 60, std::ptr::null_mut(), 0) };
-        let submit_result = unsafe { video_submit(std::ptr::null_mut()) };
+        let submit_result = unsafe {
+            video_start();
+            video_submit(&mut decode_unit)
+        };
         let audio_result = unsafe {
             audio_init(
                 gamestream_sys::AUDIO_CONFIGURATION_STEREO,
@@ -963,9 +1069,24 @@ mod tests {
             audio_stop();
         }
         let state = super::audio_sink_state_snapshot();
+        let video_state = super::video_sink_state_snapshot();
 
         assert_eq!(gamestream_sys::DR_OK, video_result);
         assert_eq!(gamestream_sys::DR_OK, submit_result);
+        assert_eq!(
+            Some(super::VideoSinkConfiguration {
+                video_format: 1,
+                width: 1920,
+                height: 1080,
+                redraw_rate: 60,
+                flags: 0,
+            }),
+            video_state.configuration
+        );
+        assert!(video_state.started);
+        assert_eq!(1, video_state.frames_received);
+        assert_eq!(30, video_state.bytes_received);
+        assert_eq!(7, video_state.last_frame_number);
         assert_eq!(0, audio_result);
         assert_eq!(
             Some(opus),
@@ -980,8 +1101,14 @@ mod tests {
         );
 
         unsafe {
+            video_stop();
+            video_cleanup();
             audio_cleanup();
         }
+        assert_eq!(
+            super::VideoSinkState::default(),
+            super::video_sink_state_snapshot()
+        );
         assert_eq!(
             super::AudioSinkState::default(),
             super::audio_sink_state_snapshot()
