@@ -1,5 +1,6 @@
 use super::backend::MoonlightCore;
 use super::discovery::{discover_nvstream_hosts, merge_discovered_hosts};
+use super::gamestream::GameStreamRunner;
 use super::host_http::{
     BlockingHostHttpClient, HostEndpoint, ReqwestHostHttpTransport, ServerInfo, StartAppRequest,
 };
@@ -180,6 +181,13 @@ impl RustBackend {
     ) -> Result<Option<PreparedStreamSession>, String> {
         if self.state_store.is_none() {
             return Ok(None);
+        }
+        let runner = GameStreamRunner;
+        if !runner.is_linked() {
+            return Err(
+                "C GameStream library is not linked. Set MOONLIGHT_COMMON_C_LIB_DIR to enable streaming."
+                    .into(),
+            );
         }
 
         let Some(client) = &self.host_http else {
@@ -672,6 +680,7 @@ impl MoonlightCore for RustBackend {
 mod tests {
     use super::RustBackend;
     use crate::core::backend::MoonlightCore;
+    use crate::core::storage::JsonStateStore;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -720,6 +729,22 @@ mod tests {
         assert_eq!("Resume requested for Steam Big Picture.", resume.message);
         assert!(backend.active_stream_plan.is_none());
         assert!(backend.resume_session("gaming-pc").is_err());
+    }
+
+    #[cfg(not(moonlight_common_c_linked))]
+    #[test]
+    fn persistent_launch_requires_linked_gamestream_runner() {
+        let state_store =
+            JsonStateStore::from_file(unique_state_dir("runner-link").join("state.json"));
+        let mut backend = RustBackend::from_state(super::sample_state(), Some(state_store));
+
+        let error = backend.launch_app("gaming-pc", "steam").unwrap_err();
+
+        assert_eq!(
+            "C GameStream library is not linked. Set MOONLIGHT_COMMON_C_LIB_DIR to enable streaming.",
+            error
+        );
+        assert!(backend.active_stream_plan.is_none());
     }
 
     #[test]

@@ -200,6 +200,10 @@ fn fallback_stage_name(stage: c_int) -> &'static str {
 pub struct GameStreamRunner;
 
 impl GameStreamRunner {
+    pub fn is_linked(&self) -> bool {
+        cfg!(moonlight_common_c_linked)
+    }
+
     pub fn start(
         &self,
         session: &mut RawSessionConfiguration,
