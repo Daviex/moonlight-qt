@@ -80,12 +80,23 @@ export function StreamWindowApp() {
         .then(setMediaStats)
         .catch(() => undefined);
     }, 1000);
+    const closeRequestedPromise = getCurrentWebviewWindow().onCloseRequested((event) => {
+      if (!session?.hostId) {
+        return;
+      }
+      event.preventDefault();
+      setMessage('Stopping stream before closing the stream window...');
+      void bridge.quitRunningApp(session.hostId).catch((error) => {
+        setMessage(`Unable to stop stream: ${String(error)}`);
+      });
+    });
 
     return () => {
       cancelled = true;
       window.removeEventListener('keydown', onKeyDown);
       window.clearInterval(statsInterval);
       void unlistenPromise.then((unlisten) => unlisten());
+      void closeRequestedPromise.then((unlisten) => unlisten());
     };
   }, [session?.hostId]);
 
