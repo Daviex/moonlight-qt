@@ -4,7 +4,8 @@ use super::error::CoreError;
 use super::events::{BridgeEvent, BridgeEventKind};
 use super::gamestream::{GameStreamRunner, StreamCallbacks};
 use super::host_http::{
-    BlockingHostHttpClient, HostEndpoint, ReqwestHostHttpTransport, ServerInfo, StartAppRequest,
+    BlockingHostHttpClient, HostEndpoint, HostRequestAuth, HostRequestContext,
+    ReqwestHostHttpTransport, ServerInfo, StartAppRequest,
 };
 use super::host_store::{HostStore, StoredHost};
 use super::identity::ClientIdentity;
@@ -211,13 +212,39 @@ impl RustBackend {
             .ok_or_else(|| format!("App '{app_id}' was not found."))
     }
 
-    fn fetch_server_info(&self, address: &str) -> Result<ServerInfo, String> {
+    fn host_request_auth(&self, host: &StoredHost) -> Result<HostRequestAuth, String> {
+        if !host.paired {
+            return Ok(HostRequestAuth::None);
+        }
+        let identity = self.client_identity.as_ref().ok_or_else(|| {
+            "Client identity is unavailable for paired host requests.".to_string()
+        })?;
+        Ok(HostRequestAuth::client_identity(
+            &identity.certificate_pem,
+            &identity.private_key_pem,
+        ))
+    }
+
+    fn host_request_context<'a>(
+        &'a self,
+        host: &StoredHost,
+        address: &str,
+    ) -> Result<HostRequestContext<'a, ReqwestHostHttpTransport>, String> {
         let Some(client) = &self.host_http else {
             return Err("Host HTTP client is unavailable.".into());
         };
         let endpoint = HostEndpoint::from_address(address).map_err(|error| error.to_string())?;
-        client
-            .fetch_server_info(&endpoint)
+        let auth = self.host_request_auth(host)?;
+        Ok(client.request_context(endpoint, auth))
+    }
+
+    fn fetch_server_info_for_host(
+        &self,
+        host: &StoredHost,
+        address: &str,
+    ) -> Result<ServerInfo, String> {
+        self.host_request_context(host, address)?
+            .fetch_server_info()
             .map_err(|error| error.to_string())
     }
 
@@ -227,27 +254,11 @@ impl RustBackend {
         address: &str,
         running_game_id: i32,
     ) -> Result<(), String> {
-        let Some(client) = &self.host_http else {
-            return Err("Host HTTP client is unavailable.".into());
-        };
-        let endpoint = HostEndpoint::from_address(address).map_err(|error| error.to_string())?;
         let previous_apps = self.apps.clone();
-        let host_apps = if host.paired {
-            let identity = self.client_identity.as_ref().ok_or_else(|| {
-                "Client identity is unavailable for paired host requests.".to_string()
-            })?;
-            client
-                .fetch_app_list_with_client_identity(
-                    &endpoint,
-                    &identity.certificate_pem,
-                    &identity.private_key_pem,
-                )
-                .map_err(|error| error.to_string())?
-        } else {
-            client
-                .fetch_app_list(&endpoint)
-                .map_err(|error| error.to_string())?
-        };
+        let host_apps = self
+            .host_request_context(host, address)?
+            .fetch_app_list()
+            .map_err(|error| error.to_string())?;
         let apps = host_apps
             .into_iter()
             .map(|app| {
@@ -313,10 +324,12 @@ impl RustBackend {
             return;
         }
 
-        let identity = if host.paired {
-            self.client_identity.clone()
-        } else {
-            None
+        let auth = match self.host_request_auth(host) {
+            Ok(auth) => auth,
+            Err(error) => {
+                eprintln!("Rust backend box art auth setup failed: {error}");
+                return;
+            }
         };
         thread::spawn(move || {
             let client = match BlockingHostHttpClient::connect() {
@@ -337,15 +350,9 @@ impl RustBackend {
                         continue;
                     }
                 }
-                let bytes = match identity.as_ref() {
-                    Some(identity) => client.fetch_box_art_with_client_identity(
-                        &endpoint,
-                        &app_id,
-                        &identity.certificate_pem,
-                        &identity.private_key_pem,
-                    ),
-                    None => client.fetch_box_art(&endpoint, &app_id),
-                };
+                let bytes = client
+                    .request_context(endpoint.clone(), auth.clone())
+                    .fetch_box_art(&app_id);
                 let bytes = match bytes {
                     Ok(bytes) => bytes,
                     Err(error) => {
@@ -375,6 +382,7 @@ impl RustBackend {
     fn prepare_live_stream(
         &self,
         plan: &StreamLaunchPlan,
+        host: &StoredHost,
         request_kind: StreamStartRequestKind,
     ) -> Result<Option<PreparedStreamSession>, String> {
         if self.state_store.is_none() {
@@ -388,13 +396,9 @@ impl RustBackend {
             );
         }
 
-        let Some(client) = &self.host_http else {
-            return Err("Host HTTP client is unavailable.".into());
-        };
-        let endpoint =
-            HostEndpoint::from_address(&plan.host_address).map_err(|error| error.to_string())?;
-        let server_info = client
-            .fetch_server_info(&endpoint)
+        let request_context = self.host_request_context(host, &plan.host_address)?;
+        let server_info = request_context
+            .fetch_server_info()
             .map_err(|error| error.to_string())?;
         let app_id = plan
             .app_id
@@ -412,24 +416,13 @@ impl RustBackend {
             gamepad_mask: 0,
             persist_game_controllers_on_disconnect: !self.settings.multi_controller,
         };
-        let identity = self.client_identity.as_ref().ok_or_else(|| {
-            "Client identity is unavailable for paired host requests.".to_string()
-        })?;
         let start_session = match request_kind {
-            StreamStartRequestKind::Launch => client.launch_app_with_client_identity(
-                &endpoint,
-                &request,
-                &plan.stream_config,
-                &identity.certificate_pem,
-                &identity.private_key_pem,
-            ),
-            StreamStartRequestKind::Resume => client.resume_app_with_client_identity(
-                &endpoint,
-                &request,
-                &plan.stream_config,
-                &identity.certificate_pem,
-                &identity.private_key_pem,
-            ),
+            StreamStartRequestKind::Launch => {
+                request_context.launch_app(&request, &plan.stream_config)
+            }
+            StreamStartRequestKind::Resume => {
+                request_context.resume_app(&request, &plan.stream_config)
+            }
         }
         .map_err(|error| error.to_string())?;
 
@@ -710,7 +703,9 @@ impl MoonlightCore for RustBackend {
     fn host_details(&mut self, host_id: &str) -> Result<HostDetails, String> {
         let host = self.stored_host(host_id)?;
         let entry = host.clone().into_entry();
-        let live_info = self.fetch_server_info(&host.manual_address).ok();
+        let live_info = self
+            .fetch_server_info_for_host(&host, &host.manual_address)
+            .ok();
         let running_game_id = live_info
             .as_ref()
             .map(|info| info.current_game_id)
@@ -833,7 +828,7 @@ impl MoonlightCore for RustBackend {
 
         let stored_host = self.stored_host(host_id)?;
         let running_game_id = self
-            .fetch_server_info(&stored_host.manual_address)
+            .fetch_server_info_for_host(&stored_host, &stored_host.manual_address)
             .map(|info| info.current_game_id)
             .unwrap_or(0);
         // Keep a persisted app list when the host is offline, but do not mask a fresh empty
@@ -878,7 +873,8 @@ impl MoonlightCore for RustBackend {
         let app = self.app_mut(app_id)?.clone();
         let plan = StreamLaunchPlan::new(&stored_host, &app, &self.settings)
             .map_err(|error| error.to_string())?;
-        let prepared_stream = self.prepare_live_stream(&plan, StreamStartRequestKind::Launch)?;
+        let prepared_stream =
+            self.prepare_live_stream(&plan, &stored_host, StreamStartRequestKind::Launch)?;
         let stream_thread = if let Some(prepared_stream) = prepared_stream {
             Some(start_stream_runner_thread(
                 prepared_stream,
@@ -930,7 +926,7 @@ impl MoonlightCore for RustBackend {
 
         let stored_host = self.stored_host(host_id)?;
         let running_game_id = self
-            .fetch_server_info(&stored_host.manual_address)?
+            .fetch_server_info_for_host(&stored_host, &stored_host.manual_address)?
             .current_game_id;
         if running_game_id == 0 {
             return Err(format!("{} has no running session to resume.", host.name));
@@ -952,7 +948,8 @@ impl MoonlightCore for RustBackend {
 
         let plan = StreamLaunchPlan::new(&stored_host, &app, &self.settings)
             .map_err(|error| error.to_string())?;
-        let prepared_stream = self.prepare_live_stream(&plan, StreamStartRequestKind::Resume)?;
+        let prepared_stream =
+            self.prepare_live_stream(&plan, &stored_host, StreamStartRequestKind::Resume)?;
         let stream_thread = if let Some(prepared_stream) = prepared_stream {
             Some(start_stream_runner_thread(
                 prepared_stream,
@@ -981,25 +978,12 @@ impl MoonlightCore for RustBackend {
     }
 
     fn quit_running_app(&mut self, host_id: &str) -> Result<CommandStatus, String> {
-        let host = self.host_entry(host_id)?;
+        self.host_entry(host_id)?;
         if self.state_store.is_some() {
-            if let Some(client) = &self.host_http {
-                let endpoint =
-                    HostEndpoint::from_address(&host.address).map_err(|error| error.to_string())?;
-                if let Some(identity) = self.client_identity.as_ref() {
-                    client
-                        .quit_app_with_client_identity(
-                            &endpoint,
-                            &identity.certificate_pem,
-                            &identity.private_key_pem,
-                        )
-                        .map_err(|error| error.to_string())?;
-                } else {
-                    client
-                        .quit_app(&endpoint)
-                        .map_err(|error| error.to_string())?;
-                }
-            }
+            let stored_host = self.stored_host(host_id)?;
+            self.host_request_context(&stored_host, &stored_host.manual_address)?
+                .quit_app()
+                .map_err(|error| error.to_string())?;
         }
         for app in &mut self.apps {
             app.running = false;

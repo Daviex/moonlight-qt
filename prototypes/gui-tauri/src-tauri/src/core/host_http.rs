@@ -44,6 +44,16 @@ pub struct HostEndpoint {
     https_port: u16,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum HostRequestAuth {
+    #[default]
+    None,
+    ClientIdentity {
+        certificate_pem: String,
+        private_key_pem: String,
+    },
+}
+
 impl HostEndpoint {
     pub fn new(address: impl Into<String>, https_port: u16) -> Result<Self, CoreError> {
         let address = address.into();
@@ -360,6 +370,12 @@ pub struct HostHttpClient<T> {
     transport: T,
 }
 
+pub struct HostRequestContext<'a, T> {
+    client: &'a HostHttpClient<T>,
+    endpoint: HostEndpoint,
+    auth: HostRequestAuth,
+}
+
 impl<T> HostHttpClient<T>
 where
     T: HostHttpTransport,
@@ -368,9 +384,21 @@ where
         Self { transport }
     }
 
+    pub fn request_context(
+        &self,
+        endpoint: HostEndpoint,
+        auth: HostRequestAuth,
+    ) -> HostRequestContext<'_, T> {
+        HostRequestContext {
+            client: self,
+            endpoint,
+            auth,
+        }
+    }
+
     pub fn fetch_server_info(&self, endpoint: &HostEndpoint) -> Result<ServerInfo, CoreError> {
-        let body = self.transport.get_text(&endpoint.server_info_url())?;
-        parse_server_info(&body)
+        self.request_context(endpoint.clone(), HostRequestAuth::None)
+            .fetch_server_info()
     }
 
     pub fn fetch_unpaired_server_info(
@@ -382,8 +410,8 @@ where
     }
 
     pub fn fetch_app_list(&self, endpoint: &HostEndpoint) -> Result<Vec<HostApp>, CoreError> {
-        let body = self.transport.get_text(&endpoint.app_list_url())?;
-        parse_app_list(&body)
+        self.request_context(endpoint.clone(), HostRequestAuth::None)
+            .fetch_app_list()
     }
 
     pub fn fetch_app_list_with_client_identity(
@@ -392,12 +420,11 @@ where
         certificate_pem: &str,
         private_key_pem: &str,
     ) -> Result<Vec<HostApp>, CoreError> {
-        let body = self.transport.get_text_with_client_identity(
-            &endpoint.app_list_url(),
-            certificate_pem,
-            private_key_pem,
-        )?;
-        parse_app_list(&body)
+        self.request_context(
+            endpoint.clone(),
+            HostRequestAuth::client_identity(certificate_pem, private_key_pem),
+        )
+        .fetch_app_list()
     }
 
     pub fn fetch_box_art(
@@ -405,13 +432,8 @@ where
         endpoint: &HostEndpoint,
         app_id: &str,
     ) -> Result<Vec<u8>, CoreError> {
-        let bytes = self.transport.get_bytes(&endpoint.app_asset_url(app_id))?;
-        if bytes.is_empty() {
-            return Err(CoreError::Backend(format!(
-                "Host returned empty box art for app {app_id}."
-            )));
-        }
-        Ok(bytes)
+        self.request_context(endpoint.clone(), HostRequestAuth::None)
+            .fetch_box_art(app_id)
     }
 
     pub fn fetch_box_art_with_client_identity(
@@ -421,17 +443,11 @@ where
         certificate_pem: &str,
         private_key_pem: &str,
     ) -> Result<Vec<u8>, CoreError> {
-        let bytes = self.transport.get_bytes_with_client_identity(
-            &endpoint.app_asset_url(app_id),
-            certificate_pem,
-            private_key_pem,
-        )?;
-        if bytes.is_empty() {
-            return Err(CoreError::Backend(format!(
-                "Host returned empty box art for app {app_id}."
-            )));
-        }
-        Ok(bytes)
+        self.request_context(
+            endpoint.clone(),
+            HostRequestAuth::client_identity(certificate_pem, private_key_pem),
+        )
+        .fetch_box_art(app_id)
     }
 
     pub fn launch_app(
@@ -440,10 +456,8 @@ where
         request: &StartAppRequest,
         stream: &gamestream::StreamConfiguration,
     ) -> Result<StartAppSession, CoreError> {
-        let body = self
-            .transport
-            .get_text(&endpoint.launch_url(&request.launch_query(stream)))?;
-        parse_start_app_response(&body)
+        self.request_context(endpoint.clone(), HostRequestAuth::None)
+            .launch_app(request, stream)
     }
 
     pub fn launch_app_with_client_identity(
@@ -454,12 +468,11 @@ where
         certificate_pem: &str,
         private_key_pem: &str,
     ) -> Result<StartAppSession, CoreError> {
-        let body = self.transport.get_text_with_client_identity(
-            &endpoint.launch_url(&request.launch_query(stream)),
-            certificate_pem,
-            private_key_pem,
-        )?;
-        parse_start_app_response(&body)
+        self.request_context(
+            endpoint.clone(),
+            HostRequestAuth::client_identity(certificate_pem, private_key_pem),
+        )
+        .launch_app(request, stream)
     }
 
     pub fn resume_app(
@@ -468,10 +481,8 @@ where
         request: &StartAppRequest,
         stream: &gamestream::StreamConfiguration,
     ) -> Result<StartAppSession, CoreError> {
-        let body = self
-            .transport
-            .get_text(&endpoint.resume_url(&request.launch_query(stream)))?;
-        parse_start_app_response(&body)
+        self.request_context(endpoint.clone(), HostRequestAuth::None)
+            .resume_app(request, stream)
     }
 
     pub fn resume_app_with_client_identity(
@@ -482,17 +493,16 @@ where
         certificate_pem: &str,
         private_key_pem: &str,
     ) -> Result<StartAppSession, CoreError> {
-        let body = self.transport.get_text_with_client_identity(
-            &endpoint.resume_url(&request.launch_query(stream)),
-            certificate_pem,
-            private_key_pem,
-        )?;
-        parse_start_app_response(&body)
+        self.request_context(
+            endpoint.clone(),
+            HostRequestAuth::client_identity(certificate_pem, private_key_pem),
+        )
+        .resume_app(request, stream)
     }
 
     pub fn quit_app(&self, endpoint: &HostEndpoint) -> Result<(), CoreError> {
-        let body = self.transport.get_text(&endpoint.cancel_url())?;
-        verify_response_status(&body)
+        self.request_context(endpoint.clone(), HostRequestAuth::None)
+            .quit_app()
     }
 
     pub fn quit_app_with_client_identity(
@@ -501,12 +511,96 @@ where
         certificate_pem: &str,
         private_key_pem: &str,
     ) -> Result<(), CoreError> {
-        let body = self.transport.get_text_with_client_identity(
-            &endpoint.cancel_url(),
-            certificate_pem,
-            private_key_pem,
-        )?;
+        self.request_context(
+            endpoint.clone(),
+            HostRequestAuth::client_identity(certificate_pem, private_key_pem),
+        )
+        .quit_app()
+    }
+}
+
+impl HostRequestAuth {
+    pub fn client_identity(certificate_pem: &str, private_key_pem: &str) -> Self {
+        Self::ClientIdentity {
+            certificate_pem: certificate_pem.to_string(),
+            private_key_pem: private_key_pem.to_string(),
+        }
+    }
+}
+
+impl<T> HostRequestContext<'_, T>
+where
+    T: HostHttpTransport,
+{
+    pub fn fetch_server_info(&self) -> Result<ServerInfo, CoreError> {
+        let body = self.get_text(&self.endpoint.server_info_url())?;
+        parse_server_info(&body)
+    }
+
+    pub fn fetch_app_list(&self) -> Result<Vec<HostApp>, CoreError> {
+        let body = self.get_text(&self.endpoint.app_list_url())?;
+        parse_app_list(&body)
+    }
+
+    pub fn fetch_box_art(&self, app_id: &str) -> Result<Vec<u8>, CoreError> {
+        let bytes = self.get_bytes(&self.endpoint.app_asset_url(app_id))?;
+        if bytes.is_empty() {
+            return Err(CoreError::Backend(format!(
+                "Host returned empty box art for app {app_id}."
+            )));
+        }
+        Ok(bytes)
+    }
+
+    pub fn launch_app(
+        &self,
+        request: &StartAppRequest,
+        stream: &gamestream::StreamConfiguration,
+    ) -> Result<StartAppSession, CoreError> {
+        let body = self.get_text(&self.endpoint.launch_url(&request.launch_query(stream)))?;
+        parse_start_app_response(&body)
+    }
+
+    pub fn resume_app(
+        &self,
+        request: &StartAppRequest,
+        stream: &gamestream::StreamConfiguration,
+    ) -> Result<StartAppSession, CoreError> {
+        let body = self.get_text(&self.endpoint.resume_url(&request.launch_query(stream)))?;
+        parse_start_app_response(&body)
+    }
+
+    pub fn quit_app(&self) -> Result<(), CoreError> {
+        let body = self.get_text(&self.endpoint.cancel_url())?;
         verify_response_status(&body)
+    }
+
+    fn get_text(&self, url: &str) -> Result<String, CoreError> {
+        match &self.auth {
+            HostRequestAuth::None => self.client.transport.get_text(url),
+            HostRequestAuth::ClientIdentity {
+                certificate_pem,
+                private_key_pem,
+            } => self.client.transport.get_text_with_client_identity(
+                url,
+                certificate_pem,
+                private_key_pem,
+            ),
+        }
+    }
+
+    fn get_bytes(&self, url: &str) -> Result<Vec<u8>, CoreError> {
+        match &self.auth {
+            HostRequestAuth::None => self.client.transport.get_bytes(url),
+            HostRequestAuth::ClientIdentity {
+                certificate_pem,
+                private_key_pem,
+            } => self.client.transport.get_bytes_with_client_identity(
+                url,
+                certificate_pem,
+                private_key_pem,
+            ),
+        }
     }
 }
 
@@ -699,7 +793,7 @@ fn repeated_tag_blocks<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
 mod tests {
     use super::{
         parse_app_list, parse_server_info, parse_start_app_response, HostApp, HostEndpoint,
-        HostHttpClient, HostHttpTransport, StartAppRequest,
+        HostHttpClient, HostHttpTransport, HostRequestAuth, StartAppRequest,
     };
     use crate::core::error::CoreError;
     use crate::core::gamestream::{AudioConfiguration, RemoteInputCrypto, StreamConfiguration};
@@ -826,6 +920,23 @@ mod tests {
         let info = client.fetch_server_info(&endpoint).unwrap();
 
         assert_eq!("Sunshine", info.app_version);
+    }
+
+    #[test]
+    fn paired_request_context_uses_client_identity_for_server_info() {
+        let transport = FakeTransport::default();
+        let client = HostHttpClient::new(transport);
+        let endpoint = HostEndpoint::from_address("sunshine.local").unwrap();
+        let context =
+            client.request_context(endpoint, HostRequestAuth::client_identity("cert", "key"));
+
+        let info = context.fetch_server_info().unwrap();
+
+        assert_eq!("Sunshine", info.app_version);
+        assert_eq!(
+            vec!["https://sunshine.local:47984/serverinfo"],
+            client.transport.identity_requests.into_inner()
+        );
     }
 
     #[test]
