@@ -15,6 +15,14 @@ const MIN_PACKET_SIZE: u32 = 0;
 const MAX_PACKET_SIZE: u32 = 9000;
 const MIN_LANGUAGE: i32 = 0;
 const MAX_LANGUAGE: i32 = 31;
+const RESOLUTION_BITRATE_TABLE: &[(u32, f32)] = &[
+    (640 * 360, 1.0),
+    (854 * 480, 2.0),
+    (1280 * 720, 5.0),
+    (1920 * 1080, 10.0),
+    (2560 * 1440, 20.0),
+    (3840 * 2160, 40.0),
+];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SettingsBounds {
@@ -120,6 +128,57 @@ pub fn default_streaming_settings() -> StreamingSettings {
     }
 }
 
+pub fn default_bitrate_kbps(
+    width: u32,
+    height: u32,
+    fps: u32,
+    yuv444: bool,
+) -> Result<u32, CoreError> {
+    if width == 0 || height == 0 || fps == 0 {
+        return Err(CoreError::Validation(
+            "Width, height, and FPS must be greater than zero.".into(),
+        ));
+    }
+
+    let pixels = width.saturating_mul(height);
+    let mut resolution_factor = resolution_factor_for_pixels(pixels);
+    if yuv444 {
+        resolution_factor *= 2.0;
+    }
+
+    let frame_rate_factor = if fps <= 60 {
+        fps as f32
+    } else {
+        ((fps as f32) / 60.0).sqrt() * 60.0
+    } / 30.0;
+
+    Ok((resolution_factor * frame_rate_factor).round() as u32 * 1000)
+}
+
+fn resolution_factor_for_pixels(pixels: u32) -> f32 {
+    for (index, (table_pixels, table_factor)) in RESOLUTION_BITRATE_TABLE.iter().enumerate() {
+        if pixels == *table_pixels {
+            return *table_factor;
+        }
+
+        if pixels < *table_pixels {
+            if index == 0 {
+                return *table_factor;
+            }
+
+            let (lower_pixels, lower_factor) = RESOLUTION_BITRATE_TABLE[index - 1];
+            let pixel_progress =
+                (pixels - lower_pixels) as f32 / (*table_pixels - lower_pixels) as f32;
+            return pixel_progress * (*table_factor - lower_factor) + lower_factor;
+        }
+    }
+
+    RESOLUTION_BITRATE_TABLE
+        .last()
+        .map(|(_, factor)| *factor)
+        .unwrap_or(1.0)
+}
+
 fn validate_u32(
     label: &'static str,
     value: u32,
@@ -150,7 +209,10 @@ fn validate_i32(
 
 #[cfg(test)]
 mod tests {
-    use super::{default_streaming_settings, validate_streaming_settings, SettingsBounds};
+    use super::{
+        default_bitrate_kbps, default_streaming_settings, validate_streaming_settings,
+        SettingsBounds,
+    };
 
     #[test]
     fn default_settings_are_valid() {
@@ -187,5 +249,40 @@ mod tests {
         let error = validate_streaming_settings(&settings).unwrap_err();
 
         assert_eq!("Language must be between 0 and 31.", error.to_string());
+    }
+
+    #[test]
+    fn default_bitrate_matches_native_resolution_table_values() {
+        assert_eq!(10_000, default_bitrate_kbps(1280, 720, 60, false).unwrap());
+        assert_eq!(20_000, default_bitrate_kbps(1920, 1080, 60, false).unwrap());
+        assert_eq!(80_000, default_bitrate_kbps(3840, 2160, 60, false).unwrap());
+    }
+
+    #[test]
+    fn default_bitrate_uses_sqrt_scaling_above_60_fps() {
+        assert_eq!(
+            28_000,
+            default_bitrate_kbps(1920, 1080, 120, false).unwrap()
+        );
+    }
+
+    #[test]
+    fn default_bitrate_doubles_resolution_factor_for_yuv444() {
+        assert_eq!(40_000, default_bitrate_kbps(1920, 1080, 60, true).unwrap());
+    }
+
+    #[test]
+    fn default_bitrate_interpolates_between_resolution_table_entries() {
+        assert_eq!(29_000, default_bitrate_kbps(3200, 1800, 30, false).unwrap());
+    }
+
+    #[test]
+    fn default_bitrate_rejects_zero_dimensions() {
+        let error = default_bitrate_kbps(0, 1080, 60, false).unwrap_err();
+
+        assert_eq!(
+            "Width, height, and FPS must be greater than zero.",
+            error.to_string()
+        );
     }
 }

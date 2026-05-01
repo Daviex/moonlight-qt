@@ -2,6 +2,7 @@ use crate::backend::{
     AppEntry, BackendInfo, CommandStatus, DisplayInfo, HostDetails, HostEntry, HostStatus,
     MoonlightBackend, NetworkTestResult, PairingChallenge, StreamingSettings, SystemInfo,
 };
+use crate::core::settings::default_bitrate_kbps;
 
 pub struct MockBackend {
     hosts: Vec<HostEntry>,
@@ -352,15 +353,7 @@ impl MoonlightBackend for MockBackend {
         fps: u32,
         yuv444: bool,
     ) -> Result<u32, String> {
-        if width == 0 || height == 0 || fps == 0 {
-            return Err("Width, height, and FPS must be greater than zero.".into());
-        }
-
-        let pixels_per_second = width.saturating_mul(height).saturating_mul(fps);
-        let yuv_multiplier = if yuv444 { 3 } else { 2 };
-        Ok((pixels_per_second / 7_500)
-            .saturating_mul(yuv_multiplier)
-            .max(5_000))
+        default_bitrate_kbps(width, height, fps, yuv444).map_err(|error| error.to_string())
     }
 
     fn system_info(&mut self) -> Result<SystemInfo, String> {

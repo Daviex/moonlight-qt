@@ -5,7 +5,7 @@ use super::identity::ClientIdentity;
 use super::session::SessionMachine;
 #[cfg(test)]
 use super::settings::default_streaming_settings;
-use super::settings::validate_streaming_settings;
+use super::settings::{default_bitrate_kbps, validate_streaming_settings};
 #[cfg(test)]
 use super::storage::default_app_entries;
 use super::storage::{JsonStateStore, StoredState};
@@ -456,15 +456,7 @@ impl MoonlightCore for RustBackend {
         fps: u32,
         yuv444: bool,
     ) -> Result<u32, String> {
-        if width == 0 || height == 0 || fps == 0 {
-            return Err("Width, height, and FPS must be greater than zero.".into());
-        }
-
-        let pixels_per_second = width.saturating_mul(height).saturating_mul(fps);
-        let yuv_multiplier = if yuv444 { 3 } else { 2 };
-        Ok((pixels_per_second / 7_500)
-            .saturating_mul(yuv_multiplier)
-            .max(5_000))
+        default_bitrate_kbps(width, height, fps, yuv444).map_err(|error| error.to_string())
     }
 
     fn system_info(&mut self) -> Result<SystemInfo, String> {
