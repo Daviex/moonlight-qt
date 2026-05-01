@@ -4,6 +4,7 @@ fn main() {
 }
 
 fn configure_moonlight_common_link() {
+    println!("cargo:rustc-check-cfg=cfg(moonlight_common_c_linked)");
     println!("cargo:rerun-if-env-changed=MOONLIGHT_COMMON_C_LIB_DIR");
     println!("cargo:rerun-if-env-changed=MOONLIGHT_COMMON_C_STATIC");
 
@@ -12,6 +13,7 @@ fn configure_moonlight_common_link() {
     };
 
     println!("cargo:rustc-link-search=native={lib_dir}");
+    println!("cargo:rustc-cfg=moonlight_common_c_linked");
     let link_kind = if std::env::var("MOONLIGHT_COMMON_C_STATIC")
         .map(|value| value == "1")
         .unwrap_or(false)

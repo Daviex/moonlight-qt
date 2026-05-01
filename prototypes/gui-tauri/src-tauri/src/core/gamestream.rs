@@ -118,6 +118,27 @@ impl StreamCallbacks {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct GameStreamRunner;
+
+impl GameStreamRunner {
+    pub fn start(
+        &self,
+        session: &mut RawSessionConfiguration,
+        callbacks: &mut StreamCallbacks,
+    ) -> Result<(), CoreError> {
+        start_gamestream_session(session, callbacks)
+    }
+
+    pub fn stop(&self) {
+        stop_gamestream_session();
+    }
+
+    pub fn interrupt(&self) {
+        interrupt_gamestream_session();
+    }
+}
+
 impl StreamConfiguration {
     pub fn with_remote_input_crypto(mut self, crypto: RemoteInputCrypto) -> Self {
         self.remote_input_crypto = crypto;
@@ -214,7 +235,78 @@ impl RawSessionConfiguration {
     pub fn stream_config(&self) -> &gamestream_sys::StreamConfiguration {
         &self.stream_config
     }
+
+    fn server_info_mut(&mut self) -> *mut gamestream_sys::ServerInformation {
+        &mut self.server_info
+    }
+
+    fn stream_config_mut(&mut self) -> *mut gamestream_sys::StreamConfiguration {
+        &mut self.stream_config
+    }
 }
+
+#[cfg(moonlight_common_c_linked)]
+fn start_gamestream_session(
+    session: &mut RawSessionConfiguration,
+    callbacks: &mut StreamCallbacks,
+) -> Result<(), CoreError> {
+    let (connection_callbacks, video_callbacks, audio_callbacks) = callbacks.as_raw_parts();
+    // SAFETY: RawSessionConfiguration owns the C strings referenced by SERVER_INFORMATION,
+    // and StreamCallbacks owns the callback structs passed to Limelight for this call.
+    // The caller must keep both values alive until LiStartConnection returns.
+    let result = unsafe {
+        gamestream_sys::LiStartConnection(
+            session.server_info_mut(),
+            session.stream_config_mut(),
+            connection_callbacks,
+            video_callbacks,
+            audio_callbacks,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(CoreError::Backend(format!(
+            "GameStream connection failed with code {result}."
+        )))
+    }
+}
+
+#[cfg(not(moonlight_common_c_linked))]
+fn start_gamestream_session(
+    _session: &mut RawSessionConfiguration,
+    _callbacks: &mut StreamCallbacks,
+) -> Result<(), CoreError> {
+    Err(CoreError::Backend(
+        "C GameStream library is not linked. Set MOONLIGHT_COMMON_C_LIB_DIR to enable the stream runner.".into(),
+    ))
+}
+
+#[cfg(moonlight_common_c_linked)]
+fn stop_gamestream_session() {
+    // SAFETY: Limelight exposes LiStopConnection as a process-global stop hook.
+    unsafe {
+        gamestream_sys::LiStopConnection();
+    }
+}
+
+#[cfg(not(moonlight_common_c_linked))]
+fn stop_gamestream_session() {}
+
+#[cfg(moonlight_common_c_linked)]
+fn interrupt_gamestream_session() {
+    // SAFETY: Limelight exposes LiInterruptConnection as a process-global interrupt hook.
+    unsafe {
+        gamestream_sys::LiInterruptConnection();
+    }
+}
+
+#[cfg(not(moonlight_common_c_linked))]
+fn interrupt_gamestream_session() {}
 
 fn c_string_field(field_name: &str, value: &str) -> Result<CString, CoreError> {
     CString::new(value).map_err(|_| {
@@ -378,6 +470,30 @@ mod tests {
             .to_string();
 
         assert_eq!("server address cannot contain embedded NUL bytes.", error);
+    }
+
+    #[cfg(not(moonlight_common_c_linked))]
+    #[test]
+    fn gamestream_runner_reports_unlinked_library() {
+        let server = ServerConnectionConfiguration {
+            address: "192.168.1.20".into(),
+            app_version: "Sunshine".into(),
+            gfe_version: None,
+            rtsp_session_url: None,
+            codec_mode_support: gamestream_sys::VIDEO_FORMAT_H264,
+        };
+        let mut session =
+            RawSessionConfiguration::new(&server, &StreamConfiguration::default()).unwrap();
+        let mut callbacks = super::StreamCallbacks::default();
+
+        let error = super::GameStreamRunner
+            .start(&mut session, &mut callbacks)
+            .unwrap_err();
+
+        assert_eq!(
+            "C GameStream library is not linked. Set MOONLIGHT_COMMON_C_LIB_DIR to enable the stream runner.",
+            error.to_string()
+        );
     }
 
     #[test]
