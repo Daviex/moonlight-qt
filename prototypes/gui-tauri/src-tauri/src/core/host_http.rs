@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 use super::error::CoreError;
+use super::gamestream;
+use super::gamestream_sys;
 use super::types::AppEntry;
 use std::time::Duration;
 
@@ -76,6 +78,14 @@ impl HostEndpoint {
         format!("http://{}:{}/unpair", self.address, self.http_port)
     }
 
+    pub fn launch_url(&self, query: &str) -> String {
+        self.url_with_query("https", self.https_port, "launch", query)
+    }
+
+    pub fn resume_url(&self, query: &str) -> String {
+        self.url_with_query("https", self.https_port, "resume", query)
+    }
+
     fn endpoint_url(&self, endpoint: &str) -> String {
         format!("https://{}:{}/{}", self.address, self.https_port, endpoint)
     }
@@ -86,6 +96,84 @@ impl HostEndpoint {
         }
 
         format!("{scheme}://{}:{port}/{endpoint}?{query}", self.address)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StartAppRequest {
+    pub app_id: u32,
+    pub is_gfe: bool,
+    pub sops: bool,
+    pub local_audio: bool,
+    pub gamepad_mask: u32,
+    pub persist_game_controllers_on_disconnect: bool,
+}
+
+impl StartAppRequest {
+    pub fn launch_query(&self, stream: &gamestream::StreamConfiguration) -> String {
+        self.query(stream)
+    }
+
+    fn query(&self, stream: &gamestream::StreamConfiguration) -> String {
+        let raw = stream.to_raw();
+        let fps = if raw.fps > 60 && self.is_gfe {
+            0
+        } else {
+            raw.fps
+        };
+        let ri_key_id = u32::from_be_bytes([
+            raw.remote_input_aes_iv[0] as u8,
+            raw.remote_input_aes_iv[1] as u8,
+            raw.remote_input_aes_iv[2] as u8,
+            raw.remote_input_aes_iv[3] as u8,
+        ]);
+
+        format!(
+            "appid={}&mode={}x{}x{}&additionalStates=1&sops={}&rikey={}&rikeyid={}{}&localAudioPlayMode={}&surroundAudioInfo={}&remoteControllersBitmap={}&gcmap={}&gcpersist={}&corever=1",
+            self.app_id,
+            raw.width,
+            raw.height,
+            fps,
+            bool_as_int(self.sops),
+            hex_c_chars(raw.remote_input_aes_key),
+            ri_key_id,
+            hdr_query_parameters(raw.supported_video_formats),
+            bool_as_int(self.local_audio),
+            surround_audio_info(raw.audio_configuration),
+            self.gamepad_mask,
+            self.gamepad_mask,
+            bool_as_int(self.persist_game_controllers_on_disconnect),
+        )
+    }
+}
+
+fn bool_as_int(value: bool) -> u8 {
+    u8::from(value)
+}
+
+fn hex_c_chars(bytes: [std::os::raw::c_char; 16]) -> String {
+    bytes
+        .iter()
+        .map(|value| format!("{:02x}", *value as u8))
+        .collect()
+}
+
+fn surround_audio_info(audio_configuration: i32) -> i32 {
+    let channel_count = (audio_configuration >> 8) & 0xFF;
+    let channel_mask = (audio_configuration >> 16) & 0xFFFF;
+    (channel_mask << 16) | channel_count
+}
+
+fn hdr_query_parameters(supported_video_formats: i32) -> &'static str {
+    const VIDEO_FORMAT_MASK_10BIT: i32 = gamestream_sys::VIDEO_FORMAT_H265_MAIN10
+        | gamestream_sys::VIDEO_FORMAT_HEVC_REXT10_444
+        | gamestream_sys::VIDEO_FORMAT_AV1_MAIN10
+        | gamestream_sys::VIDEO_FORMAT_AV1_HIGH10_444;
+
+    if supported_video_formats & VIDEO_FORMAT_MASK_10BIT == 0 {
+        ""
+    } else {
+        "&hdrMode=1&clientHdrCapVersion=0&clientHdrCapSupportedFlagsInUint32=0&clientHdrCapMetaDataId=NV_STATIC_METADATA_TYPE_1&clientHdrCapDisplayData=0x0x0x0x0x0x0x0x0x0x0"
     }
 }
 
@@ -259,9 +347,12 @@ fn repeated_tag_blocks<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_app_list, parse_server_info, HostApp, HostEndpoint, HostHttpClient, HostHttpTransport,
+        parse_app_list, parse_server_info, HostApp, HostEndpoint, HostHttpClient,
+        HostHttpTransport, StartAppRequest,
     };
     use crate::core::error::CoreError;
+    use crate::core::gamestream::{AudioConfiguration, RemoteInputCrypto, StreamConfiguration};
+    use crate::core::gamestream_sys;
     use std::cell::RefCell;
 
     #[derive(Default)]
@@ -294,6 +385,14 @@ mod tests {
         assert_eq!(
             "http://192.168.1.20:47989/unpair",
             endpoint.http_unpair_url()
+        );
+        assert_eq!(
+            "https://192.168.1.20:47984/launch?appid=123",
+            endpoint.launch_url("appid=123")
+        );
+        assert_eq!(
+            "https://192.168.1.20:47984/resume?appid=123",
+            endpoint.resume_url("appid=123")
         );
     }
 
@@ -388,5 +487,46 @@ mod tests {
 
         assert!(entry.running);
         assert!(entry.direct_launch);
+    }
+
+    #[test]
+    fn start_app_request_builds_native_launch_query() {
+        let stream = StreamConfiguration {
+            width: 3840,
+            height: 2160,
+            fps: 120,
+            bitrate_kbps: 80_000,
+            packet_size: 1392,
+            streaming_remotely: crate::core::gamestream::StreamingRemotely::Auto,
+            audio_configuration: AudioConfiguration::Surround51,
+            supported_video_formats: gamestream_sys::VIDEO_FORMAT_H265_MAIN10,
+            remote_input_crypto: RemoteInputCrypto {
+                aes_key: [0xAB; 16],
+                aes_iv: [0x01, 0x02, 0x03, 0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            },
+        };
+        let request = StartAppRequest {
+            app_id: 123,
+            is_gfe: true,
+            sops: true,
+            local_audio: false,
+            gamepad_mask: 3,
+            persist_game_controllers_on_disconnect: true,
+        };
+
+        let query = request.launch_query(&stream);
+
+        assert!(query.contains("appid=123"));
+        assert!(query.contains("mode=3840x2160x0"));
+        assert!(query.contains("sops=1"));
+        assert!(query.contains("rikey=abababababababababababababababab"));
+        assert!(query.contains("rikeyid=16909060"));
+        assert!(query.contains("hdrMode=1"));
+        assert!(query.contains("localAudioPlayMode=0"));
+        assert!(query.contains("surroundAudioInfo=4128774"));
+        assert!(query.contains("remoteControllersBitmap=3"));
+        assert!(query.contains("gcmap=3"));
+        assert!(query.contains("gcpersist=1"));
+        assert!(query.ends_with("&corever=1"));
     }
 }
