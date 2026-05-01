@@ -157,6 +157,8 @@ if defined MOONLIGHT_COMMON_C_LIB_DIR if not "%MOONLIGHT_COMMON_C_STATIC%"=="1" 
     if exist "%MOONLIGHT_COMMON_C_LIB_DIR%\moonlight-common-c.dll" (
         copy "%MOONLIGHT_COMMON_C_LIB_DIR%\moonlight-common-c.dll" "%PACKAGE_DIR%\" >nul
         if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
+        call :StageMoonlightCommonRuntimeDeps
+        if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
     ) else (
         echo Warning: MOONLIGHT_COMMON_C_LIB_DIR is set but moonlight-common-c.dll was not found:
         echo %MOONLIGHT_COMMON_C_LIB_DIR%
@@ -245,6 +247,22 @@ for %%D in (
             echo Auto-detected moonlight-common-c import library:
             echo !MOONLIGHT_COMMON_C_LIB_DIR!
         )
+    )
+)
+exit /b 0
+
+:StageMoonlightCommonRuntimeDeps
+set COMMON_RUNTIME_DIR=%SOURCE_ROOT%\libs\windows\lib\%PACKAGE_ARCH%
+if not exist "%COMMON_RUNTIME_DIR%" (
+    echo Warning: unable to find bundled runtime dependencies for moonlight-common-c:
+    echo %COMMON_RUNTIME_DIR%
+    exit /b 0
+)
+
+for %%D in ("%COMMON_RUNTIME_DIR%\libcrypto-3-*.dll" "%COMMON_RUNTIME_DIR%\libssl-3-*.dll") do (
+    if exist "%%~D" (
+        copy "%%~D" "%PACKAGE_DIR%\" >nul
+        if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
     )
 )
 exit /b 0
