@@ -113,11 +113,23 @@ export interface StreamWindowDescriptor {
   inputCapturePolicy: InputCapturePolicy;
 }
 
+export type VideoDecoderPreference = 'automatic' | 'forceHardware' | 'forceSoftware';
+export type StreamRendererBackend = 'd3d11' | 'softwareSdl';
+
+export interface StreamRendererPlan {
+  decoderPreference: VideoDecoderPreference;
+  backend: StreamRendererBackend;
+  hdrRequested: boolean;
+  yuv444Requested: boolean;
+  vsync: boolean;
+}
+
 export interface ActiveStreamSession {
   hostId: string;
   appId: string;
   appName: string;
   window: StreamWindowDescriptor;
+  renderer: StreamRendererPlan;
 }
 
 export interface StreamMediaStats {

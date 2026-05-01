@@ -116,6 +116,13 @@ export function StreamWindowApp() {
           </small>
         )}
         {session && (
+          <small>
+            Renderer: {session.renderer.backend}, decoder: {session.renderer.decoderPreference}
+            {session.renderer.hdrRequested ? ', HDR requested' : ''}
+            {session.renderer.yuv444Requested ? ', YUV 4:4:4 requested' : ''}
+          </small>
+        )}
+        {session && (
           <button
             className="danger"
             type="button"

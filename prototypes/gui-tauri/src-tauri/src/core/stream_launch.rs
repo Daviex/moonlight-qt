@@ -38,6 +38,7 @@ pub struct ActiveStreamSession {
     pub app_id: String,
     pub app_name: String,
     pub window: StreamWindowDescriptor,
+    pub renderer: StreamRendererPlan,
 }
 
 impl StreamLaunchPlan {
@@ -105,6 +106,7 @@ impl StreamLaunchPlan {
             app_id: self.app_id.clone(),
             app_name: self.app_name.clone(),
             window: self.window.clone(),
+            renderer: self.renderer.clone(),
         }
     }
 }
