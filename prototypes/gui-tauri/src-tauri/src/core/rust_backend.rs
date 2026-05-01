@@ -35,7 +35,9 @@ impl RustBackend {
     pub fn from_storage_dir(app_data_dir: impl Into<PathBuf>) -> Result<Self, String> {
         let state_store = JsonStateStore::in_app_data_dir(app_data_dir);
         let state = state_store.load().map_err(|error| error.to_string())?;
-        Ok(Self::from_state(state, Some(state_store)))
+        let mut backend = Self::from_state(state, Some(state_store));
+        backend.ensure_client_identity()?;
+        Ok(backend)
     }
 
     fn from_state(state: StoredState, state_store: Option<JsonStateStore>) -> Self {
@@ -67,6 +69,15 @@ impl RustBackend {
             state_store
                 .save(&self.state_snapshot())
                 .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    fn ensure_client_identity(&mut self) -> Result<(), String> {
+        if self.client_identity.is_none() {
+            self.client_identity =
+                Some(ClientIdentity::generate().map_err(|error| error.to_string())?);
+            self.persist()?;
         }
         Ok(())
     }
@@ -590,5 +601,21 @@ mod tests {
         let settings = reloaded.load_settings().unwrap();
 
         assert_eq!(2560, settings.width);
+    }
+
+    #[test]
+    fn rust_backend_generates_and_persists_identity() {
+        let state_dir = unique_state_dir("identity");
+        {
+            let backend = RustBackend::from_storage_dir(&state_dir).unwrap();
+            let identity = backend.client_identity.as_ref().unwrap();
+
+            assert_eq!(16, identity.unique_id.len());
+            assert!(identity.certificate_pem.contains("BEGIN CERTIFICATE"));
+        }
+
+        let reloaded = RustBackend::from_storage_dir(&state_dir).unwrap();
+
+        assert!(reloaded.client_identity.is_some());
     }
 }
