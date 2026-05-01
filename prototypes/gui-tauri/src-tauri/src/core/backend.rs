@@ -1,3 +1,4 @@
+use super::stream_launch::ActiveStreamSession;
 use super::stream_window::StreamWindowDescriptor;
 use super::types::{
     AppEntry, BackendInfo, CommandStatus, HostDetails, HostEntry, NetworkTestResult,
@@ -48,6 +49,10 @@ pub trait MoonlightCore: Send {
     fn open_url(&mut self, url: &str) -> Result<CommandStatus, String>;
 
     fn active_stream_window(&mut self) -> Result<Option<StreamWindowDescriptor>, String> {
+        Ok(None)
+    }
+
+    fn active_stream_session(&mut self) -> Result<Option<ActiveStreamSession>, String> {
         Ok(None)
     }
 

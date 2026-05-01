@@ -113,6 +113,13 @@ export interface StreamWindowDescriptor {
   inputCapturePolicy: InputCapturePolicy;
 }
 
+export interface ActiveStreamSession {
+  hostId: string;
+  appId: string;
+  appName: string;
+  window: StreamWindowDescriptor;
+}
+
 export interface DisplayInfo {
   nativeWidth: number;
   nativeHeight: number;
@@ -220,6 +227,7 @@ export const bridge = {
   systemInfo: () => invoke<SystemInfo>('system_info'),
   openUrl: (url: string) => invoke<CommandStatus>('open_url', { url }),
   activeStreamWindow: () => invoke<StreamWindowDescriptor | null>('active_stream_window'),
+  activeStreamSession: () => invoke<ActiveStreamSession | null>('active_stream_session'),
   emitControllerAction: (action: ControllerAction) =>
     invoke<CommandStatus>('emit_controller_action', { action }),
   streamMouseMove: (deltaX: number, deltaY: number) =>

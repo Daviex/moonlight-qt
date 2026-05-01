@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { bridge, StreamWindowDescriptor } from '../bridge';
+import { ActiveStreamSession, bridge, StreamWindowDescriptor } from '../bridge';
 import { idleStreamState, streamPhaseHelp } from '../ui/stream';
 import { StreamUiState } from '../ui/types';
 import { StreamInputSurface } from './StreamInputSurface';
@@ -23,19 +23,22 @@ function streamWindowState(descriptor: StreamWindowDescriptor | null, message: s
 
 export function StreamWindowApp() {
   const [descriptor, setDescriptor] = useState<StreamWindowDescriptor | null>(null);
+  const [session, setSession] = useState<ActiveStreamSession | null>(null);
   const [message, setMessage] = useState('Preparing Rust stream window...');
 
   useEffect(() => {
     let cancelled = false;
     const loadDescriptor = async () => {
       try {
-        const activeWindow = await bridge.activeStreamWindow();
+        const activeSession = await bridge.activeStreamSession();
+        const activeWindow = activeSession?.window ?? await bridge.activeStreamWindow();
         if (cancelled) {
           return;
         }
+        setSession(activeSession);
         setDescriptor(activeWindow);
         if (activeWindow) {
-          setMessage(`${activeWindow.title} is ready for stream input capture.`);
+          setMessage(`${activeSession?.appName ?? activeWindow.title} is ready for stream input capture.`);
           await getCurrentWebviewWindow().setTitle(activeWindow.title);
         } else {
           setMessage('Waiting for an active Rust stream session.');
@@ -48,10 +51,36 @@ export function StreamWindowApp() {
     };
 
     void loadDescriptor();
+    const unlistenPromise = bridge.listen((event) => {
+      if (event.kind === 'sessionChanged' || event.kind === 'status') {
+        setMessage(event.message);
+      }
+      if (
+        event.kind === 'sessionChanged' &&
+        (event.message.includes('cleanup completed') ||
+          event.message.includes('finished') ||
+          event.message.includes('UI can be shown'))
+      ) {
+        void getCurrentWebviewWindow().close();
+      }
+    });
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && session?.hostId) {
+        event.preventDefault();
+        void bridge.quitRunningApp(session.hostId).catch((error) => {
+          setMessage(`Unable to stop stream: ${String(error)}`);
+        });
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+
     return () => {
       cancelled = true;
+      window.removeEventListener('keydown', onKeyDown);
+      void unlistenPromise.then((unlisten) => unlisten());
     };
-  }, []);
+  }, [session?.hostId]);
 
   const streamState = streamWindowState(descriptor, message);
 
@@ -61,6 +90,19 @@ export function StreamWindowApp() {
         <h1>{descriptor?.title ?? 'Moonlight Stream'}</h1>
         <p>{message}</p>
         <small>{streamPhaseHelp(streamState.phase)}</small>
+        {session && (
+          <button
+            className="danger"
+            type="button"
+            onClick={() => {
+              void bridge.quitRunningApp(session.hostId).catch((error) => {
+                setMessage(`Unable to stop stream: ${String(error)}`);
+              });
+            }}
+          >
+            Stop Stream
+          </button>
+        )}
       </section>
       <StreamInputSurface streamState={streamState} />
     </main>

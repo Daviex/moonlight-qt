@@ -8,6 +8,7 @@ use super::host_http::{ServerInfo, StartAppSession};
 use super::host_store::StoredHost;
 use super::stream_window::StreamWindowDescriptor;
 use super::types::{AppEntry, StreamingSettings};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StreamLaunchPlan {
@@ -26,6 +27,15 @@ pub struct PreparedStreamSession {
     pub app_id: String,
     pub server: ServerConnectionConfiguration,
     pub raw: RawSessionConfiguration,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveStreamSession {
+    pub host_id: String,
+    pub app_id: String,
+    pub app_name: String,
+    pub window: StreamWindowDescriptor,
 }
 
 impl StreamLaunchPlan {
@@ -84,6 +94,15 @@ impl StreamLaunchPlan {
             server,
             raw,
         })
+    }
+
+    pub fn active_session(&self) -> ActiveStreamSession {
+        ActiveStreamSession {
+            host_id: self.host_id.clone(),
+            app_id: self.app_id.clone(),
+            app_name: self.app_name.clone(),
+            window: self.window.clone(),
+        }
     }
 }
 
