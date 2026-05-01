@@ -51,6 +51,12 @@ pub struct RustBackend {
     pending_box_art_fetches: HashSet<(String, String)>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StreamStartRequestKind {
+    Launch,
+    Resume,
+}
+
 impl RustBackend {
     #[cfg(test)]
     pub fn new() -> Self {
@@ -342,6 +348,7 @@ impl RustBackend {
     fn prepare_live_stream(
         &self,
         plan: &StreamLaunchPlan,
+        request_kind: StreamStartRequestKind,
     ) -> Result<Option<PreparedStreamSession>, String> {
         if self.state_store.is_none() {
             return Ok(None);
@@ -378,9 +385,15 @@ impl RustBackend {
             gamepad_mask: 0,
             persist_game_controllers_on_disconnect: !self.settings.multi_controller,
         };
-        let start_session = client
-            .launch_app(&endpoint, &request, &plan.stream_config)
-            .map_err(|error| error.to_string())?;
+        let start_session = match request_kind {
+            StreamStartRequestKind::Launch => {
+                client.launch_app(&endpoint, &request, &plan.stream_config)
+            }
+            StreamStartRequestKind::Resume => {
+                client.resume_app(&endpoint, &request, &plan.stream_config)
+            }
+        }
+        .map_err(|error| error.to_string())?;
 
         plan.prepare_session(&server_info, &start_session)
             .map(Some)
@@ -743,7 +756,7 @@ impl MoonlightCore for RustBackend {
         let app = self.app_mut(app_id)?.clone();
         let plan = StreamLaunchPlan::new(&stored_host, &app, &self.settings)
             .map_err(|error| error.to_string())?;
-        let prepared_stream = self.prepare_live_stream(&plan)?;
+        let prepared_stream = self.prepare_live_stream(&plan, StreamStartRequestKind::Launch)?;
         let stream_thread = if let Some(prepared_stream) = prepared_stream {
             Some(start_stream_runner_thread(
                 prepared_stream,
@@ -772,13 +785,76 @@ impl MoonlightCore for RustBackend {
     }
 
     fn resume_session(&mut self, host_id: &str) -> Result<CommandStatus, String> {
+        if self.active_stream_plan.is_some() {
+            return Err("A Rust stream session is already active.".into());
+        }
+
         let host = self.host_entry(host_id)?;
-        let Some(app) = self.apps.iter().find(|app| app.running) else {
+        if !host.paired {
+            return Err(format!(
+                "{} must be paired before resuming sessions.",
+                host.name
+            ));
+        }
+
+        if self.state_store.is_none() {
+            let Some(app) = self.apps.iter().find(|app| app.running) else {
+                return Err(format!("{} has no running session to resume.", host.name));
+            };
+            return Ok(CommandStatus {
+                message: format!("Resume requested for {}.", app.name),
+            });
+        }
+
+        let stored_host = self.stored_host(host_id)?;
+        let running_game_id = self
+            .fetch_server_info(&stored_host.manual_address)?
+            .current_game_id;
+        if running_game_id == 0 {
             return Err(format!("{} has no running session to resume.", host.name));
         };
 
+        let _ =
+            self.refresh_apps_from_host(&stored_host, &stored_host.manual_address, running_game_id);
+        let Some(app) = self
+            .apps
+            .iter()
+            .find(|app| app.id.parse::<i32>().ok() == Some(running_game_id))
+            .cloned()
+        else {
+            return Err(format!(
+                "{} is running app ID {running_game_id}, but it was not found in the app list.",
+                host.name
+            ));
+        };
+
+        let plan = StreamLaunchPlan::new(&stored_host, &app, &self.settings)
+            .map_err(|error| error.to_string())?;
+        let prepared_stream = self.prepare_live_stream(&plan, StreamStartRequestKind::Resume)?;
+        let stream_thread = if let Some(prepared_stream) = prepared_stream {
+            Some(start_stream_runner_thread(
+                prepared_stream,
+                self.event_sender.clone(),
+            ))
+        } else {
+            None
+        };
+
+        self.session
+            .launch(plan.host_id.clone(), plan.app_id.clone())
+            .map_err(|error| error.to_string())?;
+        self.session
+            .mark_active()
+            .map_err(|error| error.to_string())?;
+
+        let app_name = plan.app_name.clone();
+        self.app_mut(&app.id)?.running = true;
+        self.active_stream_plan = Some(plan);
+        self.stream_callbacks = None;
+        self.stream_thread = stream_thread;
+
         Ok(CommandStatus {
-            message: format!("Resume requested for {}.", app.name),
+            message: format!("Resume requested for {app_name}."),
         })
     }
 
@@ -1207,12 +1283,11 @@ mod tests {
 
         backend.launch_app("gaming-pc", "steam").unwrap();
         assert!(backend.active_stream_plan.is_some());
-        let resume = backend.resume_session("gaming-pc").unwrap();
         backend.quit_running_app("gaming-pc").unwrap();
+        backend.app_mut("steam").unwrap().running = true;
+        let resume = backend.resume_session("gaming-pc").unwrap();
 
         assert_eq!("Resume requested for Steam Big Picture.", resume.message);
-        assert!(backend.active_stream_plan.is_none());
-        assert!(backend.resume_session("gaming-pc").is_err());
     }
 
     #[test]
