@@ -31,6 +31,8 @@ pub const CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION: c_int = 0x10;
 #[cfg(moonlight_common_c_linked)]
 pub const AV_PIX_FMT_RGBA: c_int = 26;
 #[cfg(moonlight_common_c_linked)]
+pub const SWS_FAST_BILINEAR: c_int = 1;
+#[cfg(moonlight_common_c_linked)]
 pub const SWS_BILINEAR: c_int = 1 << 1;
 #[cfg(moonlight_common_c_linked)]
 pub const AVERROR_EAGAIN: c_int = -11;
@@ -544,6 +546,12 @@ extern "C" {
         avctx: *mut AVCodecContext,
         codec: *const AVCodec,
         options: *mut *mut c_void,
+    ) -> c_int;
+    pub fn av_opt_set_int(
+        obj: *mut c_void,
+        name: *const c_char,
+        val: i64,
+        search_flags: c_int,
     ) -> c_int;
     pub fn avcodec_send_packet(avctx: *mut AVCodecContext, avpkt: *const AVPacket) -> c_int;
     pub fn avcodec_receive_frame(avctx: *mut AVCodecContext, frame: *mut AVFrame) -> c_int;

@@ -41,6 +41,7 @@ static VIDEO_SINK_STATE: OnceLock<Mutex<VideoSinkState>> = OnceLock::new();
 static VIDEO_DECODER_STATE: OnceLock<Mutex<Option<SoftwareVideoDecoder>>> = OnceLock::new();
 static VIDEO_RENDERER_STATE: OnceLock<Mutex<Option<NativeVideoRenderer>>> = OnceLock::new();
 static VIDEO_QUEUE_DIAGNOSTICS: OnceLock<Mutex<NativeVideoQueueDiagnostics>> = OnceLock::new();
+static VIDEO_DECODE_DIAGNOSTICS: OnceLock<Mutex<NativeVideoDecodeDiagnostics>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AudioConfiguration {
@@ -321,6 +322,17 @@ struct NativeVideoQueueDiagnostics {
     last_frame_number: c_int,
 }
 
+struct NativeVideoDecodeDiagnostics {
+    started_at: Instant,
+    last_log_at: Instant,
+    decode_units: u64,
+    decoded_frames: u64,
+    bytes_received: u64,
+    total_decode_us: u128,
+    max_decode_us: u128,
+    last_frame_number: c_int,
+}
+
 struct NativeVideoRenderDiagnostics {
     started_at: Instant,
     last_log_at: Instant,
@@ -367,6 +379,22 @@ impl Default for NativeVideoQueueDiagnostics {
             queued_frames: 0,
             dropped_full_frames: 0,
             disconnected_frames: 0,
+            last_frame_number: 0,
+        }
+    }
+}
+
+impl Default for NativeVideoDecodeDiagnostics {
+    fn default() -> Self {
+        let now = Instant::now();
+        Self {
+            started_at: now,
+            last_log_at: now,
+            decode_units: 0,
+            decoded_frames: 0,
+            bytes_received: 0,
+            total_decode_us: 0,
+            max_decode_us: 0,
             last_frame_number: 0,
         }
     }
@@ -723,10 +751,19 @@ unsafe extern "C" fn headless_video_submit_decode_unit(
     let decode_unit = unsafe { &*decode_unit };
     let bytes_received = decode_unit_bytes(decode_unit);
     let payload = unsafe { copy_decode_unit_payload(decode_unit) };
+    let decode_start = Instant::now();
     #[cfg(moonlight_common_c_linked)]
     let decoded_frame = decode_video_payload(&payload, decode_unit.frame_number);
     #[cfg(not(moonlight_common_c_linked))]
     let decoded_frame: Option<RgbaVideoFrame> = None;
+    let decode_us = decode_start.elapsed().as_micros();
+    let decoded = decoded_frame.is_some();
+    record_native_video_decode_diagnostics(
+        decode_unit.frame_number,
+        bytes_received,
+        decoded,
+        decode_us,
+    );
     let mut first_frame = false;
     let mut first_decoded_frame = false;
     store_video_sink_state(|state| {
@@ -769,6 +806,12 @@ fn start_native_video_renderer(width: c_int, height: c_int) {
         .lock()
     {
         *diagnostics = NativeVideoQueueDiagnostics::default();
+    }
+    if let Ok(mut diagnostics) = VIDEO_DECODE_DIAGNOSTICS
+        .get_or_init(|| Mutex::new(NativeVideoDecodeDiagnostics::default()))
+        .lock()
+    {
+        *diagnostics = NativeVideoDecodeDiagnostics::default();
     }
     logger::log(format!(
         "starting native video renderer; width={width}; height={height}"
@@ -866,6 +909,49 @@ fn record_native_video_queue_diagnostics(frame_number: c_int, result: VideoQueue
             diagnostics.disconnected_frames,
             diagnostics.dropped_full_frames as f64 * 100.0 / diagnostics.submitted_frames.max(1) as f64,
             diagnostics.submitted_frames as f64 / elapsed,
+            diagnostics.last_frame_number,
+        ));
+        diagnostics.last_log_at = Instant::now();
+    }
+}
+
+fn record_native_video_decode_diagnostics(
+    frame_number: c_int,
+    bytes_received: u64,
+    decoded: bool,
+    decode_us: u128,
+) {
+    let Ok(mut diagnostics) = VIDEO_DECODE_DIAGNOSTICS
+        .get_or_init(|| Mutex::new(NativeVideoDecodeDiagnostics::default()))
+        .lock()
+    else {
+        return;
+    };
+    diagnostics.decode_units = diagnostics.decode_units.saturating_add(1);
+    diagnostics.bytes_received = diagnostics.bytes_received.saturating_add(bytes_received);
+    diagnostics.total_decode_us = diagnostics.total_decode_us.saturating_add(decode_us);
+    diagnostics.max_decode_us = diagnostics.max_decode_us.max(decode_us);
+    diagnostics.last_frame_number = frame_number;
+    if decoded {
+        diagnostics.decoded_frames = diagnostics.decoded_frames.saturating_add(1);
+    }
+    if diagnostics.last_log_at.elapsed() >= NATIVE_VIDEO_DIAGNOSTIC_INTERVAL {
+        let elapsed = diagnostics.started_at.elapsed().as_secs_f64().max(0.001);
+        let average_decode_us = if diagnostics.decode_units == 0 {
+            0
+        } else {
+            diagnostics.total_decode_us / diagnostics.decode_units as u128
+        };
+        logger::log(format!(
+            "FFmpeg software decode diagnostics: units={}; decoded={}; decode_ratio_pct={:.1}; unit_fps={:.1}; decoded_fps={:.1}; avg_decode_us={}; max_decode_us={}; mb_received={:.1}; last_frame={}",
+            diagnostics.decode_units,
+            diagnostics.decoded_frames,
+            diagnostics.decoded_frames as f64 * 100.0 / diagnostics.decode_units.max(1) as f64,
+            diagnostics.decode_units as f64 / elapsed,
+            diagnostics.decoded_frames as f64 / elapsed,
+            average_decode_us,
+            diagnostics.max_decode_us,
+            diagnostics.bytes_received as f64 / (1024.0 * 1024.0),
             diagnostics.last_frame_number,
         ));
         diagnostics.last_log_at = Instant::now();
@@ -1162,9 +1248,13 @@ impl Sdl3ControllerManager {
         };
         match axis {
             sdl3::gamepad::Axis::LeftX => controller.state.left_stick_x = value,
-            sdl3::gamepad::Axis::LeftY => controller.state.left_stick_y = value,
+            sdl3::gamepad::Axis::LeftY => {
+                controller.state.left_stick_y = invert_sdl3_stick_axis(value)
+            }
             sdl3::gamepad::Axis::RightX => controller.state.right_stick_x = value,
-            sdl3::gamepad::Axis::RightY => controller.state.right_stick_y = value,
+            sdl3::gamepad::Axis::RightY => {
+                controller.state.right_stick_y = invert_sdl3_stick_axis(value)
+            }
             sdl3::gamepad::Axis::TriggerLeft => {
                 controller.state.left_trigger = sdl3_trigger_to_u8(value)
             }
@@ -1320,6 +1410,10 @@ fn sdl3_gamepad_button_flag(button: sdl3::gamepad::Button) -> Option<i32> {
 
 fn sdl3_trigger_to_u8(value: i16) -> u8 {
     (((value.max(0) as i32) * 255 + 16_383) / 32_767).clamp(0, 255) as u8
+}
+
+fn invert_sdl3_stick_axis(value: i16) -> i16 {
+    value.saturating_neg()
 }
 
 fn sdl3_gamepad_type(gamepad_type: sdl3::gamepad::GamepadType) -> ControllerType {
@@ -1712,6 +1806,22 @@ fn validate_rgba_frame(frame: &RgbaVideoFrame) -> Result<(), String> {
 }
 
 #[cfg(moonlight_common_c_linked)]
+fn configure_ffmpeg_decoder_threading(codec_context: *mut gamestream_sys::AVCodecContext) {
+    static THREADS_OPTION: &[u8] = b"threads\0";
+    // SAFETY: codec_context is a newly allocated FFmpeg AVCodecContext and the option name is NUL-terminated.
+    let result = unsafe {
+        gamestream_sys::av_opt_set_int(codec_context.cast(), THREADS_OPTION.as_ptr().cast(), 0, 0)
+    };
+    if result < 0 {
+        logger::log(format!(
+            "FFmpeg decoder threading option was rejected; code={result}"
+        ));
+    } else {
+        logger::log("FFmpeg decoder threading configured with automatic thread count");
+    }
+}
+
+#[cfg(moonlight_common_c_linked)]
 impl SoftwareVideoDecoder {
     fn new(video_format: c_int) -> Result<Self, String> {
         let codec_name = ffmpeg_codec_name(video_format)
@@ -1731,6 +1841,7 @@ impl SoftwareVideoDecoder {
         if codec_context.is_null() {
             return Err("FFmpeg decoder context allocation failed".into());
         }
+        configure_ffmpeg_decoder_threading(codec_context);
 
         // SAFETY: codec_context is newly allocated and options may be NULL.
         let open_result =
@@ -1840,7 +1951,7 @@ impl SoftwareVideoDecoder {
                     width,
                     height,
                     gamestream_sys::AV_PIX_FMT_RGBA,
-                    gamestream_sys::SWS_BILINEAR,
+                    gamestream_sys::SWS_FAST_BILINEAR,
                     std::ptr::null_mut(),
                     std::ptr::null_mut(),
                     std::ptr::null(),
