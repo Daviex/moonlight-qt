@@ -248,6 +248,58 @@ impl RustBackend {
             .map_err(|error| error.to_string())
     }
 
+    fn fetch_unpaired_server_info_for_address(&self, address: &str) -> Result<ServerInfo, String> {
+        let Some(client) = &self.host_http else {
+            return Err("Host HTTP client is unavailable.".into());
+        };
+        let endpoint = HostEndpoint::from_address(address).map_err(|error| error.to_string())?;
+        client
+            .fetch_unpaired_server_info(&endpoint)
+            .map_err(|error| error.to_string())
+    }
+
+    fn host_entries_with_live_status(&mut self) -> Vec<HostEntry> {
+        let hosts = self.hosts.hosts().to_vec();
+        let mut entries = Vec::with_capacity(hosts.len());
+        let mut changed = false;
+
+        for mut host in hosts {
+            let live_info = if host.paired {
+                self.fetch_server_info_for_host(&host, &host.manual_address)
+                    .ok()
+            } else {
+                self.fetch_unpaired_server_info_for_address(&host.manual_address)
+                    .ok()
+            };
+            if let Some(info) = live_info {
+                let host_changed = update_host_from_server_info(&mut host, &info);
+                let mut entry = host.clone().into_entry();
+                entry.status = if host.paired {
+                    HostStatus::Online
+                } else {
+                    HostStatus::PairingRequired
+                };
+                entry.running = info.current_game_id != 0;
+                entry.wakeable = !host.mac_address.trim().is_empty();
+                entries.push(entry);
+                if host_changed {
+                    self.hosts.add_or_update(host);
+                    changed = true;
+                }
+            } else {
+                entries.push(host.clone().into_entry());
+            }
+        }
+
+        if changed {
+            if let Err(error) = self.persist() {
+                eprintln!("Rust backend host metadata persistence failed: {error}");
+            }
+        }
+
+        entries
+    }
+
     fn refresh_apps_from_host(
         &mut self,
         host: &StoredHost,
@@ -557,7 +609,7 @@ impl MoonlightCore for RustBackend {
                 Err(error) => eprintln!("Rust backend mDNS discovery failed: {error}"),
             }
         }
-        Ok(self.hosts.entries())
+        Ok(self.host_entries_with_live_status())
     }
 
     fn add_host(&mut self, address: String) -> Result<(CommandStatus, String), String> {
@@ -1334,6 +1386,20 @@ fn non_empty_string(value: &str) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
+}
+
+fn update_host_from_server_info(host: &mut StoredHost, info: &ServerInfo) -> bool {
+    let original = host.clone();
+    if let Some(name) = non_empty_string(&info.hostname) {
+        host.name = name;
+    }
+    if let Some(uuid) = non_empty_string(&info.unique_id) {
+        host.uuid = uuid;
+    }
+    if let Some(mac_address) = non_empty_string(&info.mac_address) {
+        host.mac_address = mac_address;
+    }
+    *host != original
 }
 
 fn file_url_from_path(path: &Path) -> String {
