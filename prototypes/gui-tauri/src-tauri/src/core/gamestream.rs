@@ -3,6 +3,9 @@
 use super::error::CoreError;
 use super::events::{BridgeEvent, BridgeEventKind};
 use super::gamestream_sys;
+use super::stream_input::{
+    ButtonAction, KeyAction, KeyModifiers, MouseButton as StreamMouseButton, StreamInputSender,
+};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -292,6 +295,14 @@ struct NativeVideoRenderer {
     frame_sender: SyncSender<RgbaVideoFrame>,
     stop_sender: Option<Sender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[derive(Debug, Default)]
+struct NativeVideoInputState {
+    last_mouse_position: Option<(i16, i16)>,
+    left_mouse_down: bool,
+    middle_mouse_down: bool,
+    right_mouse_down: bool,
 }
 
 impl Drop for NativeVideoRenderer {
@@ -670,11 +681,22 @@ fn native_video_renderer_loop(
     let mut last_buffer = vec![0; width * height];
     let mut last_width = width;
     let mut last_height = height;
+    let mut input_state = NativeVideoInputState::default();
+    let input_sender = StreamInputSender;
+    let mut requested_stop = false;
 
     while window.is_open() {
         if stop_receiver.try_recv().is_ok() {
+            requested_stop = true;
             break;
         }
+        poll_native_video_input(
+            &window,
+            &mut input_state,
+            &input_sender,
+            last_width,
+            last_height,
+        );
         match frame_receiver.recv_timeout(std::time::Duration::from_millis(16)) {
             Ok(frame) => {
                 let converted = rgba_to_minifb_buffer(&frame)?;
@@ -690,7 +712,227 @@ fn native_video_renderer_loop(
             .map_err(|error| error.to_string())?;
     }
 
+    if !requested_stop {
+        emit_stream_event(
+            BridgeEventKind::SessionChanged,
+            "Native stream window closed; interrupting GameStream session.".into(),
+        );
+        #[cfg(moonlight_common_c_linked)]
+        unsafe {
+            gamestream_sys::LiInterruptConnection();
+        }
+    }
+
     Ok(())
+}
+
+fn poll_native_video_input(
+    window: &minifb::Window,
+    state: &mut NativeVideoInputState,
+    input: &StreamInputSender,
+    reference_width: usize,
+    reference_height: usize,
+) {
+    if let Some((x, y)) = window.get_mouse_pos(minifb::MouseMode::Clamp) {
+        let x = clamp_f32_to_i16(x);
+        let y = clamp_f32_to_i16(y);
+        if state.last_mouse_position != Some((x, y)) {
+            let _ = input.send_mouse_position(
+                x,
+                y,
+                clamp_usize_to_i16(reference_width),
+                clamp_usize_to_i16(reference_height),
+            );
+            state.last_mouse_position = Some((x, y));
+        }
+    }
+
+    update_native_mouse_button(
+        input,
+        &mut state.left_mouse_down,
+        window.get_mouse_down(minifb::MouseButton::Left),
+        StreamMouseButton::Left,
+    );
+    update_native_mouse_button(
+        input,
+        &mut state.middle_mouse_down,
+        window.get_mouse_down(minifb::MouseButton::Middle),
+        StreamMouseButton::Middle,
+    );
+    update_native_mouse_button(
+        input,
+        &mut state.right_mouse_down,
+        window.get_mouse_down(minifb::MouseButton::Right),
+        StreamMouseButton::Right,
+    );
+
+    if let Some((scroll_x, scroll_y)) = window.get_scroll_wheel() {
+        let scroll_x = (scroll_x * 120.0).round();
+        let scroll_y = (scroll_y * 120.0).round();
+        if scroll_x != 0.0 {
+            let _ = input.send_high_res_horizontal_scroll(clamp_f32_to_i16(scroll_x));
+        }
+        if scroll_y != 0.0 {
+            let _ = input.send_high_res_scroll(clamp_f32_to_i16(scroll_y));
+        }
+    }
+
+    let modifiers = native_key_modifiers(window);
+    for key in window.get_keys_pressed(minifb::KeyRepeat::No) {
+        if let Some(key_code) = minifb_key_to_js_key_code(key) {
+            let _ = input.send_keyboard(key_code, KeyAction::Down, modifiers, true);
+        }
+    }
+    for key in window.get_keys_released() {
+        if let Some(key_code) = minifb_key_to_js_key_code(key) {
+            let _ = input.send_keyboard(key_code, KeyAction::Up, modifiers, true);
+        }
+    }
+}
+
+fn update_native_mouse_button(
+    input: &StreamInputSender,
+    previous: &mut bool,
+    current: bool,
+    button: StreamMouseButton,
+) {
+    if *previous == current {
+        return;
+    }
+    let action = if current {
+        ButtonAction::Press
+    } else {
+        ButtonAction::Release
+    };
+    let _ = input.send_mouse_button(action, button);
+    *previous = current;
+}
+
+fn native_key_modifiers(window: &minifb::Window) -> KeyModifiers {
+    let keys = window.get_keys();
+    KeyModifiers {
+        shift: keys.contains(&minifb::Key::LeftShift) || keys.contains(&minifb::Key::RightShift),
+        ctrl: keys.contains(&minifb::Key::LeftCtrl) || keys.contains(&minifb::Key::RightCtrl),
+        alt: keys.contains(&minifb::Key::LeftAlt) || keys.contains(&minifb::Key::RightAlt),
+        meta: keys.contains(&minifb::Key::LeftSuper) || keys.contains(&minifb::Key::RightSuper),
+    }
+}
+
+fn minifb_key_to_js_key_code(key: minifb::Key) -> Option<i16> {
+    let key_code = match key {
+        minifb::Key::Backspace => 8,
+        minifb::Key::Tab => 9,
+        minifb::Key::Enter | minifb::Key::NumPadEnter => 13,
+        minifb::Key::LeftShift | minifb::Key::RightShift => 16,
+        minifb::Key::LeftCtrl | minifb::Key::RightCtrl => 17,
+        minifb::Key::LeftAlt | minifb::Key::RightAlt => 18,
+        minifb::Key::Pause => 19,
+        minifb::Key::CapsLock => 20,
+        minifb::Key::Escape => 27,
+        minifb::Key::Space => 32,
+        minifb::Key::PageUp => 33,
+        minifb::Key::PageDown => 34,
+        minifb::Key::End => 35,
+        minifb::Key::Home => 36,
+        minifb::Key::Left => 37,
+        minifb::Key::Up => 38,
+        minifb::Key::Right => 39,
+        minifb::Key::Down => 40,
+        minifb::Key::Insert => 45,
+        minifb::Key::Delete => 46,
+        minifb::Key::Key0 => 48,
+        minifb::Key::Key1 => 49,
+        minifb::Key::Key2 => 50,
+        minifb::Key::Key3 => 51,
+        minifb::Key::Key4 => 52,
+        minifb::Key::Key5 => 53,
+        minifb::Key::Key6 => 54,
+        minifb::Key::Key7 => 55,
+        minifb::Key::Key8 => 56,
+        minifb::Key::Key9 => 57,
+        minifb::Key::A => 65,
+        minifb::Key::B => 66,
+        minifb::Key::C => 67,
+        minifb::Key::D => 68,
+        minifb::Key::E => 69,
+        minifb::Key::F => 70,
+        minifb::Key::G => 71,
+        minifb::Key::H => 72,
+        minifb::Key::I => 73,
+        minifb::Key::J => 74,
+        minifb::Key::K => 75,
+        minifb::Key::L => 76,
+        minifb::Key::M => 77,
+        minifb::Key::N => 78,
+        minifb::Key::O => 79,
+        minifb::Key::P => 80,
+        minifb::Key::Q => 81,
+        minifb::Key::R => 82,
+        minifb::Key::S => 83,
+        minifb::Key::T => 84,
+        minifb::Key::U => 85,
+        minifb::Key::V => 86,
+        minifb::Key::W => 87,
+        minifb::Key::X => 88,
+        minifb::Key::Y => 89,
+        minifb::Key::Z => 90,
+        minifb::Key::LeftSuper | minifb::Key::RightSuper => 91,
+        minifb::Key::Menu => 93,
+        minifb::Key::NumPad0 => 96,
+        minifb::Key::NumPad1 => 97,
+        minifb::Key::NumPad2 => 98,
+        minifb::Key::NumPad3 => 99,
+        minifb::Key::NumPad4 => 100,
+        minifb::Key::NumPad5 => 101,
+        minifb::Key::NumPad6 => 102,
+        minifb::Key::NumPad7 => 103,
+        minifb::Key::NumPad8 => 104,
+        minifb::Key::NumPad9 => 105,
+        minifb::Key::NumPadAsterisk => 106,
+        minifb::Key::NumPadPlus => 107,
+        minifb::Key::NumPadMinus => 109,
+        minifb::Key::NumPadDot => 110,
+        minifb::Key::NumPadSlash => 111,
+        minifb::Key::F1 => 112,
+        minifb::Key::F2 => 113,
+        minifb::Key::F3 => 114,
+        minifb::Key::F4 => 115,
+        minifb::Key::F5 => 116,
+        minifb::Key::F6 => 117,
+        minifb::Key::F7 => 118,
+        minifb::Key::F8 => 119,
+        minifb::Key::F9 => 120,
+        minifb::Key::F10 => 121,
+        minifb::Key::F11 => 122,
+        minifb::Key::F12 => 123,
+        minifb::Key::NumLock => 144,
+        minifb::Key::ScrollLock => 145,
+        minifb::Key::Semicolon => 186,
+        minifb::Key::Equal => 187,
+        minifb::Key::Comma => 188,
+        minifb::Key::Minus => 189,
+        minifb::Key::Period => 190,
+        minifb::Key::Slash => 191,
+        minifb::Key::Backquote => 192,
+        minifb::Key::LeftBracket => 219,
+        minifb::Key::Backslash => 220,
+        minifb::Key::RightBracket => 221,
+        minifb::Key::Apostrophe => 222,
+        minifb::Key::F13 => 124,
+        minifb::Key::F14 => 125,
+        minifb::Key::F15 => 126,
+        minifb::Key::Unknown => return None,
+        minifb::Key::Count => return None,
+    };
+    Some(key_code)
+}
+
+fn clamp_f32_to_i16(value: f32) -> i16 {
+    value.clamp(i16::MIN as f32, i16::MAX as f32) as i16
+}
+
+fn clamp_usize_to_i16(value: usize) -> i16 {
+    value.min(i16::MAX as usize) as i16
 }
 
 fn rgba_to_minifb_buffer(frame: &RgbaVideoFrame) -> Result<Vec<u32>, String> {
