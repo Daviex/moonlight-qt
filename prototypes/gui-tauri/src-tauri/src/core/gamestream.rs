@@ -369,6 +369,14 @@ struct NativeVideoRenderDiagnostics {
     last_frame_number: c_int,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+struct VideoSinkUpdate {
+    first_frame: bool,
+    first_decoded_frame: bool,
+    frame_number: c_int,
+    bytes_received: u64,
+}
+
 #[derive(Debug, Default)]
 struct NativeVideoInputState {
     last_mouse_position: Option<(i16, i16)>,
@@ -896,16 +904,7 @@ fn process_pull_video_decode_unit(
     let bytes_received = decode_unit_bytes(decode_unit);
     let payload = unsafe { copy_decode_unit_payload(decode_unit) };
     let decode_start = Instant::now();
-    let decoded_frame = match decoder.decode(&payload, decode_unit.frame_number) {
-        Ok(frame) => frame,
-        Err(error) => {
-            emit_stream_event(
-                BridgeEventKind::Status,
-                format!("Software video decode failed: {error}."),
-            );
-            None
-        }
-    };
+    let decoded_frame = decode_pull_video_payload(decoder, &payload, decode_unit.frame_number);
     let decode_us = decode_start.elapsed().as_micros();
     let decoded = decoded_frame.is_some();
     record_native_video_decode_diagnostics(
@@ -914,55 +913,85 @@ fn process_pull_video_decode_unit(
         decoded,
         decode_us,
     );
-    let mut first_frame = false;
-    let mut first_decoded_frame = false;
+    let update = update_video_sink_after_decode(
+        decode_unit.frame_number,
+        bytes_received,
+        payload,
+        decoded_frame,
+    );
+    emit_video_sink_update_events(&update);
+    gamestream_sys::DR_OK
+}
+
+#[cfg(moonlight_common_c_linked)]
+fn decode_pull_video_payload(
+    decoder: &mut SoftwareVideoDecoder,
+    payload: &[u8],
+    frame_number: c_int,
+) -> Option<RgbaVideoFrame> {
+    match decoder.decode(payload, frame_number) {
+        Ok(frame) => frame,
+        Err(error) => {
+            emit_stream_event(
+                BridgeEventKind::Status,
+                format!("Software video decode failed: {error}."),
+            );
+            None
+        }
+    }
+}
+
+fn update_video_sink_after_decode(
+    frame_number: c_int,
+    bytes_received: u64,
+    payload: Vec<u8>,
+    decoded_frame: Option<RgbaVideoFrame>,
+) -> VideoSinkUpdate {
+    let mut update = VideoSinkUpdate {
+        first_frame: false,
+        first_decoded_frame: false,
+        frame_number,
+        bytes_received,
+    };
     store_video_sink_state(|state| {
-        first_frame = state.frames_received == 0;
+        update.first_frame = state.frames_received == 0;
         state.frames_received = state.frames_received.saturating_add(1);
         state.bytes_received = state.bytes_received.saturating_add(bytes_received);
-        state.last_frame_number = decode_unit.frame_number;
+        state.last_frame_number = frame_number;
         state.last_frame_payload = payload;
         if let Some(frame) = decoded_frame {
-            first_decoded_frame = state.decoded_frames == 0;
+            update.first_decoded_frame = state.decoded_frames == 0;
             state.decoded_frames = state.decoded_frames.saturating_add(1);
             send_native_video_frame(frame.clone());
             state.last_rgba_frame = Some(frame);
         }
     });
-    if first_frame {
+    update
+}
+
+fn emit_video_sink_update_events(update: &VideoSinkUpdate) {
+    if update.first_frame {
         emit_stream_event(
             BridgeEventKind::Status,
             format!(
                 "Headless video sink received its first frame {} ({} bytes).",
-                decode_unit.frame_number, bytes_received
+                update.frame_number, update.bytes_received
             ),
         );
     }
-    if first_decoded_frame {
+    if update.first_decoded_frame {
         emit_stream_event(
             BridgeEventKind::Status,
             "First decoded video frame is ready for native presentation.".into(),
         );
     }
-    gamestream_sys::DR_OK
 }
 
 fn start_native_video_renderer(width: c_int, height: c_int) {
     stop_native_video_renderer();
     let width = width.max(1) as usize;
     let height = height.max(1) as usize;
-    if let Ok(mut diagnostics) = VIDEO_QUEUE_DIAGNOSTICS
-        .get_or_init(|| Mutex::new(NativeVideoQueueDiagnostics::default()))
-        .lock()
-    {
-        *diagnostics = NativeVideoQueueDiagnostics::default();
-    }
-    if let Ok(mut diagnostics) = VIDEO_DECODE_DIAGNOSTICS
-        .get_or_init(|| Mutex::new(NativeVideoDecodeDiagnostics::default()))
-        .lock()
-    {
-        *diagnostics = NativeVideoDecodeDiagnostics::default();
-    }
+    reset_native_video_diagnostics();
     logger::log(format!(
         "starting native video renderer; width={width}; height={height}"
     ));
@@ -985,6 +1014,21 @@ fn start_native_video_renderer(width: c_int, height: c_int) {
             stop_sender: Some(stop_sender),
             thread: Some(thread),
         });
+    }
+}
+
+fn reset_native_video_diagnostics() {
+    if let Ok(mut diagnostics) = VIDEO_QUEUE_DIAGNOSTICS
+        .get_or_init(|| Mutex::new(NativeVideoQueueDiagnostics::default()))
+        .lock()
+    {
+        *diagnostics = NativeVideoQueueDiagnostics::default();
+    }
+    if let Ok(mut diagnostics) = VIDEO_DECODE_DIAGNOSTICS
+        .get_or_init(|| Mutex::new(NativeVideoDecodeDiagnostics::default()))
+        .lock()
+    {
+        *diagnostics = NativeVideoDecodeDiagnostics::default();
     }
 }
 
