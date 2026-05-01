@@ -47,10 +47,15 @@ fn thread_rust_events_to_tauri(
 ) {
     std::thread::spawn(move || {
         for event in event_receiver {
-            logger::log(format!(
-                "rust backend event; kind={:?}; message={}",
-                event.kind, event.message
-            ));
+            let event_log = format!(
+                "rust backend event; kind={:?}; host_id={:?}; app_id={:?}; message={}",
+                event.kind, event.host_id, event.app_id, event.message
+            );
+            if event.host_id.is_some() || event.app_id.is_some() {
+                logger::stream(event_log);
+            } else {
+                logger::log(event_log);
+            }
             if let Err(error) = app_handle.emit(BRIDGE_EVENT, event) {
                 logger::log(format!("failed to emit rust backend event; error={error}"));
             }

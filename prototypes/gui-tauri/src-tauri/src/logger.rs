@@ -7,8 +7,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const DEBUG_ENV: &str = "MOONLIGHT_TAURI_DEBUG";
 const LOG_PATH_ENV: &str = "MOONLIGHT_TAURI_LOG";
+const STREAM_LOG_PATH_ENV: &str = "MOONLIGHT_TAURI_STREAM_LOG";
 
 static LOG_FILE: OnceLock<Option<Mutex<File>>> = OnceLock::new();
+static STREAM_LOG_FILE: OnceLock<Option<Mutex<File>>> = OnceLock::new();
 
 pub fn enabled() -> bool {
     if env::var(LOG_PATH_ENV).is_ok() {
@@ -28,10 +30,19 @@ pub fn enabled() -> bool {
 pub fn init() {
     if enabled() {
         log("logging initialized");
+        stream("stream logging initialized");
     }
 }
 
 pub fn log(message: impl AsRef<str>) {
+    write_log(message, log_file);
+}
+
+pub fn stream(message: impl AsRef<str>) {
+    write_log(message, stream_log_file);
+}
+
+fn write_log(message: impl AsRef<str>, file: fn() -> Option<&'static Mutex<File>>) {
     if !enabled() {
         return;
     };
@@ -48,7 +59,7 @@ pub fn log(message: impl AsRef<str>) {
 
     eprintln!("{line}");
 
-    let Some(file) = log_file() else {
+    let Some(file) = file() else {
         return;
     };
     if let Ok(mut file) = file.lock() {
@@ -58,41 +69,56 @@ pub fn log(message: impl AsRef<str>) {
 }
 
 pub fn log_path() -> Option<PathBuf> {
+    default_log_path(LOG_PATH_ENV, "MoonlightTauri.log")
+}
+
+pub fn stream_log_path() -> Option<PathBuf> {
+    default_log_path(STREAM_LOG_PATH_ENV, "MoonlightTauriStream.log")
+}
+
+fn log_file() -> Option<&'static Mutex<File>> {
+    log_file_for(&LOG_FILE, log_path)
+}
+
+fn stream_log_file() -> Option<&'static Mutex<File>> {
+    log_file_for(&STREAM_LOG_FILE, stream_log_path)
+}
+
+fn default_log_path(env_name: &str, file_name: &str) -> Option<PathBuf> {
     if !enabled() {
         return None;
     }
 
-    if let Ok(path) = env::var(LOG_PATH_ENV) {
+    if let Ok(path) = env::var(env_name) {
         return Some(PathBuf::from(path));
     }
 
     env::current_exe()
         .ok()
-        .and_then(|path| {
-            path.parent()
-                .map(|parent| parent.join("MoonlightTauri.log"))
-        })
-        .or_else(|| Some(env::temp_dir().join("MoonlightTauri.log")))
+        .and_then(|path| path.parent().map(|parent| parent.join(file_name)))
+        .or_else(|| Some(env::temp_dir().join(file_name)))
 }
 
-fn log_file() -> Option<&'static Mutex<File>> {
-    LOG_FILE
-        .get_or_init(|| {
-            if !enabled() {
-                return None;
-            }
+fn log_file_for(
+    slot: &'static OnceLock<Option<Mutex<File>>>,
+    path: fn() -> Option<PathBuf>,
+) -> Option<&'static Mutex<File>> {
+    slot.get_or_init(|| {
+        if !enabled() {
+            return None;
+        }
 
-            let path = log_path()?;
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
+        let path = path()?;
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
 
-            OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)
-                .map(Mutex::new)
-                .ok()
-        })
-        .as_ref()
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map(Mutex::new)
+            .ok()
+    })
+    .as_ref()
 }

@@ -796,9 +796,10 @@ fn save_settings(
 fn main() {
     logger::init();
     logger::log(format!(
-        "starting Moonlight Tauri prototype; exe={:?}; log_path={:?}",
+        "starting Moonlight Tauri prototype; exe={:?}; log_path={:?}; stream_log_path={:?}",
         std::env::current_exe().ok(),
-        logger::log_path()
+        logger::log_path(),
+        logger::stream_log_path()
     ));
     tauri::Builder::default()
         .setup(|app| {

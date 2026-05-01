@@ -1042,11 +1042,23 @@ impl MoonlightCore for RustBackend {
 
     fn quit_running_app(&mut self, host_id: &str) -> Result<CommandStatus, String> {
         self.host_entry(host_id)?;
+        let mut ignored_cancel_error = None;
         if self.state_store.is_some() {
             let stored_host = self.stored_host(host_id)?;
-            self.host_request_context(&stored_host, &stored_host.manual_address)?
+            if let Err(error) = self
+                .host_request_context(&stored_host, &stored_host.manual_address)?
                 .quit_app()
-                .map_err(|error| error.to_string())?;
+            {
+                let message = error.to_string();
+                if is_benign_cancel_shutdown_error(&message) {
+                    logger::stream(format!(
+                        "quit_running_app ignored cancel failure after stream shutdown; host_id={host_id}; error={message}"
+                    ));
+                    ignored_cancel_error = Some(message);
+                } else {
+                    return Err(message);
+                }
+            }
         }
         for app in &mut self.apps {
             app.running = false;
@@ -1058,7 +1070,11 @@ impl MoonlightCore for RustBackend {
         self.session.finish();
 
         Ok(CommandStatus {
-            message: "Quit requested for the running app.".into(),
+            message: if ignored_cancel_error.is_some() {
+                "Local stream stopped; host cancel connection was already closed.".into()
+            } else {
+                "Quit requested for the running app.".into()
+            },
         })
     }
 
@@ -1338,6 +1354,16 @@ fn parse_mouse_button(button: &str) -> Result<MouseButton, String> {
         "x2" => Ok(MouseButton::X2),
         _ => Err(format!("Unsupported mouse button '{button}'.")),
     }
+}
+
+fn is_benign_cancel_shutdown_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("/cancel")
+        && (lower.contains("os error 10054")
+            || lower.contains("connection reset")
+            || lower.contains("forzatamente")
+            || lower.contains("forcibly closed")
+            || lower.contains("connection was aborted"))
 }
 
 fn is_self_stream_address(address: &str) -> bool {

@@ -7,7 +7,6 @@ use super::stream_input::{
     ButtonAction, ControllerCapabilities, ControllerState, ControllerType, KeyAction, KeyModifiers,
     MouseButton as StreamMouseButton, StreamInputSender,
 };
-use crate::logger;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -19,9 +18,18 @@ use std::os::raw::c_uchar;
 use std::os::raw::{c_char, c_int, c_void};
 use std::sync::mpsc::{self, Sender, SyncSender};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+mod logger {
+    pub fn log(message: impl AsRef<str>) {
+        crate::logger::stream(message);
+    }
+}
 
 const DEFAULT_VIDEO_PACKET_SIZE: u32 = 1392;
-const NATIVE_VIDEO_INPUT_POLL_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1);
+const NATIVE_VIDEO_INPUT_POLL_TIMEOUT: Duration = Duration::from_millis(1);
+const NATIVE_VIDEO_DIAGNOSTIC_INTERVAL: Duration = Duration::from_secs(2);
+const SDL3_CONTROLLER_DIAGNOSTIC_INTERVAL: Duration = Duration::from_secs(2);
 
 static STREAM_EVENT_CONTEXT: OnceLock<Mutex<Option<StreamEventContext>>> = OnceLock::new();
 static AUDIO_SINK_STATE: OnceLock<Mutex<AudioSinkState>> = OnceLock::new();
@@ -32,6 +40,7 @@ static VIDEO_SINK_STATE: OnceLock<Mutex<VideoSinkState>> = OnceLock::new();
 #[cfg(moonlight_common_c_linked)]
 static VIDEO_DECODER_STATE: OnceLock<Mutex<Option<SoftwareVideoDecoder>>> = OnceLock::new();
 static VIDEO_RENDERER_STATE: OnceLock<Mutex<Option<NativeVideoRenderer>>> = OnceLock::new();
+static VIDEO_QUEUE_DIAGNOSTICS: OnceLock<Mutex<NativeVideoQueueDiagnostics>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AudioConfiguration {
@@ -302,6 +311,28 @@ struct NativeVideoRenderer {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
+struct NativeVideoQueueDiagnostics {
+    started_at: Instant,
+    last_log_at: Instant,
+    submitted_frames: u64,
+    queued_frames: u64,
+    dropped_full_frames: u64,
+    disconnected_frames: u64,
+    last_frame_number: c_int,
+}
+
+struct NativeVideoRenderDiagnostics {
+    started_at: Instant,
+    last_log_at: Instant,
+    displayed_frames: u64,
+    recreated_textures: u64,
+    total_update_us: u128,
+    total_render_us: u128,
+    max_update_us: u128,
+    max_render_us: u128,
+    last_frame_number: c_int,
+}
+
 #[derive(Debug, Default)]
 struct NativeVideoInputState {
     last_mouse_position: Option<(i16, i16)>,
@@ -319,6 +350,93 @@ struct Sdl3Controller {
 struct Sdl3ControllerManager {
     subsystem: sdl3::GamepadSubsystem,
     controllers: HashMap<u32, Sdl3Controller>,
+    axis_events: u64,
+    button_events: u64,
+    unknown_events: u64,
+    last_event_log_at: Instant,
+    last_unknown_log_at: Instant,
+}
+
+impl Default for NativeVideoQueueDiagnostics {
+    fn default() -> Self {
+        let now = Instant::now();
+        Self {
+            started_at: now,
+            last_log_at: now,
+            submitted_frames: 0,
+            queued_frames: 0,
+            dropped_full_frames: 0,
+            disconnected_frames: 0,
+            last_frame_number: 0,
+        }
+    }
+}
+
+impl NativeVideoRenderDiagnostics {
+    fn new() -> Self {
+        let now = Instant::now();
+        Self {
+            started_at: now,
+            last_log_at: now,
+            displayed_frames: 0,
+            recreated_textures: 0,
+            total_update_us: 0,
+            total_render_us: 0,
+            max_update_us: 0,
+            max_render_us: 0,
+            last_frame_number: 0,
+        }
+    }
+
+    fn record_frame(&mut self, frame_number: c_int, update_us: u128, render_us: u128) {
+        self.displayed_frames = self.displayed_frames.saturating_add(1);
+        self.last_frame_number = frame_number;
+        self.total_update_us = self.total_update_us.saturating_add(update_us);
+        self.total_render_us = self.total_render_us.saturating_add(render_us);
+        self.max_update_us = self.max_update_us.max(update_us);
+        self.max_render_us = self.max_render_us.max(render_us);
+    }
+
+    fn maybe_log(
+        &mut self,
+        texture_width: usize,
+        texture_height: usize,
+        canvas: &sdl3::render::WindowCanvas,
+    ) {
+        if self.last_log_at.elapsed() < NATIVE_VIDEO_DIAGNOSTIC_INTERVAL {
+            return;
+        }
+        let elapsed = self.started_at.elapsed().as_secs_f64().max(0.001);
+        let average_update_us = if self.displayed_frames == 0 {
+            0
+        } else {
+            self.total_update_us / self.displayed_frames as u128
+        };
+        let average_render_us = if self.displayed_frames == 0 {
+            0
+        } else {
+            self.total_render_us / self.displayed_frames as u128
+        };
+        let output_size = canvas
+            .output_size()
+            .map(|(width, height)| format!("{width}x{height}"))
+            .unwrap_or_else(|error| format!("unavailable:{error}"));
+        logger::log(format!(
+            "SDL3 video diagnostics: displayed={}; fps={:.1}; texture={}x{}; output={}; texture_recreates={}; last_frame={}; avg_update_us={}; max_update_us={}; avg_render_us={}; max_render_us={}",
+            self.displayed_frames,
+            self.displayed_frames as f64 / elapsed,
+            texture_width,
+            texture_height,
+            output_size,
+            self.recreated_textures,
+            self.last_frame_number,
+            average_update_us,
+            self.max_update_us,
+            average_render_us,
+            self.max_render_us,
+        ));
+        self.last_log_at = Instant::now();
+    }
 }
 
 impl Drop for NativeVideoRenderer {
@@ -646,6 +764,12 @@ fn start_native_video_renderer(width: c_int, height: c_int) {
     stop_native_video_renderer();
     let width = width.max(1) as usize;
     let height = height.max(1) as usize;
+    if let Ok(mut diagnostics) = VIDEO_QUEUE_DIAGNOSTICS
+        .get_or_init(|| Mutex::new(NativeVideoQueueDiagnostics::default()))
+        .lock()
+    {
+        *diagnostics = NativeVideoQueueDiagnostics::default();
+    }
     logger::log(format!(
         "starting native video renderer; width={width}; height={height}"
     ));
@@ -679,11 +803,22 @@ fn stop_native_video_renderer() {
 }
 
 fn send_native_video_frame(frame: RgbaVideoFrame) {
+    let frame_number = frame.frame_number;
     if let Ok(mut slot) = VIDEO_RENDERER_STATE.get_or_init(|| Mutex::new(None)).lock() {
         if let Some(renderer) = slot.as_ref() {
             match renderer.frame_sender.try_send(frame) {
-                Ok(()) | Err(mpsc::TrySendError::Full(_)) => {}
+                Ok(()) => {
+                    record_native_video_queue_diagnostics(frame_number, VideoQueueResult::Queued)
+                }
+                Err(mpsc::TrySendError::Full(_)) => record_native_video_queue_diagnostics(
+                    frame_number,
+                    VideoQueueResult::DroppedFull,
+                ),
                 Err(mpsc::TrySendError::Disconnected(_)) => {
+                    record_native_video_queue_diagnostics(
+                        frame_number,
+                        VideoQueueResult::Disconnected,
+                    );
                     emit_stream_event(
                         BridgeEventKind::Status,
                         "Native video renderer is no longer accepting frames.".into(),
@@ -692,6 +827,48 @@ fn send_native_video_frame(frame: RgbaVideoFrame) {
                 }
             }
         }
+    }
+}
+
+enum VideoQueueResult {
+    Queued,
+    DroppedFull,
+    Disconnected,
+}
+
+fn record_native_video_queue_diagnostics(frame_number: c_int, result: VideoQueueResult) {
+    let Ok(mut diagnostics) = VIDEO_QUEUE_DIAGNOSTICS
+        .get_or_init(|| Mutex::new(NativeVideoQueueDiagnostics::default()))
+        .lock()
+    else {
+        return;
+    };
+    diagnostics.submitted_frames = diagnostics.submitted_frames.saturating_add(1);
+    diagnostics.last_frame_number = frame_number;
+    match result {
+        VideoQueueResult::Queued => {
+            diagnostics.queued_frames = diagnostics.queued_frames.saturating_add(1);
+        }
+        VideoQueueResult::DroppedFull => {
+            diagnostics.dropped_full_frames = diagnostics.dropped_full_frames.saturating_add(1);
+        }
+        VideoQueueResult::Disconnected => {
+            diagnostics.disconnected_frames = diagnostics.disconnected_frames.saturating_add(1);
+        }
+    }
+    if diagnostics.last_log_at.elapsed() >= NATIVE_VIDEO_DIAGNOSTIC_INTERVAL {
+        let elapsed = diagnostics.started_at.elapsed().as_secs_f64().max(0.001);
+        logger::log(format!(
+            "SDL3 video queue diagnostics: submitted={}; queued={}; dropped_full={}; disconnected={}; queue_drop_pct={:.1}; input_fps={:.1}; last_frame={}",
+            diagnostics.submitted_frames,
+            diagnostics.queued_frames,
+            diagnostics.dropped_full_frames,
+            diagnostics.disconnected_frames,
+            diagnostics.dropped_full_frames as f64 * 100.0 / diagnostics.submitted_frames.max(1) as f64,
+            diagnostics.submitted_frames as f64 / elapsed,
+            diagnostics.last_frame_number,
+        ));
+        diagnostics.last_log_at = Instant::now();
     }
 }
 
@@ -707,10 +884,13 @@ fn native_video_renderer_loop(
     let sdl = sdl3::init().map_err(|error| error.to_string())?;
     let video = sdl.video().map_err(|error| error.to_string())?;
     let input_sender = StreamInputSender;
-    let mut controllers = sdl
-        .gamepad()
-        .ok()
-        .map(|gamepad| Sdl3ControllerManager::new(gamepad, &input_sender));
+    let mut controllers = match sdl.gamepad() {
+        Ok(gamepad) => Some(Sdl3ControllerManager::new(gamepad, &input_sender)),
+        Err(error) => {
+            logger::log(format!("SDL3 gamepad subsystem unavailable: {error}"));
+            None
+        }
+    };
 
     let window = video
         .window("Moonlight Stream", width as u32, height as u32)
@@ -731,6 +911,7 @@ fn native_video_renderer_loop(
 
     let mut event_pump = sdl.event_pump().map_err(|error| error.to_string())?;
     let mut requested_stop = false;
+    let mut diagnostics = NativeVideoRenderDiagnostics::new();
 
     'running: loop {
         if stop_receiver.try_recv().is_ok() {
@@ -759,11 +940,23 @@ fn native_video_renderer_loop(
                         create_sdl3_rgba_texture(&texture_creator, frame_width, frame_height)?;
                     texture_width = frame_width;
                     texture_height = frame_height;
+                    diagnostics.recreated_textures =
+                        diagnostics.recreated_textures.saturating_add(1);
+                    logger::log(format!(
+                        "SDL3 video texture recreated; width={texture_width}; height={texture_height}; frame={}",
+                        frame.frame_number
+                    ));
                 }
+                let update_start = Instant::now();
                 texture
                     .update(None, &frame.pixels, frame_width * 4)
                     .map_err(|error| error.to_string())?;
+                let update_us = update_start.elapsed().as_micros();
+                let render_start = Instant::now();
                 render_sdl3_video_frame(&mut canvas, &texture, texture_width, texture_height)?;
+                let render_us = render_start.elapsed().as_micros();
+                diagnostics.record_frame(frame.frame_number, update_us, render_us);
+                diagnostics.maybe_log(texture_width, texture_height, &canvas);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -833,12 +1026,22 @@ fn load_sdl3_game_controller_mappings(gamepad: &sdl3::GamepadSubsystem) {
 impl Sdl3ControllerManager {
     fn new(subsystem: sdl3::GamepadSubsystem, input: &StreamInputSender) -> Self {
         load_sdl3_game_controller_mappings(&subsystem);
+        let now = Instant::now();
         let mut manager = Self {
             subsystem,
             controllers: HashMap::new(),
+            axis_events: 0,
+            button_events: 0,
+            unknown_events: 0,
+            last_event_log_at: now,
+            last_unknown_log_at: now,
         };
         match manager.subsystem.gamepads() {
             Ok(gamepads) => {
+                logger::log(format!(
+                    "SDL3 gamepad diagnostics: enumerated {} gamepad(s)",
+                    gamepads.len()
+                ));
                 for gamepad_id in gamepads {
                     manager.open_controller(gamepad_id, input);
                 }
@@ -873,6 +1076,7 @@ impl Sdl3ControllerManager {
             }
         };
         let controller_type = sdl3_gamepad_type(gamepad.r#type());
+        let sdl3_type = format!("{:?}", gamepad.r#type());
         let name = gamepad.name().unwrap_or_else(|| "Unknown gamepad".into());
         let state = ControllerState {
             controller_number,
@@ -889,7 +1093,7 @@ impl Sdl3ControllerManager {
         );
         self.update_active_masks();
         let active_gamepad_mask = self.active_gamepad_mask();
-        let _ = input.send_controller_arrival(
+        if let Err(error) = input.send_controller_arrival(
             controller_number,
             active_gamepad_mask,
             controller_type,
@@ -904,12 +1108,20 @@ impl Sdl3ControllerManager {
                 battery_state: false,
                 rgb_led: false,
             },
-        );
+        ) {
+            logger::log(format!(
+                "SDL3 gamepad diagnostics: controller arrival send failed; id={gamepad_key}; controller={controller_number}; error={error}"
+            ));
+        }
         if let Some(controller) = self.controllers.get(&gamepad_key) {
-            let _ = input.send_controller(controller.state);
+            if let Err(error) = input.send_controller(controller.state) {
+                logger::log(format!(
+                    "SDL3 gamepad diagnostics: initial controller state send failed; id={gamepad_key}; controller={controller_number}; error={error}"
+                ));
+            }
         }
         logger::log(format!(
-            "opened SDL3 gamepad {gamepad_key} as controller {controller_number}: {name}"
+            "SDL3 gamepad diagnostics: opened id={gamepad_key}; controller={controller_number}; name={name}; sdl_type={sdl3_type:?}; mapped_type={controller_type:?}; active_mask={active_gamepad_mask:#x}"
         ));
     }
 
@@ -918,13 +1130,18 @@ impl Sdl3ControllerManager {
             return;
         };
         self.update_active_masks();
-        let _ = input.send_controller(ControllerState {
+        if let Err(error) = input.send_controller(ControllerState {
             controller_number: removed.controller_number,
             active_gamepad_mask: self.active_gamepad_mask(),
             ..ControllerState::default()
-        });
+        }) {
+            logger::log(format!(
+                "SDL3 gamepad diagnostics: removal state send failed; id={gamepad_id}; controller={}; error={error}",
+                removed.controller_number
+            ));
+        }
         logger::log(format!(
-            "removed SDL3 gamepad {gamepad_id} from controller {}",
+            "SDL3 gamepad diagnostics: removed id={gamepad_id}; controller={}",
             removed.controller_number
         ));
     }
@@ -936,7 +1153,11 @@ impl Sdl3ControllerManager {
         value: i16,
         input: &StreamInputSender,
     ) {
+        self.axis_events = self.axis_events.saturating_add(1);
         let Some(controller) = self.controllers.get_mut(&gamepad_id) else {
+            self.record_unknown_event(format!(
+                "axis event for unopened id={gamepad_id}; axis={axis:?}; value={value}"
+            ));
             return;
         };
         match axis {
@@ -951,7 +1172,13 @@ impl Sdl3ControllerManager {
                 controller.state.right_trigger = sdl3_trigger_to_u8(value)
             }
         }
-        let _ = input.send_controller(controller.state);
+        if let Err(error) = input.send_controller(controller.state) {
+            logger::log(format!(
+                "SDL3 gamepad diagnostics: axis state send failed; id={gamepad_id}; controller={}; axis={axis:?}; value={value}; error={error}",
+                controller.controller_number
+            ));
+        }
+        self.maybe_log_events();
     }
 
     fn handle_button(
@@ -961,10 +1188,17 @@ impl Sdl3ControllerManager {
         pressed: bool,
         input: &StreamInputSender,
     ) {
+        self.button_events = self.button_events.saturating_add(1);
         let Some(flag) = sdl3_gamepad_button_flag(button) else {
+            self.record_unknown_event(format!(
+                "unmapped button event; id={gamepad_id}; button={button:?}; pressed={pressed}"
+            ));
             return;
         };
         let Some(controller) = self.controllers.get_mut(&gamepad_id) else {
+            self.record_unknown_event(format!(
+                "button event for unopened id={gamepad_id}; button={button:?}; pressed={pressed}"
+            ));
             return;
         };
         if pressed {
@@ -972,7 +1206,45 @@ impl Sdl3ControllerManager {
         } else {
             controller.state.button_flags &= !flag;
         }
-        let _ = input.send_controller(controller.state);
+        if let Err(error) = input.send_controller(controller.state) {
+            logger::log(format!(
+                "SDL3 gamepad diagnostics: button state send failed; id={gamepad_id}; controller={}; button={button:?}; pressed={pressed}; flags={:#x}; error={error}",
+                controller.controller_number,
+                controller.state.button_flags,
+            ));
+        }
+        logger::log(format!(
+            "SDL3 gamepad diagnostics: button event; id={gamepad_id}; controller={}; button={button:?}; pressed={pressed}; flags={:#x}",
+            controller.controller_number,
+            controller.state.button_flags,
+        ));
+        self.maybe_log_events();
+    }
+
+    fn record_unknown_event(&mut self, message: String) {
+        self.unknown_events = self.unknown_events.saturating_add(1);
+        if self.last_unknown_log_at.elapsed() >= SDL3_CONTROLLER_DIAGNOSTIC_INTERVAL {
+            logger::log(format!(
+                "SDL3 gamepad diagnostics: {message}; unknown_events={}",
+                self.unknown_events
+            ));
+            self.last_unknown_log_at = Instant::now();
+        }
+    }
+
+    fn maybe_log_events(&mut self) {
+        if self.last_event_log_at.elapsed() < SDL3_CONTROLLER_DIAGNOSTIC_INTERVAL {
+            return;
+        }
+        logger::log(format!(
+            "SDL3 gamepad diagnostics: controllers={}; axis_events={}; button_events={}; unknown_events={}; active_mask={:#x}",
+            self.controllers.len(),
+            self.axis_events,
+            self.button_events,
+            self.unknown_events,
+            self.active_gamepad_mask(),
+        ));
+        self.last_event_log_at = Instant::now();
     }
 
     fn first_available_controller_number(&self) -> Option<u8> {
