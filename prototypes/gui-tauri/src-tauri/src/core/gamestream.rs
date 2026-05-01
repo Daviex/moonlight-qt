@@ -13,6 +13,7 @@ use std::sync::{Mutex, OnceLock};
 const DEFAULT_VIDEO_PACKET_SIZE: u32 = 1392;
 
 static STREAM_EVENT_CONTEXT: OnceLock<Mutex<Option<StreamEventContext>>> = OnceLock::new();
+static AUDIO_SINK_STATE: OnceLock<Mutex<AudioSinkState>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AudioConfiguration {
@@ -174,6 +175,20 @@ struct StreamOutputCallbacks {
     audio: gamestream_sys::AudioRendererCallbacks,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AudioSinkConfiguration {
+    audio_configuration: c_int,
+    opus_config: gamestream_sys::OpusMultistreamConfiguration,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct AudioSinkState {
+    configuration: Option<AudioSinkConfiguration>,
+    started: bool,
+    samples_received: u64,
+    bytes_received: u64,
+}
+
 impl StreamOutputMode {
     fn callbacks(self) -> StreamOutputCallbacks {
         match self {
@@ -288,7 +303,7 @@ fn headless_audio_callbacks() -> gamestream_sys::AudioRendererCallbacks {
         stop: Some(headless_audio_stop),
         cleanup: Some(headless_audio_cleanup),
         decode_and_play_sample: Some(headless_audio_decode_and_play_sample),
-        capabilities: 0,
+        capabilities: gamestream_sys::CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION,
     }
 }
 
@@ -342,22 +357,39 @@ unsafe extern "C" fn headless_audio_init(
     _context: *mut c_void,
     _ar_flags: c_int,
 ) -> c_int {
-    let channel_count = if opus_config.is_null() {
-        0
-    } else {
-        // SAFETY: Limelight supplies a valid OPUS_MULTISTREAM_CONFIGURATION pointer for init.
-        unsafe { (*opus_config).channel_count }
-    };
+    if opus_config.is_null() {
+        emit_stream_event(
+            BridgeEventKind::Status,
+            "Headless audio sink failed to configure: missing Opus configuration.".into(),
+        );
+        return -1;
+    }
+
+    // SAFETY: Limelight supplies a valid OPUS_MULTISTREAM_CONFIGURATION pointer for init.
+    let opus_config = unsafe { *opus_config };
+    store_audio_sink_state(|state| {
+        *state = AudioSinkState {
+            configuration: Some(AudioSinkConfiguration {
+                audio_configuration,
+                opus_config,
+            }),
+            ..AudioSinkState::default()
+        };
+    });
     emit_stream_event(
         BridgeEventKind::Status,
         format!(
-            "Headless audio sink configured for audio {audio_configuration} with {channel_count} channels."
+            "Headless audio sink configured for audio {audio_configuration} with {} channels.",
+            opus_config.channel_count
         ),
     );
     0
 }
 
 unsafe extern "C" fn headless_audio_start() {
+    store_audio_sink_state(|state| {
+        state.started = true;
+    });
     emit_stream_event(
         BridgeEventKind::Status,
         "Headless audio sink started.".into(),
@@ -365,6 +397,9 @@ unsafe extern "C" fn headless_audio_start() {
 }
 
 unsafe extern "C" fn headless_audio_stop() {
+    store_audio_sink_state(|state| {
+        state.started = false;
+    });
     emit_stream_event(
         BridgeEventKind::Status,
         "Headless audio sink stopped.".into(),
@@ -372,6 +407,9 @@ unsafe extern "C" fn headless_audio_stop() {
 }
 
 unsafe extern "C" fn headless_audio_cleanup() {
+    store_audio_sink_state(|state| {
+        *state = AudioSinkState::default();
+    });
     emit_stream_event(
         BridgeEventKind::Status,
         "Headless audio sink cleaned up.".into(),
@@ -379,9 +417,35 @@ unsafe extern "C" fn headless_audio_cleanup() {
 }
 
 unsafe extern "C" fn headless_audio_decode_and_play_sample(
-    _sample_data: *mut c_char,
-    _sample_length: c_int,
+    sample_data: *mut c_char,
+    sample_length: c_int,
 ) {
+    if sample_data.is_null() || sample_length <= 0 {
+        return;
+    }
+
+    store_audio_sink_state(|state| {
+        state.samples_received = state.samples_received.saturating_add(1);
+        state.bytes_received = state.bytes_received.saturating_add(sample_length as u64);
+    });
+}
+
+fn store_audio_sink_state(update: impl FnOnce(&mut AudioSinkState)) {
+    if let Ok(mut state) = AUDIO_SINK_STATE
+        .get_or_init(|| Mutex::new(AudioSinkState::default()))
+        .lock()
+    {
+        update(&mut state);
+    }
+}
+
+#[cfg(test)]
+fn audio_sink_state_snapshot() -> AudioSinkState {
+    AUDIO_SINK_STATE
+        .get_or_init(|| Mutex::new(AudioSinkState::default()))
+        .lock()
+        .map(|state| state.clone())
+        .unwrap_or_default()
 }
 
 fn stage_name(stage: c_int) -> String {
@@ -877,6 +941,10 @@ mod tests {
         let video_setup = video.setup.unwrap();
         let video_submit = video.submit_decode_unit.unwrap();
         let audio_init = audio.init.unwrap();
+        let audio_start = audio.start.unwrap();
+        let audio_stop = audio.stop.unwrap();
+        let audio_cleanup = audio.cleanup.unwrap();
+        let decode_and_play_sample = audio.decode_and_play_sample.unwrap();
 
         let video_result = unsafe { video_setup(1, 1920, 1080, 60, std::ptr::null_mut(), 0) };
         let submit_result = unsafe { video_submit(std::ptr::null_mut()) };
@@ -888,10 +956,36 @@ mod tests {
                 0,
             )
         };
+        let mut encoded_sample = [1_i8, 2, 3, 4];
+        unsafe {
+            audio_start();
+            decode_and_play_sample(encoded_sample.as_mut_ptr(), encoded_sample.len() as i32);
+            audio_stop();
+        }
+        let state = super::audio_sink_state_snapshot();
 
         assert_eq!(gamestream_sys::DR_OK, video_result);
         assert_eq!(gamestream_sys::DR_OK, submit_result);
         assert_eq!(0, audio_result);
+        assert_eq!(
+            Some(opus),
+            state.configuration.map(|config| config.opus_config)
+        );
+        assert!(!state.started);
+        assert_eq!(1, state.samples_received);
+        assert_eq!(encoded_sample.len() as u64, state.bytes_received);
+        assert_eq!(
+            gamestream_sys::CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION,
+            audio.capabilities
+        );
+
+        unsafe {
+            audio_cleanup();
+        }
+        assert_eq!(
+            super::AudioSinkState::default(),
+            super::audio_sink_state_snapshot()
+        );
     }
 
     #[test]

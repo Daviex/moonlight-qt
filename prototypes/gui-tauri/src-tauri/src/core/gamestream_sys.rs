@@ -23,6 +23,8 @@ pub const VIDEO_FORMAT_AV1_HIGH10_444: c_int = 0x8000;
 
 pub const DR_OK: c_int = 0;
 pub const DR_NEED_IDR: c_int = -1;
+pub const CAPABILITY_SLOW_OPUS_DECODER: c_int = 0x8;
+pub const CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION: c_int = 0x10;
 
 pub const STAGE_NONE: c_int = 0;
 pub const STAGE_PLATFORM_INIT: c_int = 1;
@@ -466,8 +468,9 @@ mod tests {
     use super::{
         make_audio_configuration, AudioRendererCallbacks, ConnectionListenerCallbacks, DecodeUnit,
         DecoderRendererCallbacks, OpusMultistreamConfiguration, AUDIO_CONFIGURATION_51_SURROUND,
-        AUDIO_CONFIGURATION_71_SURROUND, AUDIO_CONFIGURATION_STEREO, CONN_STATUS_OKAY, DR_NEED_IDR,
-        DR_OK, ML_ERROR_NO_VIDEO_TRAFFIC, STAGE_MAX, STAGE_NONE, STREAM_CFG_AUTO,
+        AUDIO_CONFIGURATION_71_SURROUND, AUDIO_CONFIGURATION_STEREO, CAPABILITY_SLOW_OPUS_DECODER,
+        CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION, CONN_STATUS_OKAY, DR_NEED_IDR, DR_OK,
+        ML_ERROR_NO_VIDEO_TRAFFIC, STAGE_MAX, STAGE_NONE, STREAM_CFG_AUTO,
     };
 
     #[test]
@@ -512,6 +515,8 @@ mod tests {
     fn gamestream_status_constants_match_limelight_header_values() {
         assert_eq!(0, DR_OK);
         assert_eq!(-1, DR_NEED_IDR);
+        assert_eq!(0x8, CAPABILITY_SLOW_OPUS_DECODER);
+        assert_eq!(0x10, CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION);
         assert_eq!(0, STAGE_NONE);
         assert_eq!(12, STAGE_MAX);
         assert_eq!(0, CONN_STATUS_OKAY);
