@@ -30,6 +30,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::mpsc::Sender;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -981,12 +982,11 @@ impl MoonlightCore for RustBackend {
     }
 
     fn open_url(&mut self, url: &str) -> Result<CommandStatus, String> {
-        if !(url.starts_with("http://") || url.starts_with("https://")) {
-            return Err("Only HTTP and HTTPS URLs can be opened from the Tauri bridge.".into());
-        }
+        let url = validate_external_url(url)?;
+        open_url_in_system_browser(url)?;
 
         Ok(CommandStatus {
-            message: format!("Open URL requested: {url}"),
+            message: format!("Opened URL: {url}"),
         })
     }
 
@@ -1234,9 +1234,42 @@ fn percent_encode_file_path(path: &str) -> String {
     encoded
 }
 
+fn validate_external_url(url: &str) -> Result<&str, String> {
+    let trimmed = url.trim();
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return Ok(trimmed);
+    }
+
+    Err("Only HTTP and HTTPS URLs can be opened from the Tauri bridge.".into())
+}
+
+fn open_url_in_system_browser(url: &str) -> Result<(), String> {
+    let (program, args) = system_url_command(url);
+    Command::new(program)
+        .args(args)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Failed to open URL '{url}': {error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn system_url_command(url: &str) -> (&'static str, Vec<&str>) {
+    ("rundll32.exe", vec!["url.dll,FileProtocolHandler", url])
+}
+
+#[cfg(target_os = "macos")]
+fn system_url_command(url: &str) -> (&'static str, Vec<&str>) {
+    ("open", vec![url])
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn system_url_command(url: &str) -> (&'static str, Vec<&str>) {
+    ("xdg-open", vec![url])
+}
+
 #[cfg(test)]
 mod tests {
-    use super::RustBackend;
+    use super::{system_url_command, validate_external_url, RustBackend};
     use crate::core::backend::MoonlightCore;
     #[cfg(not(moonlight_common_c_linked))]
     use crate::core::storage::JsonStateStore;
@@ -1336,6 +1369,19 @@ mod tests {
         let error = backend.save_settings(settings).unwrap_err();
 
         assert_eq!("Width must be between 256 and 8192.", error);
+    }
+
+    #[test]
+    fn url_opening_accepts_only_http_links() {
+        assert_eq!(
+            Ok("https://moonlight-stream.org"),
+            validate_external_url(" https://moonlight-stream.org ")
+        );
+        assert!(validate_external_url("file:///tmp/secret").is_err());
+        assert!(validate_external_url("javascript:alert(1)").is_err());
+
+        let (_program, args) = system_url_command("https://moonlight-stream.org");
+        assert!(args.contains(&"https://moonlight-stream.org"));
     }
 
     #[test]
