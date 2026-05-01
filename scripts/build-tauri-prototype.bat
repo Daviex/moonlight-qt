@@ -57,6 +57,10 @@ if not defined MOONLIGHT_COMMON_C_LIB_DIR (
     call :DetectMoonlightCommonCLibDir
 )
 
+if not defined ANTIHOOKING_LIB_DIR (
+    call :DetectAntiHookingLibDir
+)
+
 for /F "delims=" %%V in ('npm --version') do set NPM_VERSION=%%V
 for /F "delims=" %%V in ('cargo --version') do set CARGO_VERSION=%%V
 for /F "delims=" %%V in ('rustc --version') do set RUSTC_VERSION=%%V
@@ -131,6 +135,12 @@ if defined MOONLIGHT_COMMON_C_LIB_DIR if not "%MOONLIGHT_COMMON_C_STATIC%"=="1" 
 )
 
 call :StageSdl3RuntimeDeps
+if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
+
+call :StageVideoRuntimeDeps
+if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
+
+call :StageAntiHookingRuntimeDeps
 if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
 
 (
@@ -211,6 +221,21 @@ for %%D in (
 )
 exit /b 0
 
+:DetectAntiHookingLibDir
+for %%D in (
+    "%SOURCE_ROOT%\build\build-%PACKAGE_ARCH%-release\AntiHooking\release"
+    "%SOURCE_ROOT%\build\build-%PACKAGE_ARCH%-debug\AntiHooking\debug"
+) do (
+    if not defined ANTIHOOKING_LIB_DIR (
+        if exist "%%~D\AntiHooking.lib" (
+            set "ANTIHOOKING_LIB_DIR=%%~D"
+            echo Auto-detected AntiHooking import library:
+            echo !ANTIHOOKING_LIB_DIR!
+        )
+    )
+)
+exit /b 0
+
 :StageMoonlightCommonRuntimeDeps
 set COMMON_RUNTIME_DIR=%SOURCE_ROOT%\libs\windows\lib\%PACKAGE_ARCH%
 if not exist "%COMMON_RUNTIME_DIR%" (
@@ -234,5 +259,35 @@ for %%D in ("%COMMON_RUNTIME_DIR%\avcodec-*.dll" "%COMMON_RUNTIME_DIR%\avutil-*.
         copy "%%~D" "%PACKAGE_DIR%\" >nul
         if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
     )
+)
+exit /b 0
+
+:StageVideoRuntimeDeps
+set VIDEO_RUNTIME_DIR=%SOURCE_ROOT%\libs\windows\lib\%PACKAGE_ARCH%
+if not exist "%VIDEO_RUNTIME_DIR%" (
+    echo Warning: unable to find bundled video runtime dependencies:
+    echo %VIDEO_RUNTIME_DIR%
+    exit /b 0
+)
+for %%D in ("%VIDEO_RUNTIME_DIR%\libplacebo-*.dll") do (
+    if exist "%%~D" (
+        copy "%%~D" "%PACKAGE_DIR%\" >nul
+        if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
+    )
+)
+exit /b 0
+
+:StageAntiHookingRuntimeDeps
+if not defined ANTIHOOKING_LIB_DIR (
+    echo Warning: AntiHooking.lib was not found, so AntiHooking.dll was not staged.
+    echo Build the native Windows package once or set ANTIHOOKING_LIB_DIR to the directory containing AntiHooking.lib and AntiHooking.dll.
+    exit /b 0
+)
+if exist "%ANTIHOOKING_LIB_DIR%\AntiHooking.dll" (
+    copy "%ANTIHOOKING_LIB_DIR%\AntiHooking.dll" "%PACKAGE_DIR%\" >nul
+    if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
+) else (
+    echo Warning: ANTIHOOKING_LIB_DIR is set but AntiHooking.dll was not found:
+    echo %ANTIHOOKING_LIB_DIR%
 )
 exit /b 0

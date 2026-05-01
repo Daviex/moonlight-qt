@@ -12,6 +12,11 @@ use core::factory::create_backend;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
+#[cfg(all(windows, antihooking_linked))]
+unsafe extern "C" {
+    fn AntiHookingDummyImport();
+}
+
 const BRIDGE_EVENT: &str = "moonlight-bridge-event";
 
 type BackendState = Mutex<Box<dyn MoonlightBackend>>;
@@ -795,6 +800,12 @@ fn save_settings(
 
 fn main() {
     logger::init();
+    #[cfg(all(windows, antihooking_linked))]
+    {
+        // SAFETY: AntiHooking.dll exports this no-op symbol specifically to force early DLL load.
+        unsafe { AntiHookingDummyImport() };
+        logger::log("AntiHooking.dll loaded through dummy import");
+    }
     logger::log(format!(
         "starting Moonlight Tauri prototype; exe={:?}; log_path={:?}; stream_log_path={:?}",
         std::env::current_exe().ok(),
