@@ -1,7 +1,11 @@
+pub mod apps;
 pub mod backend;
 pub mod error;
 pub mod events;
 pub mod factory;
 pub mod gamestream;
 pub mod gamestream_sys;
+pub mod hosts;
+pub mod settings;
+pub mod system;
 pub mod types;
