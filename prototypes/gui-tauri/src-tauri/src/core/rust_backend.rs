@@ -1,5 +1,6 @@
 use super::backend::MoonlightCore;
 use super::discovery::{discover_nvstream_hosts, merge_discovered_hosts};
+use super::error::CoreError;
 use super::gamestream::GameStreamRunner;
 use super::host_http::{
     BlockingHostHttpClient, HostEndpoint, ReqwestHostHttpTransport, ServerInfo, StartAppRequest,
@@ -323,7 +324,6 @@ impl MoonlightCore for RustBackend {
             self.update_host(host.clone());
             self.persist()?;
         } else {
-            let server_info = self.fetch_server_info(&host.manual_address)?;
             let state_store = self.state_store.clone().unwrap();
             let endpoint = HostEndpoint::from_address(host.manual_address.clone())
                 .map_err(|error| error.to_string())?;
@@ -331,28 +331,27 @@ impl MoonlightCore for RustBackend {
                 .client_identity
                 .clone()
                 .ok_or_else(|| "Client identity is unavailable.".to_string())?;
-            let request = PairingRequest::new(
-                host.id.clone(),
-                pin.clone(),
-                server_info.app_version.clone(),
-            )
-            .map_err(|error| error.to_string())?;
             let host_id = host.id.clone();
-            let server_uuid = server_info.unique_id.clone();
+            let pin = pin.clone();
 
             thread::spawn(move || {
-                let result = ReqwestHostHttpTransport::new()
-                    .map(PairingClient::new)
-                    .and_then(|client| client.pair(&endpoint, &request, &identity))
-                    .map_err(|error| error.to_string())
-                    .and_then(|completed| {
+                let result = BlockingHostHttpClient::connect()
+                    .and_then(|client| client.fetch_server_info(&endpoint))
+                    .and_then(|server_info| {
+                        let request =
+                            PairingRequest::new(host_id.clone(), pin, server_info.app_version)?;
+                        let completed = ReqwestHostHttpTransport::new()
+                            .map(PairingClient::new)
+                            .and_then(|client| client.pair(&endpoint, &request, &identity))?;
                         Self::complete_pairing_in_store(
                             state_store,
                             host_id,
-                            server_uuid,
+                            server_info.unique_id,
                             completed.server_certificate_pem,
                         )
-                    });
+                        .map_err(CoreError::Backend)
+                    })
+                    .map_err(|error| error.to_string());
                 if let Err(error) = result {
                     eprintln!("Rust backend pairing failed: {error}");
                 }
