@@ -11,6 +11,10 @@ const LOG_PATH_ENV: &str = "MOONLIGHT_TAURI_LOG";
 static LOG_FILE: OnceLock<Option<Mutex<File>>> = OnceLock::new();
 
 pub fn enabled() -> bool {
+    if env::var(LOG_PATH_ENV).is_ok() {
+        return true;
+    }
+
     env::var(DEBUG_ENV)
         .map(|value| {
             matches!(
@@ -23,7 +27,7 @@ pub fn enabled() -> bool {
 
 pub fn init() {
     if enabled() {
-        log("debug logging initialized");
+        log("logging initialized");
     }
 }
 

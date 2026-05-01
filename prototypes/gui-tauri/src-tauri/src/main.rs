@@ -329,7 +329,15 @@ fn launch_app(
         "command launch_app begin; host_id={host_id}; app_id={app_id}"
     ));
     let mut backend = backend.lock().map_err(|error| error.to_string())?;
-    let status = backend.launch_app(&host_id, &app_id)?;
+    let status = match backend.launch_app(&host_id, &app_id) {
+        Ok(status) => status,
+        Err(error) => {
+            logger::log(format!(
+                "command launch_app failed; host_id={host_id}; app_id={app_id}; error={error}"
+            ));
+            return Err(error);
+        }
+    };
     let emit_command_events = !backend.emits_native_events();
     drop(backend);
 
@@ -364,7 +372,15 @@ fn resume_session(
 ) -> Result<CommandStatus, String> {
     logger::log(format!("command resume_session begin; host_id={host_id}"));
     let mut backend = backend.lock().map_err(|error| error.to_string())?;
-    let status = backend.resume_session(&host_id)?;
+    let status = match backend.resume_session(&host_id) {
+        Ok(status) => status,
+        Err(error) => {
+            logger::log(format!(
+                "command resume_session failed; host_id={host_id}; error={error}"
+            ));
+            return Err(error);
+        }
+    };
     let emit_command_events = !backend.emits_native_events();
     drop(backend);
 
@@ -399,7 +415,15 @@ fn quit_running_app(
 ) -> Result<CommandStatus, String> {
     logger::log(format!("command quit_running_app begin; host_id={host_id}"));
     let mut backend = backend.lock().map_err(|error| error.to_string())?;
-    let status = backend.quit_running_app(&host_id)?;
+    let status = match backend.quit_running_app(&host_id) {
+        Ok(status) => status,
+        Err(error) => {
+            logger::log(format!(
+                "command quit_running_app failed; host_id={host_id}; error={error}"
+            ));
+            return Err(error);
+        }
+    };
     let emit_command_events = !backend.emits_native_events();
     drop(backend);
 

@@ -132,6 +132,7 @@ if defined MOONLIGHT_COMMON_C_LIB_DIR if not "%MOONLIGHT_COMMON_C_STATIC%"=="1" 
 
 (
     echo @echo off
+    echo set "MOONLIGHT_TAURI_LOG=%%~dp0MoonlightTauri.log"
     echo start "" "%%~dp0MoonlightTauri.exe"
 ) > "%PACKAGE_DIR%\Launch-Moonlight-Tauri.bat"
 

@@ -220,6 +220,7 @@ impl RustBackend {
             "Client identity is unavailable for paired host requests.".to_string()
         })?;
         Ok(HostRequestAuth::client_identity(
+            &identity.unique_id,
             &identity.certificate_pem,
             &identity.private_key_pem,
         ))
