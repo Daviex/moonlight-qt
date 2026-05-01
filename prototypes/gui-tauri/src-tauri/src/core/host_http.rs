@@ -86,6 +86,10 @@ impl HostEndpoint {
         self.url_with_query("https", self.https_port, "resume", query)
     }
 
+    pub fn cancel_url(&self) -> String {
+        self.endpoint_url("cancel")
+    }
+
     fn endpoint_url(&self, endpoint: &str) -> String {
         format!("https://{}:{}/{}", self.address, self.https_port, endpoint)
     }
@@ -107,6 +111,11 @@ pub struct StartAppRequest {
     pub local_audio: bool,
     pub gamepad_mask: u32,
     pub persist_game_controllers_on_disconnect: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StartAppSession {
+    pub rtsp_session_url: Option<String>,
 }
 
 impl StartAppRequest {
@@ -237,6 +246,35 @@ where
         let body = self.transport.get_text(&endpoint.app_list_url())?;
         parse_app_list(&body)
     }
+
+    pub fn launch_app(
+        &self,
+        endpoint: &HostEndpoint,
+        request: &StartAppRequest,
+        stream: &gamestream::StreamConfiguration,
+    ) -> Result<StartAppSession, CoreError> {
+        let body = self
+            .transport
+            .get_text(&endpoint.launch_url(&request.launch_query(stream)))?;
+        parse_start_app_response(&body)
+    }
+
+    pub fn resume_app(
+        &self,
+        endpoint: &HostEndpoint,
+        request: &StartAppRequest,
+        stream: &gamestream::StreamConfiguration,
+    ) -> Result<StartAppSession, CoreError> {
+        let body = self
+            .transport
+            .get_text(&endpoint.resume_url(&request.launch_query(stream)))?;
+        parse_start_app_response(&body)
+    }
+
+    pub fn quit_app(&self, endpoint: &HostEndpoint) -> Result<(), CoreError> {
+        let body = self.transport.get_text(&endpoint.cancel_url())?;
+        verify_response_status(&body)
+    }
 }
 
 pub type BlockingHostHttpClient = HostHttpClient<ReqwestHostHttpTransport>;
@@ -299,6 +337,43 @@ pub fn parse_app_list(xml: &str) -> Result<Vec<HostApp>, CoreError> {
     Ok(apps)
 }
 
+pub fn parse_start_app_response(xml: &str) -> Result<StartAppSession, CoreError> {
+    verify_response_status(xml)?;
+    let rtsp_session_url = optional_tag(xml, "sessionUrl0");
+
+    Ok(StartAppSession {
+        rtsp_session_url: if rtsp_session_url.is_empty() {
+            None
+        } else {
+            Some(rtsp_session_url)
+        },
+    })
+}
+
+fn verify_response_status(xml: &str) -> Result<(), CoreError> {
+    let Some(root_start) = xml.find("<root") else {
+        return Err(CoreError::Backend(
+            "Host returned malformed XML: missing root element.".into(),
+        ));
+    };
+    let Some(root_end) = xml[root_start..].find('>') else {
+        return Err(CoreError::Backend(
+            "Host returned malformed XML: unterminated root element.".into(),
+        ));
+    };
+    let root = &xml[root_start..root_start + root_end + 1];
+    let status_code = root_attribute(root, "status_code")
+        .ok_or_else(|| CoreError::Backend("Host response is missing status_code.".into()))?;
+    if status_code == "200" {
+        return Ok(());
+    }
+
+    let status_message = root_attribute(root, "status_message").unwrap_or_default();
+    Err(CoreError::Backend(format!(
+        "Host request failed with status {status_code}: {status_message}"
+    )))
+}
+
 fn required_tag(xml: &str, tag: &'static str) -> Result<String, CoreError> {
     let value = optional_tag(xml, tag);
     if value.is_empty() {
@@ -325,6 +400,13 @@ fn optional_tag(xml: &str, tag: &str) -> String {
         .to_string()
 }
 
+fn root_attribute(root: &str, name: &str) -> Option<String> {
+    let prefix = format!("{name}=\"");
+    let start = root.find(&prefix)? + prefix.len();
+    let end = root[start..].find('"')?;
+    Some(root[start..start + end].to_string())
+}
+
 fn repeated_tag_blocks<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
@@ -347,8 +429,8 @@ fn repeated_tag_blocks<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_app_list, parse_server_info, HostApp, HostEndpoint, HostHttpClient,
-        HostHttpTransport, StartAppRequest,
+        parse_app_list, parse_server_info, parse_start_app_response, HostApp, HostEndpoint,
+        HostHttpClient, HostHttpTransport, StartAppRequest,
     };
     use crate::core::error::CoreError;
     use crate::core::gamestream::{AudioConfiguration, RemoteInputCrypto, StreamConfiguration};
@@ -365,6 +447,15 @@ mod tests {
             self.requests.borrow_mut().push(url.to_string());
             if url.ends_with("/serverinfo") {
                 return Ok("<root><appversion>Sunshine</appversion></root>".into());
+            }
+            if url.contains("/launch?") || url.contains("/resume?") {
+                return Ok(
+                    r#"<root status_code="200"><sessionUrl0>rtsp://session</sessionUrl0></root>"#
+                        .into(),
+                );
+            }
+            if url.ends_with("/cancel") {
+                return Ok(r#"<root status_code="200"></root>"#.into());
             }
             Ok("<root><App><ID>1</ID><AppTitle>Desktop</AppTitle></App></root>".into())
         }
@@ -394,6 +485,7 @@ mod tests {
             "https://192.168.1.20:47984/resume?appid=123",
             endpoint.resume_url("appid=123")
         );
+        assert_eq!("https://192.168.1.20:47984/cancel", endpoint.cancel_url());
     }
 
     #[test]
@@ -528,5 +620,43 @@ mod tests {
         assert!(query.contains("gcmap=3"));
         assert!(query.contains("gcpersist=1"));
         assert!(query.ends_with("&corever=1"));
+    }
+
+    #[test]
+    fn client_launch_resume_and_quit_use_native_endpoints() {
+        let transport = FakeTransport::default();
+        let client = HostHttpClient::new(transport);
+        let endpoint = HostEndpoint::from_address("sunshine.local").unwrap();
+        let stream = StreamConfiguration::default().with_remote_input_crypto(RemoteInputCrypto {
+            aes_key: [0x11; 16],
+            aes_iv: [0x01, 0x02, 0x03, 0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        });
+        let request = StartAppRequest {
+            app_id: 7,
+            is_gfe: false,
+            sops: true,
+            local_audio: false,
+            gamepad_mask: 1,
+            persist_game_controllers_on_disconnect: true,
+        };
+
+        let launched = client.launch_app(&endpoint, &request, &stream).unwrap();
+        let resumed = client.resume_app(&endpoint, &request, &stream).unwrap();
+        client.quit_app(&endpoint).unwrap();
+
+        assert_eq!(Some("rtsp://session".into()), launched.rtsp_session_url);
+        assert_eq!(Some("rtsp://session".into()), resumed.rtsp_session_url);
+    }
+
+    #[test]
+    fn start_app_response_reports_host_status_errors() {
+        let error =
+            parse_start_app_response(r#"<root status_code="599" status_message="Busy"></root>"#)
+                .unwrap_err();
+
+        assert_eq!(
+            "Host request failed with status 599: Busy",
+            error.to_string()
+        );
     }
 }
