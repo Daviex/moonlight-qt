@@ -336,7 +336,7 @@ impl MoonlightCore for RustBackend {
 
             thread::spawn(move || {
                 let result = BlockingHostHttpClient::connect()
-                    .and_then(|client| client.fetch_server_info(&endpoint))
+                    .and_then(|client| client.fetch_unpaired_server_info(&endpoint))
                     .and_then(|server_info| {
                         let request =
                             PairingRequest::new(host_id.clone(), pin, server_info.app_version)?;

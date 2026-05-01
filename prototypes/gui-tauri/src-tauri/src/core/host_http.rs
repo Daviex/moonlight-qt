@@ -63,6 +63,10 @@ impl HostEndpoint {
         self.endpoint_url("serverinfo")
     }
 
+    pub fn http_server_info_url(&self) -> String {
+        self.url_with_query("http", self.http_port, "serverinfo", "")
+    }
+
     pub fn app_list_url(&self) -> String {
         self.endpoint_url("applist")
     }
@@ -253,6 +257,14 @@ where
 
     pub fn fetch_server_info(&self, endpoint: &HostEndpoint) -> Result<ServerInfo, CoreError> {
         let body = self.transport.get_text(&endpoint.server_info_url())?;
+        parse_server_info(&body)
+    }
+
+    pub fn fetch_unpaired_server_info(
+        &self,
+        endpoint: &HostEndpoint,
+    ) -> Result<ServerInfo, CoreError> {
+        let body = self.transport.get_text(&endpoint.http_server_info_url())?;
         parse_server_info(&body)
     }
 
@@ -485,6 +497,10 @@ mod tests {
             endpoint.server_info_url()
         );
         assert_eq!(
+            "http://192.168.1.20:47989/serverinfo",
+            endpoint.http_server_info_url()
+        );
+        assert_eq!(
             "https://192.168.1.20:47984/applist",
             endpoint.app_list_url()
         );
@@ -538,6 +554,21 @@ mod tests {
         let info = client.fetch_server_info(&endpoint).unwrap();
 
         assert_eq!("Sunshine", info.app_version);
+    }
+
+    #[test]
+    fn client_fetches_unpaired_server_info_over_http() {
+        let transport = FakeTransport::default();
+        let client = HostHttpClient::new(transport);
+        let endpoint = HostEndpoint::from_address("sunshine.local").unwrap();
+
+        let info = client.fetch_unpaired_server_info(&endpoint).unwrap();
+
+        assert_eq!("Sunshine", info.app_version);
+        assert_eq!(
+            vec!["http://sunshine.local:47989/serverinfo"],
+            client.transport.requests.into_inner()
+        );
     }
 
     #[test]
