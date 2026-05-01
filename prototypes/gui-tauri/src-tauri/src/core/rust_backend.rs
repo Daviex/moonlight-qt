@@ -1,9 +1,11 @@
 use super::backend::MoonlightCore;
+use super::discovery::{discover_nvstream_hosts, merge_discovered_hosts};
 use super::host_http::{
     BlockingHostHttpClient, HostEndpoint, ReqwestHostHttpTransport, ServerInfo,
 };
 use super::host_store::{HostStore, StoredHost};
 use super::identity::ClientIdentity;
+use super::network::{blocked_ports, diagnose_tcp_ports, send_wake_packet, GAMESTREAM_TCP_PORTS};
 use super::pairing::{generate_pairing_pin, PairingClient, PairingRequest};
 use super::session::SessionMachine;
 #[cfg(test)]
@@ -18,6 +20,7 @@ use super::types::{
 };
 use std::path::PathBuf;
 use std::thread;
+use std::time::Duration;
 
 pub struct RustBackend {
     hosts: HostStore,
@@ -218,6 +221,16 @@ impl MoonlightCore for RustBackend {
     }
 
     fn list_hosts(&mut self) -> Result<Vec<HostEntry>, String> {
+        if self.settings.enable_mdns {
+            match discover_nvstream_hosts(Duration::from_millis(250)) {
+                Ok(records) => {
+                    if !merge_discovered_hosts(&mut self.hosts, records).is_empty() {
+                        self.persist()?;
+                    }
+                }
+                Err(error) => eprintln!("Rust backend mDNS discovery failed: {error}"),
+            }
+        }
         Ok(self.hosts.entries())
     }
 
@@ -300,6 +313,11 @@ impl MoonlightCore for RustBackend {
 
     fn wake_host(&mut self, host_id: &str) -> Result<CommandStatus, String> {
         let host = self.stored_host(host_id)?;
+        if host.mac_address.trim().is_empty() {
+            return Err(format!("{} does not have a known MAC address.", host.name));
+        }
+        send_wake_packet(&host.mac_address).map_err(|error| error.to_string())?;
+
         Ok(CommandStatus {
             message: format!("Wake requested for {}.", host.name),
         })
@@ -393,6 +411,16 @@ impl MoonlightCore for RustBackend {
 
     fn test_network(&mut self, host_id: &str) -> Result<NetworkTestResult, String> {
         let host = self.stored_host(host_id)?;
+        let diagnostics = diagnose_tcp_ports(&host.manual_address, GAMESTREAM_TCP_PORTS);
+        let blocked_ports = blocked_ports(&diagnostics);
+        if !blocked_ports.is_empty() {
+            return Ok(NetworkTestResult {
+                result: "blocked".into(),
+                message: format!("{} has unreachable GameStream TCP ports.", host.name),
+                blocked_ports,
+            });
+        }
+
         Ok(NetworkTestResult {
             result: "ok".into(),
             blocked_ports: Vec::new(),

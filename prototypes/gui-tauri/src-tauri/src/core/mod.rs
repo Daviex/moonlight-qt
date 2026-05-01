@@ -10,6 +10,7 @@ pub mod host_http;
 pub mod host_store;
 pub mod hosts;
 pub mod identity;
+pub mod network;
 pub mod pairing;
 pub mod rust_backend;
 pub mod session;
