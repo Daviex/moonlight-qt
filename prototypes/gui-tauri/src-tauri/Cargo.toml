@@ -9,6 +9,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 aes = "0.8"
+cpal = "0.15"
 ecb = { version = "0.1", features = ["alloc"] }
 mdns-sd = "0.19"
 rand = "0.8"

@@ -3,13 +3,15 @@
 use super::error::CoreError;
 use super::events::{BridgeEvent, BridgeEventKind};
 use super::gamestream_sys;
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 #[cfg(moonlight_common_c_linked)]
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_void};
-use std::sync::mpsc::Sender;
-use std::sync::{Mutex, OnceLock};
+use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex, OnceLock};
 
 const DEFAULT_VIDEO_PACKET_SIZE: u32 = 1392;
 
@@ -17,6 +19,7 @@ static STREAM_EVENT_CONTEXT: OnceLock<Mutex<Option<StreamEventContext>>> = OnceL
 static AUDIO_SINK_STATE: OnceLock<Mutex<AudioSinkState>> = OnceLock::new();
 #[cfg(moonlight_common_c_linked)]
 static AUDIO_DECODER_STATE: OnceLock<Mutex<Option<OpusAudioDecoder>>> = OnceLock::new();
+static AUDIO_PLAYBACK_STATE: OnceLock<Mutex<Option<AudioPlayback>>> = OnceLock::new();
 static VIDEO_SINK_STATE: OnceLock<Mutex<VideoSinkState>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -219,6 +222,24 @@ struct OpusAudioDecoder {
     decoder: *mut gamestream_sys::OpusMSDecoder,
     channel_count: usize,
     samples_per_frame: c_int,
+}
+
+struct AudioPlayback {
+    queue: Arc<Mutex<VecDeque<f32>>>,
+    input_channels: usize,
+    stop_sender: Option<Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for AudioPlayback {
+    fn drop(&mut self) {
+        if let Some(stop_sender) = self.stop_sender.take() {
+            let _ = stop_sender.send(());
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 #[cfg(moonlight_common_c_linked)]
@@ -539,6 +560,12 @@ unsafe extern "C" fn headless_audio_init(
         );
         return -1;
     }
+    if let Err(error) = initialize_audio_playback(&opus_config) {
+        emit_stream_event(
+            BridgeEventKind::Status,
+            format!("Rust audio playback is unavailable: {error}."),
+        );
+    }
     store_audio_sink_state(|state| {
         *state = AudioSinkState {
             configuration: Some(AudioSinkConfiguration {
@@ -581,6 +608,7 @@ unsafe extern "C" fn headless_audio_stop() {
 unsafe extern "C" fn headless_audio_cleanup() {
     #[cfg(moonlight_common_c_linked)]
     clear_opus_audio_decoder();
+    clear_audio_playback();
     store_audio_sink_state(|state| {
         *state = AudioSinkState::default();
     });
@@ -610,6 +638,9 @@ unsafe extern "C" fn headless_audio_decode_and_play_sample(
     });
     #[cfg(not(moonlight_common_c_linked))]
     let decoded = Vec::new();
+    if !decoded.is_empty() {
+        queue_audio_playback(&decoded);
+    }
     store_audio_sink_state(|state| {
         first_sample = state.samples_received == 0;
         state.samples_received = state.samples_received.saturating_add(1);
@@ -629,6 +660,184 @@ unsafe extern "C" fn headless_audio_decode_and_play_sample(
             BridgeEventKind::Status,
             format!("Rust audio sink decoded its first packet ({sample_length} bytes)."),
         );
+    }
+}
+
+fn initialize_audio_playback(
+    opus_config: &gamestream_sys::OpusMultistreamConfiguration,
+) -> Result<(), String> {
+    let input_channels = usize::try_from(opus_config.channel_count)
+        .map_err(|_| format!("invalid channel count {}", opus_config.channel_count))?
+        .max(1);
+    let queue = Arc::new(Mutex::new(VecDeque::new()));
+    let (ready_sender, ready_receiver) = mpsc::channel();
+    let (stop_sender, stop_receiver) = mpsc::channel();
+    let thread_queue = Arc::clone(&queue);
+    let thread = std::thread::spawn(move || {
+        run_audio_playback_thread(thread_queue, input_channels, stop_receiver, ready_sender);
+    });
+    match ready_receiver.recv().map_err(|error| error.to_string())? {
+        Ok(()) => {}
+        Err(error) => {
+            let _ = stop_sender.send(());
+            let _ = thread.join();
+            return Err(error);
+        }
+    }
+
+    let mut slot = AUDIO_PLAYBACK_STATE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_err(|error| error.to_string())?;
+    *slot = Some(AudioPlayback {
+        queue,
+        input_channels,
+        stop_sender: Some(stop_sender),
+        thread: Some(thread),
+    });
+    Ok(())
+}
+
+fn run_audio_playback_thread(
+    queue: Arc<Mutex<VecDeque<f32>>>,
+    input_channels: usize,
+    stop_receiver: mpsc::Receiver<()>,
+    ready_sender: Sender<Result<(), String>>,
+) {
+    let host = cpal::default_host();
+    let Some(device) = host.default_output_device() else {
+        let _ = ready_sender.send(Err("no default output device".into()));
+        return;
+    };
+    let supported_config = match device.default_output_config() {
+        Ok(config) => config,
+        Err(error) => {
+            let _ = ready_sender.send(Err(error.to_string()));
+            return;
+        }
+    };
+    let sample_format = supported_config.sample_format();
+    let config = supported_config.config();
+    let output_channels = usize::from(config.channels.max(1));
+    let stream = match build_audio_output_stream(
+        &device,
+        &config,
+        sample_format,
+        queue,
+        input_channels,
+        output_channels,
+    ) {
+        Ok(stream) => stream,
+        Err(error) => {
+            let _ = ready_sender.send(Err(error));
+            return;
+        }
+    };
+    if let Err(error) = stream.play() {
+        let _ = ready_sender.send(Err(error.to_string()));
+        return;
+    }
+    let _ = ready_sender.send(Ok(()));
+    let _ = stop_receiver.recv();
+    drop(stream);
+}
+
+fn build_audio_output_stream(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    sample_format: cpal::SampleFormat,
+    queue: Arc<Mutex<VecDeque<f32>>>,
+    input_channels: usize,
+    output_channels: usize,
+) -> Result<cpal::Stream, String> {
+    let error_callback = |error| eprintln!("Rust audio output stream error: {error}");
+    match sample_format {
+        cpal::SampleFormat::F32 => device
+            .build_output_stream(
+                config,
+                move |data: &mut [f32], _| {
+                    write_audio_output(data, &queue, input_channels, output_channels)
+                },
+                error_callback,
+                None,
+            )
+            .map_err(|error| error.to_string()),
+        cpal::SampleFormat::I16 => device
+            .build_output_stream(
+                config,
+                move |data: &mut [i16], _| {
+                    write_audio_output(data, &queue, input_channels, output_channels)
+                },
+                error_callback,
+                None,
+            )
+            .map_err(|error| error.to_string()),
+        cpal::SampleFormat::U16 => device
+            .build_output_stream(
+                config,
+                move |data: &mut [u16], _| {
+                    write_audio_output(data, &queue, input_channels, output_channels)
+                },
+                error_callback,
+                None,
+            )
+            .map_err(|error| error.to_string()),
+        other => Err(format!("unsupported audio sample format {other:?}")),
+    }
+}
+
+fn write_audio_output<T>(
+    data: &mut [T],
+    queue: &Arc<Mutex<VecDeque<f32>>>,
+    input_channels: usize,
+    output_channels: usize,
+) where
+    T: cpal::Sample + cpal::FromSample<f32>,
+{
+    let Ok(mut queue) = queue.lock() else {
+        for sample in data {
+            *sample = T::from_sample(0.0);
+        }
+        return;
+    };
+
+    let mut input_frame = vec![0.0_f32; input_channels];
+    for output_frame in data.chunks_mut(output_channels) {
+        for sample in &mut input_frame {
+            *sample = queue.pop_front().unwrap_or(0.0);
+        }
+        for (channel, sample) in output_frame.iter_mut().enumerate() {
+            let source = if channel < input_channels {
+                input_frame[channel]
+            } else {
+                input_frame[0]
+            };
+            *sample = T::from_sample(source);
+        }
+    }
+}
+
+fn queue_audio_playback(samples: &[f32]) {
+    let Ok(slot) = AUDIO_PLAYBACK_STATE.get_or_init(|| Mutex::new(None)).lock() else {
+        return;
+    };
+    let Some(playback) = slot.as_ref() else {
+        return;
+    };
+    let Ok(mut queue) = playback.queue.lock() else {
+        return;
+    };
+
+    let max_queued_samples = playback.input_channels.saturating_mul(48_000);
+    if queue.len() > max_queued_samples {
+        queue.clear();
+    }
+    queue.extend(samples.iter().copied());
+}
+
+fn clear_audio_playback() {
+    if let Ok(mut slot) = AUDIO_PLAYBACK_STATE.get_or_init(|| Mutex::new(None)).lock() {
+        *slot = None;
     }
 }
 
