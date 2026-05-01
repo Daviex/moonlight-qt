@@ -33,6 +33,8 @@ pub struct PairingRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PairingResponse {
     pub paired: bool,
+    pub status_code: String,
+    pub status_message: String,
     pub plain_cert_hex: String,
     pub challenge_response_hex: String,
     pub pairing_secret_hex: String,
@@ -307,27 +309,39 @@ pub fn client_pairing_secret(client_secret: &[u8], signature: &[u8]) -> Result<V
 }
 
 impl PairingHttpSequence {
-    pub fn new(endpoint: &HostEndpoint, material: &PairingMaterial) -> Result<Self, CoreError> {
+    pub fn new(
+        endpoint: &HostEndpoint,
+        material: &PairingMaterial,
+        unique_id: &str,
+        request_uuid: &str,
+    ) -> Result<Self, CoreError> {
         material.validate()?;
         Ok(Self {
             get_server_cert_url: endpoint.http_pair_url(&format!(
-                "devicename=roth&updateState=1&phrase=getservercert&salt={}&clientcert={}",
-                material.salt_hex, material.client_cert_hex
+                "{}&devicename=roth&updateState=1&phrase=getservercert&salt={}&clientcert={}",
+                native_request_prefix(unique_id, request_uuid),
+                material.salt_hex,
+                material.client_cert_hex
             )),
             client_challenge_url: endpoint.http_pair_url(&format!(
-                "devicename=roth&updateState=1&clientchallenge={}",
+                "{}&devicename=roth&updateState=1&clientchallenge={}",
+                native_request_prefix(unique_id, request_uuid),
                 material.encrypted_challenge_hex
             )),
             server_challenge_response_url: endpoint.http_pair_url(&format!(
-                "devicename=roth&updateState=1&serverchallengeresp={}",
+                "{}&devicename=roth&updateState=1&serverchallengeresp={}",
+                native_request_prefix(unique_id, request_uuid),
                 material.encrypted_server_challenge_response_hex
             )),
             client_pairing_secret_url: endpoint.http_pair_url(&format!(
-                "devicename=roth&updateState=1&clientpairingsecret={}",
+                "{}&devicename=roth&updateState=1&clientpairingsecret={}",
+                native_request_prefix(unique_id, request_uuid),
                 material.client_pairing_secret_hex
             )),
-            pair_challenge_url: endpoint
-                .https_pair_url("devicename=roth&updateState=1&phrase=pairchallenge"),
+            pair_challenge_url: endpoint.https_pair_url(&format!(
+                "{}&devicename=roth&updateState=1&phrase=pairchallenge",
+                native_request_prefix(unique_id, request_uuid)
+            )),
             unpair_url: endpoint.http_unpair_url(),
         })
     }
@@ -364,10 +378,41 @@ pub fn decode_hex(label: &'static str, value: &str) -> Result<Vec<u8>, CoreError
 pub fn parse_pairing_response(xml: &str) -> PairingResponse {
     PairingResponse {
         paired: optional_tag(xml, "paired") == "1",
+        status_code: root_attribute(xml, "status_code").unwrap_or_default(),
+        status_message: root_attribute(xml, "status_message").unwrap_or_default(),
         plain_cert_hex: optional_tag(xml, "plaincert"),
         challenge_response_hex: optional_tag(xml, "challengeresponse"),
         pairing_secret_hex: optional_tag(xml, "pairingsecret"),
     }
+}
+
+fn native_request_prefix(unique_id: &str, request_uuid: &str) -> String {
+    format!("uniqueid={unique_id}&uuid={request_uuid}")
+}
+
+fn random_request_uuid() -> String {
+    let mut bytes = [0_u8; 16];
+    OsRng.fill_bytes(&mut bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    encode_hex(&bytes)
+}
+
+fn pairing_query(identity: &ClientIdentity, args: &str) -> String {
+    format!(
+        "{}&{args}",
+        native_request_prefix(&identity.unique_id, &random_request_uuid())
+    )
+}
+
+fn root_attribute(xml: &str, name: &str) -> Option<String> {
+    let root_start = xml.find("<root")?;
+    let root_end = xml[root_start..].find('>')?;
+    let root = &xml[root_start..root_start + root_end + 1];
+    let prefix = format!("{name}=\"");
+    let start = root.find(&prefix)? + prefix.len();
+    let end = root[start..].find('"')?;
+    Some(root[start..start + end].to_string())
 }
 
 pub trait PairingTransport {
@@ -420,14 +465,22 @@ where
         let client_cert_signature = identity.certificate_signature()?;
         let client_cert_hex = encode_hex(identity.certificate_pem.as_bytes());
 
-        let get_cert_xml = self.transport.get_text(&endpoint.http_pair_url(&format!(
-            "devicename=roth&updateState=1&phrase=getservercert&salt={}&clientcert={}",
-            encode_hex(&secrets.salt),
-            client_cert_hex
-        )))?;
+        let get_cert_xml = self
+            .transport
+            .get_text(&endpoint.http_pair_url(&pairing_query(
+                identity,
+                &format!(
+                    "devicename=roth&updateState=1&phrase=getservercert&salt={}&clientcert={}",
+                    encode_hex(&secrets.salt),
+                    client_cert_hex
+                ),
+            )))?;
         let get_cert = parse_pairing_response(&get_cert_xml);
         if !get_cert.paired {
-            return Err(CoreError::Backend("Pairing failed at stage #1.".into()));
+            return Err(CoreError::Backend(format!(
+                "Pairing failed at stage #1{}.",
+                pairing_response_context(&get_cert)
+            )));
         }
         if get_cert.plain_cert_hex.is_empty() {
             self.try_unpair(endpoint);
@@ -443,14 +496,22 @@ where
             ))
         })?;
 
-        let challenge_xml = self.transport.get_text(&endpoint.http_pair_url(&format!(
-            "devicename=roth&updateState=1&clientchallenge={}",
-            encode_hex(&encrypted_challenge)
-        )))?;
+        let challenge_xml = self
+            .transport
+            .get_text(&endpoint.http_pair_url(&pairing_query(
+                identity,
+                &format!(
+                    "devicename=roth&updateState=1&clientchallenge={}",
+                    encode_hex(&encrypted_challenge)
+                ),
+            )))?;
         let challenge = parse_pairing_response(&challenge_xml);
         if !challenge.paired {
             self.try_unpair(endpoint);
-            return Err(CoreError::Backend("Pairing failed at stage #2.".into()));
+            return Err(CoreError::Backend(format!(
+                "Pairing failed at stage #2{}.",
+                pairing_response_context(&challenge)
+            )));
         }
 
         let encrypted_response =
@@ -464,14 +525,22 @@ where
             algorithm,
         )?;
 
-        let response_xml = self.transport.get_text(&endpoint.http_pair_url(&format!(
-            "devicename=roth&updateState=1&serverchallengeresp={}",
-            encode_hex(&encrypted_challenge_response)
-        )))?;
+        let response_xml = self
+            .transport
+            .get_text(&endpoint.http_pair_url(&pairing_query(
+                identity,
+                &format!(
+                    "devicename=roth&updateState=1&serverchallengeresp={}",
+                    encode_hex(&encrypted_challenge_response)
+                ),
+            )))?;
         let response = parse_pairing_response(&response_xml);
         if !response.paired {
             self.try_unpair(endpoint);
-            return Err(CoreError::Backend("Pairing failed at stage #3.".into()));
+            return Err(CoreError::Backend(format!(
+                "Pairing failed at stage #3{}.",
+                pairing_response_context(&response)
+            )));
         }
 
         let pairing_secret = decode_hex("pairing secret", &response.pairing_secret_hex)?;
@@ -507,21 +576,37 @@ where
         let client_secret_signature = identity.sign_message(&secrets.client_secret)?;
         let client_secret =
             client_pairing_secret(&secrets.client_secret, &client_secret_signature)?;
-        let client_secret_xml = self.transport.get_text(&endpoint.http_pair_url(&format!(
-            "devicename=roth&updateState=1&clientpairingsecret={}",
-            encode_hex(&client_secret)
-        )))?;
-        if !parse_pairing_response(&client_secret_xml).paired {
+        let client_secret_xml =
+            self.transport
+                .get_text(&endpoint.http_pair_url(&pairing_query(
+                    identity,
+                    &format!(
+                        "devicename=roth&updateState=1&clientpairingsecret={}",
+                        encode_hex(&client_secret)
+                    ),
+                )))?;
+        let client_secret_response = parse_pairing_response(&client_secret_xml);
+        if !client_secret_response.paired {
             self.try_unpair(endpoint);
-            return Err(CoreError::Backend("Pairing failed at stage #4.".into()));
+            return Err(CoreError::Backend(format!(
+                "Pairing failed at stage #4{}.",
+                pairing_response_context(&client_secret_response)
+            )));
         }
 
-        let challenge_xml = self.transport.get_text(
-            &endpoint.https_pair_url("devicename=roth&updateState=1&phrase=pairchallenge"),
-        )?;
-        if !parse_pairing_response(&challenge_xml).paired {
+        let challenge_xml = self
+            .transport
+            .get_text(&endpoint.https_pair_url(&pairing_query(
+                identity,
+                "devicename=roth&updateState=1&phrase=pairchallenge",
+            )))?;
+        let pair_challenge = parse_pairing_response(&challenge_xml);
+        if !pair_challenge.paired {
             self.try_unpair(endpoint);
-            return Err(CoreError::Backend("Pairing failed at stage #5.".into()));
+            return Err(CoreError::Backend(format!(
+                "Pairing failed at stage #5{}.",
+                pairing_response_context(&pair_challenge)
+            )));
         }
 
         Ok(CompletedPairing {
@@ -532,6 +617,21 @@ where
     fn try_unpair(&self, endpoint: &HostEndpoint) {
         let _ = self.transport.get_text(&endpoint.http_unpair_url());
     }
+}
+
+fn pairing_response_context(response: &PairingResponse) -> String {
+    if response.status_code.is_empty() && response.status_message.is_empty() {
+        return String::new();
+    }
+
+    if response.status_message.is_empty() {
+        return format!(" with host status {}", response.status_code);
+    }
+
+    format!(
+        " with host status {}: {}",
+        response.status_code, response.status_message
+    )
 }
 
 pub fn parse_pairing_state(pair_status: &str, error_message: Option<&str>) -> PairingState {
@@ -766,14 +866,15 @@ mod tests {
             client_pairing_secret_hex: "99aabbcc".into(),
         };
 
-        let sequence = PairingHttpSequence::new(&endpoint, &material).unwrap();
+        let sequence =
+            PairingHttpSequence::new(&endpoint, &material, "client123", "request456").unwrap();
 
         assert_eq!(
-            "http://192.168.1.20:47989/pair?devicename=roth&updateState=1&phrase=getservercert&salt=00112233445566778899aabbccddeeff&clientcert=aabbccdd",
+            "http://192.168.1.20:47989/pair?uniqueid=client123&uuid=request456&devicename=roth&updateState=1&phrase=getservercert&salt=00112233445566778899aabbccddeeff&clientcert=aabbccdd",
             sequence.get_server_cert_url
         );
         assert_eq!(
-            "https://192.168.1.20:47984/pair?devicename=roth&updateState=1&phrase=pairchallenge",
+            "https://192.168.1.20:47984/pair?uniqueid=client123&uuid=request456&devicename=roth&updateState=1&phrase=pairchallenge",
             sequence.pair_challenge_url
         );
     }
@@ -789,7 +890,8 @@ mod tests {
             client_pairing_secret_hex: "99aabbcc".into(),
         };
 
-        let error = PairingHttpSequence::new(&endpoint, &material).unwrap_err();
+        let error =
+            PairingHttpSequence::new(&endpoint, &material, "client123", "request456").unwrap_err();
 
         assert_eq!(
             "Pairing salt must be an even-length hexadecimal string.",
@@ -804,9 +906,21 @@ mod tests {
         );
 
         assert!(response.paired);
+        assert_eq!("", response.status_code);
         assert_eq!("aabb", response.plain_cert_hex);
         assert_eq!("ccdd", response.challenge_response_hex);
         assert_eq!("eeff", response.pairing_secret_hex);
+    }
+
+    #[test]
+    fn pairing_response_parser_extracts_root_status_context() {
+        let response = parse_pairing_response(
+            r#"<root status_code="401" status_message="PIN required"><paired>0</paired></root>"#,
+        );
+
+        assert!(!response.paired);
+        assert_eq!("401", response.status_code);
+        assert_eq!("PIN required", response.status_message);
     }
 
     #[test]
@@ -914,6 +1028,8 @@ mod tests {
             completed.server_certificate_pem
         );
         assert_eq!(5, client.transport.requests.borrow().len());
+        assert!(client.transport.requests.borrow()[0]
+            .contains(&format!("uniqueid={}&uuid=", client_identity.unique_id)));
         assert!(client.transport.requests.borrow()[0]
             .contains("phrase=getservercert&salt=11111111111111111111111111111111"));
         assert!(client.transport.requests.borrow()[4].starts_with("https://"));
