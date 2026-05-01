@@ -4,12 +4,13 @@ use super::error::CoreError;
 use super::events::{BridgeEvent, BridgeEventKind};
 use super::gamestream_sys;
 use super::stream_input::{
-    ButtonAction, KeyAction, KeyModifiers, MouseButton as StreamMouseButton, StreamInputSender,
+    ButtonAction, ControllerCapabilities, ControllerState, ControllerType, KeyAction, KeyModifiers,
+    MouseButton as StreamMouseButton, StreamInputSender,
 };
 use crate::logger;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 #[cfg(moonlight_common_c_linked)]
 use std::ffi::CStr;
 use std::ffi::CString;
@@ -307,6 +308,17 @@ struct NativeVideoInputState {
     left_mouse_down: bool,
     middle_mouse_down: bool,
     right_mouse_down: bool,
+}
+
+struct Sdl3Controller {
+    _gamepad: sdl3::gamepad::Gamepad,
+    controller_number: u8,
+    state: ControllerState,
+}
+
+struct Sdl3ControllerManager {
+    subsystem: sdl3::GamepadSubsystem,
+    controllers: HashMap<u32, Sdl3Controller>,
 }
 
 impl Drop for NativeVideoRenderer {
@@ -694,9 +706,11 @@ fn native_video_renderer_loop(
     ));
     let sdl = sdl3::init().map_err(|error| error.to_string())?;
     let video = sdl.video().map_err(|error| error.to_string())?;
-    if let Ok(gamepad) = sdl.gamepad() {
-        load_sdl3_game_controller_mappings(&gamepad);
-    }
+    let input_sender = StreamInputSender;
+    let mut controllers = sdl
+        .gamepad()
+        .ok()
+        .map(|gamepad| Sdl3ControllerManager::new(gamepad, &input_sender));
 
     let window = video
         .window("Moonlight Stream", width as u32, height as u32)
@@ -712,10 +726,10 @@ fn native_video_renderer_loop(
     let mut texture_height = height;
     sdl.mouse().show_cursor(false);
     sdl.mouse().capture(true);
+    sdl.mouse().set_relative_mouse_mode(canvas.window(), true);
     logger::log("SDL3 native video renderer window created");
 
     let mut event_pump = sdl.event_pump().map_err(|error| error.to_string())?;
-    let input_sender = StreamInputSender;
     let mut requested_stop = false;
 
     'running: loop {
@@ -730,6 +744,7 @@ fn native_video_renderer_loop(
                 texture_width,
                 texture_height,
                 &mut canvas,
+                &mut controllers,
             ) {
                 break 'running;
             }
@@ -755,6 +770,7 @@ fn native_video_renderer_loop(
         }
     }
 
+    sdl.mouse().set_relative_mouse_mode(canvas.window(), false);
     sdl.mouse().capture(false);
     sdl.mouse().show_cursor(true);
     if !requested_stop {
@@ -812,6 +828,242 @@ fn load_sdl3_game_controller_mappings(gamepad: &sdl3::GamepadSubsystem) {
         }
     }
     logger::log("SDL3 game controller mapping database was not found");
+}
+
+impl Sdl3ControllerManager {
+    fn new(subsystem: sdl3::GamepadSubsystem, input: &StreamInputSender) -> Self {
+        load_sdl3_game_controller_mappings(&subsystem);
+        let mut manager = Self {
+            subsystem,
+            controllers: HashMap::new(),
+        };
+        match manager.subsystem.gamepads() {
+            Ok(gamepads) => {
+                for gamepad_id in gamepads {
+                    manager.open_controller(gamepad_id, input);
+                }
+            }
+            Err(error) => logger::log(format!("failed to enumerate SDL3 gamepads: {error}")),
+        }
+        manager
+    }
+
+    fn open_controller(
+        &mut self,
+        gamepad_id: sdl3::joystick::JoystickId,
+        input: &StreamInputSender,
+    ) {
+        let gamepad_key = u32::from(gamepad_id);
+        if self.controllers.contains_key(&gamepad_key) {
+            return;
+        }
+        let Some(controller_number) = self.first_available_controller_number() else {
+            logger::log(format!(
+                "ignoring SDL3 gamepad {gamepad_key}: maximum controller count reached"
+            ));
+            return;
+        };
+        let gamepad = match self.subsystem.open(gamepad_id) {
+            Ok(gamepad) => gamepad,
+            Err(error) => {
+                logger::log(format!(
+                    "failed to open SDL3 gamepad {gamepad_key}: {error}"
+                ));
+                return;
+            }
+        };
+        let controller_type = sdl3_gamepad_type(gamepad.r#type());
+        let name = gamepad.name().unwrap_or_else(|| "Unknown gamepad".into());
+        let state = ControllerState {
+            controller_number,
+            active_gamepad_mask: 0,
+            ..ControllerState::default()
+        };
+        self.controllers.insert(
+            gamepad_key,
+            Sdl3Controller {
+                _gamepad: gamepad,
+                controller_number,
+                state,
+            },
+        );
+        self.update_active_masks();
+        let active_gamepad_mask = self.active_gamepad_mask();
+        let _ = input.send_controller_arrival(
+            controller_number,
+            active_gamepad_mask,
+            controller_type,
+            SDL3_CONTROLLER_SUPPORTED_BUTTONS as u32,
+            ControllerCapabilities {
+                analog_triggers: true,
+                rumble: true,
+                trigger_rumble: false,
+                touchpad: true,
+                accelerometer: false,
+                gyroscope: false,
+                battery_state: false,
+                rgb_led: false,
+            },
+        );
+        if let Some(controller) = self.controllers.get(&gamepad_key) {
+            let _ = input.send_controller(controller.state);
+        }
+        logger::log(format!(
+            "opened SDL3 gamepad {gamepad_key} as controller {controller_number}: {name}"
+        ));
+    }
+
+    fn remove_controller(&mut self, gamepad_id: u32, input: &StreamInputSender) {
+        let Some(removed) = self.controllers.remove(&gamepad_id) else {
+            return;
+        };
+        self.update_active_masks();
+        let _ = input.send_controller(ControllerState {
+            controller_number: removed.controller_number,
+            active_gamepad_mask: self.active_gamepad_mask(),
+            ..ControllerState::default()
+        });
+        logger::log(format!(
+            "removed SDL3 gamepad {gamepad_id} from controller {}",
+            removed.controller_number
+        ));
+    }
+
+    fn handle_axis(
+        &mut self,
+        gamepad_id: u32,
+        axis: sdl3::gamepad::Axis,
+        value: i16,
+        input: &StreamInputSender,
+    ) {
+        let Some(controller) = self.controllers.get_mut(&gamepad_id) else {
+            return;
+        };
+        match axis {
+            sdl3::gamepad::Axis::LeftX => controller.state.left_stick_x = value,
+            sdl3::gamepad::Axis::LeftY => controller.state.left_stick_y = value,
+            sdl3::gamepad::Axis::RightX => controller.state.right_stick_x = value,
+            sdl3::gamepad::Axis::RightY => controller.state.right_stick_y = value,
+            sdl3::gamepad::Axis::TriggerLeft => {
+                controller.state.left_trigger = sdl3_trigger_to_u8(value)
+            }
+            sdl3::gamepad::Axis::TriggerRight => {
+                controller.state.right_trigger = sdl3_trigger_to_u8(value)
+            }
+        }
+        let _ = input.send_controller(controller.state);
+    }
+
+    fn handle_button(
+        &mut self,
+        gamepad_id: u32,
+        button: sdl3::gamepad::Button,
+        pressed: bool,
+        input: &StreamInputSender,
+    ) {
+        let Some(flag) = sdl3_gamepad_button_flag(button) else {
+            return;
+        };
+        let Some(controller) = self.controllers.get_mut(&gamepad_id) else {
+            return;
+        };
+        if pressed {
+            controller.state.button_flags |= flag;
+        } else {
+            controller.state.button_flags &= !flag;
+        }
+        let _ = input.send_controller(controller.state);
+    }
+
+    fn first_available_controller_number(&self) -> Option<u8> {
+        (0..4).find(|number| {
+            self.controllers
+                .values()
+                .all(|controller| controller.controller_number != *number)
+        })
+    }
+
+    fn active_gamepad_mask(&self) -> u16 {
+        self.controllers.values().fold(0, |mask, controller| {
+            mask | (1 << controller.controller_number)
+        })
+    }
+
+    fn update_active_masks(&mut self) {
+        let active_gamepad_mask = self.active_gamepad_mask();
+        for controller in self.controllers.values_mut() {
+            controller.state.active_gamepad_mask = active_gamepad_mask;
+        }
+    }
+}
+
+const SDL3_CONTROLLER_SUPPORTED_BUTTONS: i32 = gamestream_sys::A_FLAG
+    | gamestream_sys::B_FLAG
+    | gamestream_sys::X_FLAG
+    | gamestream_sys::Y_FLAG
+    | gamestream_sys::UP_FLAG
+    | gamestream_sys::DOWN_FLAG
+    | gamestream_sys::LEFT_FLAG
+    | gamestream_sys::RIGHT_FLAG
+    | gamestream_sys::LB_FLAG
+    | gamestream_sys::RB_FLAG
+    | gamestream_sys::PLAY_FLAG
+    | gamestream_sys::BACK_FLAG
+    | gamestream_sys::LS_CLK_FLAG
+    | gamestream_sys::RS_CLK_FLAG
+    | gamestream_sys::SPECIAL_FLAG
+    | gamestream_sys::PADDLE1_FLAG
+    | gamestream_sys::PADDLE2_FLAG
+    | gamestream_sys::PADDLE3_FLAG
+    | gamestream_sys::PADDLE4_FLAG
+    | gamestream_sys::TOUCHPAD_FLAG
+    | gamestream_sys::MISC_FLAG;
+
+fn sdl3_gamepad_button_flag(button: sdl3::gamepad::Button) -> Option<i32> {
+    match button {
+        sdl3::gamepad::Button::South => Some(gamestream_sys::A_FLAG),
+        sdl3::gamepad::Button::East => Some(gamestream_sys::B_FLAG),
+        sdl3::gamepad::Button::West => Some(gamestream_sys::X_FLAG),
+        sdl3::gamepad::Button::North => Some(gamestream_sys::Y_FLAG),
+        sdl3::gamepad::Button::Back => Some(gamestream_sys::BACK_FLAG),
+        sdl3::gamepad::Button::Guide => Some(gamestream_sys::SPECIAL_FLAG),
+        sdl3::gamepad::Button::Start => Some(gamestream_sys::PLAY_FLAG),
+        sdl3::gamepad::Button::LeftStick => Some(gamestream_sys::LS_CLK_FLAG),
+        sdl3::gamepad::Button::RightStick => Some(gamestream_sys::RS_CLK_FLAG),
+        sdl3::gamepad::Button::LeftShoulder => Some(gamestream_sys::LB_FLAG),
+        sdl3::gamepad::Button::RightShoulder => Some(gamestream_sys::RB_FLAG),
+        sdl3::gamepad::Button::DPadUp => Some(gamestream_sys::UP_FLAG),
+        sdl3::gamepad::Button::DPadDown => Some(gamestream_sys::DOWN_FLAG),
+        sdl3::gamepad::Button::DPadLeft => Some(gamestream_sys::LEFT_FLAG),
+        sdl3::gamepad::Button::DPadRight => Some(gamestream_sys::RIGHT_FLAG),
+        sdl3::gamepad::Button::Misc1 => Some(gamestream_sys::MISC_FLAG),
+        sdl3::gamepad::Button::RightPaddle1 => Some(gamestream_sys::PADDLE1_FLAG),
+        sdl3::gamepad::Button::LeftPaddle1 => Some(gamestream_sys::PADDLE2_FLAG),
+        sdl3::gamepad::Button::RightPaddle2 => Some(gamestream_sys::PADDLE3_FLAG),
+        sdl3::gamepad::Button::LeftPaddle2 => Some(gamestream_sys::PADDLE4_FLAG),
+        sdl3::gamepad::Button::Touchpad => Some(gamestream_sys::TOUCHPAD_FLAG),
+        _ => None,
+    }
+}
+
+fn sdl3_trigger_to_u8(value: i16) -> u8 {
+    (((value.max(0) as i32) * 255 + 16_383) / 32_767).clamp(0, 255) as u8
+}
+
+fn sdl3_gamepad_type(gamepad_type: sdl3::gamepad::GamepadType) -> ControllerType {
+    match gamepad_type {
+        sdl3::gamepad::GamepadType::Xbox360 | sdl3::gamepad::GamepadType::XboxOne => {
+            ControllerType::Xbox
+        }
+        sdl3::gamepad::GamepadType::PS3
+        | sdl3::gamepad::GamepadType::PS4
+        | sdl3::gamepad::GamepadType::PS5 => ControllerType::PlayStation,
+        sdl3::gamepad::GamepadType::NintendoSwitchPro
+        | sdl3::gamepad::GamepadType::NintendoSwitchJoyconLeft
+        | sdl3::gamepad::GamepadType::NintendoSwitchJoyconRight
+        | sdl3::gamepad::GamepadType::NintendoSwitchJoyconPair => ControllerType::Nintendo,
+        _ => ControllerType::Xbox,
+    }
 }
 
 fn sdl3_controller_mapping_candidates() -> Vec<std::path::PathBuf> {
@@ -875,6 +1127,7 @@ fn handle_sdl3_video_event(
     reference_width: usize,
     reference_height: usize,
     canvas: &mut sdl3::render::WindowCanvas,
+    controllers: &mut Option<Sdl3ControllerManager>,
 ) -> bool {
     match event {
         sdl3::event::Event::Quit { .. }
@@ -882,8 +1135,14 @@ fn handle_sdl3_video_event(
             win_event: sdl3::event::WindowEvent::CloseRequested,
             ..
         } => return true,
-        sdl3::event::Event::MouseMotion { x, y, .. } => {
-            send_sdl3_mouse_position(input, x, y, reference_width, reference_height, canvas);
+        sdl3::event::Event::MouseMotion {
+            x, y, xrel, yrel, ..
+        } => {
+            if xrel != 0.0 || yrel != 0.0 {
+                let _ = input.send_mouse_move(clamp_f32_to_i16(xrel), clamp_f32_to_i16(yrel));
+            } else {
+                send_sdl3_mouse_position(input, x, y, reference_width, reference_height, canvas);
+            }
         }
         sdl3::event::Event::MouseButtonDown {
             mouse_btn, x, y, ..
@@ -930,6 +1189,33 @@ fn handle_sdl3_video_event(
             if let Some(key_code) = keycode.and_then(sdl3_keycode_to_js_key_code) {
                 let _ =
                     input.send_keyboard(key_code, KeyAction::Up, sdl3_key_modifiers(keymod), true);
+            }
+        }
+        sdl3::event::Event::ControllerDeviceAdded { which, .. } => {
+            if let Some(controllers) = controllers.as_mut() {
+                controllers.open_controller(sdl3::sys::joystick::SDL_JoystickID(which), input);
+            }
+        }
+        sdl3::event::Event::ControllerDeviceRemoved { which, .. } => {
+            if let Some(controllers) = controllers.as_mut() {
+                controllers.remove_controller(which, input);
+            }
+        }
+        sdl3::event::Event::ControllerAxisMotion {
+            which, axis, value, ..
+        } => {
+            if let Some(controllers) = controllers.as_mut() {
+                controllers.handle_axis(which, axis, value, input);
+            }
+        }
+        sdl3::event::Event::ControllerButtonDown { which, button, .. } => {
+            if let Some(controllers) = controllers.as_mut() {
+                controllers.handle_button(which, button, true, input);
+            }
+        }
+        sdl3::event::Event::ControllerButtonUp { which, button, .. } => {
+            if let Some(controllers) = controllers.as_mut() {
+                controllers.handle_button(which, button, false, input);
             }
         }
         _ => {}
