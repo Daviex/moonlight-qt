@@ -130,6 +130,9 @@ if defined MOONLIGHT_COMMON_C_LIB_DIR if not "%MOONLIGHT_COMMON_C_STATIC%"=="1" 
     )
 )
 
+call :StageSdl3RuntimeDeps
+if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
+
 (
     echo @echo off
     echo set "MOONLIGHT_TAURI_LOG=%%~dp0MoonlightTauri.log"
@@ -159,6 +162,25 @@ if "%TAURI_PACKAGE_ZIP%"=="1" (
 
     echo Tauri prototype ZIP produced at:
     echo !TAURI_ZIP!
+)
+exit /b 0
+
+:StageSdl3RuntimeDeps
+set SDL3_RUNTIME_DIR=%SOURCE_ROOT%\libs\windows\lib\%PACKAGE_ARCH%
+if not exist "%SDL3_RUNTIME_DIR%\SDL3.dll" (
+    echo Unable to find bundled SDL3 runtime:
+    echo %SDL3_RUNTIME_DIR%\SDL3.dll
+    exit /b 1
+)
+copy "%SDL3_RUNTIME_DIR%\SDL3.dll" "%PACKAGE_DIR%\" >nul
+if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
+
+if exist "%SOURCE_ROOT%\app\SDL_GameControllerDB\gamecontrollerdb.txt" (
+    copy "%SOURCE_ROOT%\app\SDL_GameControllerDB\gamecontrollerdb.txt" "%PACKAGE_DIR%\" >nul
+    if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
+) else (
+    echo Warning: SDL game controller database was not found:
+    echo %SOURCE_ROOT%\app\SDL_GameControllerDB\gamecontrollerdb.txt
 )
 exit /b 0
 

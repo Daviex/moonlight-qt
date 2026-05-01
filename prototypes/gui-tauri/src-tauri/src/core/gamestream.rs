@@ -21,7 +21,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 const DEFAULT_VIDEO_PACKET_SIZE: u32 = 1392;
 const NATIVE_VIDEO_INPUT_POLL_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1);
-const NATIVE_VIDEO_EVENT_POLL_FPS: usize = 1000;
 
 static STREAM_EVENT_CONTEXT: OnceLock<Mutex<Option<StreamEventContext>>> = OnceLock::new();
 static AUDIO_SINK_STATE: OnceLock<Mutex<AudioSinkState>> = OnceLock::new();
@@ -691,52 +690,83 @@ fn native_video_renderer_loop(
     stop_receiver: mpsc::Receiver<()>,
 ) -> Result<(), String> {
     logger::log(format!(
-        "native video renderer creating window; width={width}; height={height}"
+        "SDL3 native video renderer creating window; width={width}; height={height}"
     ));
-    let mut window = minifb::Window::new(
-        "Moonlight Stream",
-        width,
-        height,
-        minifb::WindowOptions::default(),
-    )
-    .map_err(|error| error.to_string())?;
-    logger::log("native video renderer window created");
-    window.set_cursor_visibility(false);
-    window.set_target_fps(NATIVE_VIDEO_EVENT_POLL_FPS);
-    let mut last_buffer = vec![0; width * height];
-    let mut last_width = width;
-    let mut last_height = height;
-    let mut input_state = NativeVideoInputState::default();
+    let sdl = sdl3::init().map_err(|error| error.to_string())?;
+    let video = sdl.video().map_err(|error| error.to_string())?;
+    if let Ok(gamepad) = sdl.gamepad() {
+        load_sdl3_game_controller_mappings(&gamepad);
+    }
+
+    let window = video
+        .window("Moonlight Stream", width as u32, height as u32)
+        .position_centered()
+        .resizable()
+        .build()
+        .map_err(|error| error.to_string())?;
+    let mut canvas = window.into_canvas();
+    let texture_creator = canvas.texture_creator();
+    let mut texture = texture_creator
+        .create_texture_streaming(
+            sdl3::pixels::PixelFormat::RGBA8888,
+            width as u32,
+            height as u32,
+        )
+        .map_err(|error| error.to_string())?;
+    let mut texture_width = width;
+    let mut texture_height = height;
+    sdl.mouse().show_cursor(false);
+    sdl.mouse().capture(true);
+    logger::log("SDL3 native video renderer window created");
+
+    let mut event_pump = sdl.event_pump().map_err(|error| error.to_string())?;
     let input_sender = StreamInputSender;
     let mut requested_stop = false;
 
-    while window.is_open() {
+    'running: loop {
         if stop_receiver.try_recv().is_ok() {
             requested_stop = true;
             break;
         }
-        poll_native_video_input(
-            &window,
-            &mut input_state,
-            &input_sender,
-            last_width,
-            last_height,
-        );
+        for event in event_pump.poll_iter() {
+            if handle_sdl3_video_event(
+                event,
+                &input_sender,
+                texture_width,
+                texture_height,
+                &mut canvas,
+            ) {
+                break 'running;
+            }
+        }
         match frame_receiver.recv_timeout(NATIVE_VIDEO_INPUT_POLL_TIMEOUT) {
             Ok(frame) => {
-                let converted = rgba_to_minifb_buffer(&frame)?;
-                last_width = frame.width as usize;
-                last_height = frame.height as usize;
-                last_buffer = converted;
+                validate_rgba_frame(&frame)?;
+                let frame_width = frame.width as usize;
+                let frame_height = frame.height as usize;
+                if frame_width != texture_width || frame_height != texture_height {
+                    texture = texture_creator
+                        .create_texture_streaming(
+                            sdl3::pixels::PixelFormat::RGBA8888,
+                            frame_width as u32,
+                            frame_height as u32,
+                        )
+                        .map_err(|error| error.to_string())?;
+                    texture_width = frame_width;
+                    texture_height = frame_height;
+                }
+                texture
+                    .update(None, &frame.pixels, frame_width * 4)
+                    .map_err(|error| error.to_string())?;
+                render_sdl3_video_frame(&mut canvas, &texture, texture_width, texture_height)?;
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
-        window
-            .update_with_buffer(&last_buffer, last_width, last_height)
-            .map_err(|error| error.to_string())?;
     }
 
+    sdl.mouse().capture(false);
+    sdl.mouse().show_cursor(true);
     if !requested_stop {
         emit_stream_event(
             BridgeEventKind::SessionChanged,
@@ -751,212 +781,305 @@ fn native_video_renderer_loop(
     Ok(())
 }
 
-fn poll_native_video_input(
-    window: &minifb::Window,
-    state: &mut NativeVideoInputState,
+fn load_sdl3_game_controller_mappings(gamepad: &sdl3::GamepadSubsystem) {
+    for path in sdl3_controller_mapping_candidates() {
+        if path.is_file() {
+            match gamepad.load_mappings(&path) {
+                Ok(count) => logger::log(format!(
+                    "loaded {count} SDL3 game controller mappings from {}",
+                    path.display()
+                )),
+                Err(error) => logger::log(format!(
+                    "failed to load SDL3 game controller mappings from {}: {error}",
+                    path.display()
+                )),
+            }
+            return;
+        }
+    }
+    logger::log("SDL3 game controller mapping database was not found");
+}
+
+fn sdl3_controller_mapping_candidates() -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(current_dir.join("gamecontrollerdb.txt"));
+        candidates.push(
+            current_dir
+                .join("app")
+                .join("SDL_GameControllerDB")
+                .join("gamecontrollerdb.txt"),
+        );
+    }
+    candidates.push(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("app")
+            .join("SDL_GameControllerDB")
+            .join("gamecontrollerdb.txt"),
+    );
+    candidates
+}
+
+fn render_sdl3_video_frame(
+    canvas: &mut sdl3::render::WindowCanvas,
+    texture: &sdl3::render::Texture,
+    frame_width: usize,
+    frame_height: usize,
+) -> Result<(), String> {
+    let (output_width, output_height) = canvas.output_size().map_err(|error| error.to_string())?;
+    let video_region = scaled_video_region(
+        frame_width,
+        frame_height,
+        output_width as usize,
+        output_height as usize,
+    );
+    canvas.clear();
+    canvas
+        .copy(
+            texture,
+            None,
+            sdl3::render::FRect::new(
+                video_region.x,
+                video_region.y,
+                video_region.width,
+                video_region.height,
+            ),
+        )
+        .map_err(|error| error.to_string())?;
+    if !canvas.present() {
+        return Err(sdl3::get_error().to_string());
+    }
+    Ok(())
+}
+
+fn handle_sdl3_video_event(
+    event: sdl3::event::Event,
     input: &StreamInputSender,
     reference_width: usize,
     reference_height: usize,
-) {
-    if let Some((x, y)) = window.get_unscaled_mouse_pos(minifb::MouseMode::Clamp) {
-        let (window_width, window_height) = window.get_size();
-        let video_region = scaled_video_region(
-            reference_width,
-            reference_height,
-            window_width,
-            window_height,
-        );
-        let x = clamp_f32_to_stream_i16(x - video_region.x, video_region.width);
-        let y = clamp_f32_to_stream_i16(y - video_region.y, video_region.height);
-        if state.last_mouse_position != Some((x, y)) {
-            let _ = input.send_mouse_position(
-                x,
-                y,
-                clamp_f32_to_i16(video_region.width),
-                clamp_f32_to_i16(video_region.height),
-            );
+    canvas: &mut sdl3::render::WindowCanvas,
+) -> bool {
+    match event {
+        sdl3::event::Event::Quit { .. }
+        | sdl3::event::Event::Window {
+            win_event: sdl3::event::WindowEvent::CloseRequested,
+            ..
+        } => return true,
+        sdl3::event::Event::MouseMotion { x, y, .. } => {
+            send_sdl3_mouse_position(input, x, y, reference_width, reference_height, canvas);
         }
-        state.last_mouse_position = Some((x, y));
-    } else {
-        state.last_mouse_position = None;
+        sdl3::event::Event::MouseButtonDown {
+            mouse_btn, x, y, ..
+        } => {
+            send_sdl3_mouse_position(input, x, y, reference_width, reference_height, canvas);
+            send_sdl3_mouse_button(input, mouse_btn, ButtonAction::Press);
+        }
+        sdl3::event::Event::MouseButtonUp {
+            mouse_btn, x, y, ..
+        } => {
+            send_sdl3_mouse_position(input, x, y, reference_width, reference_height, canvas);
+            send_sdl3_mouse_button(input, mouse_btn, ButtonAction::Release);
+        }
+        sdl3::event::Event::MouseWheel { x, y, .. } => {
+            let scroll_x = (x * 120.0).round();
+            let scroll_y = (y * 120.0).round();
+            if scroll_x != 0.0 {
+                let _ = input.send_high_res_horizontal_scroll(clamp_f32_to_i16(scroll_x));
+            }
+            if scroll_y != 0.0 {
+                let _ = input.send_high_res_scroll(clamp_f32_to_i16(scroll_y));
+            }
+        }
+        sdl3::event::Event::KeyDown {
+            keycode,
+            keymod,
+            repeat,
+            ..
+        } => {
+            if !repeat {
+                if let Some(key_code) = keycode.and_then(sdl3_keycode_to_js_key_code) {
+                    let _ = input.send_keyboard(
+                        key_code,
+                        KeyAction::Down,
+                        sdl3_key_modifiers(keymod),
+                        true,
+                    );
+                }
+            }
+        }
+        sdl3::event::Event::KeyUp {
+            keycode, keymod, ..
+        } => {
+            if let Some(key_code) = keycode.and_then(sdl3_keycode_to_js_key_code) {
+                let _ =
+                    input.send_keyboard(key_code, KeyAction::Up, sdl3_key_modifiers(keymod), true);
+            }
+        }
+        _ => {}
     }
-
-    update_native_mouse_button(
-        input,
-        &mut state.left_mouse_down,
-        window.get_mouse_down(minifb::MouseButton::Left),
-        StreamMouseButton::Left,
-    );
-    update_native_mouse_button(
-        input,
-        &mut state.middle_mouse_down,
-        window.get_mouse_down(minifb::MouseButton::Middle),
-        StreamMouseButton::Middle,
-    );
-    update_native_mouse_button(
-        input,
-        &mut state.right_mouse_down,
-        window.get_mouse_down(minifb::MouseButton::Right),
-        StreamMouseButton::Right,
-    );
-
-    if let Some((scroll_x, scroll_y)) = window.get_scroll_wheel() {
-        let scroll_x = (scroll_x * 120.0).round();
-        let scroll_y = (scroll_y * 120.0).round();
-        if scroll_x != 0.0 {
-            let _ = input.send_high_res_horizontal_scroll(clamp_f32_to_i16(scroll_x));
-        }
-        if scroll_y != 0.0 {
-            let _ = input.send_high_res_scroll(clamp_f32_to_i16(scroll_y));
-        }
-    }
-
-    let modifiers = native_key_modifiers(window);
-    for key in window.get_keys_pressed(minifb::KeyRepeat::No) {
-        if let Some(key_code) = minifb_key_to_js_key_code(key) {
-            let _ = input.send_keyboard(key_code, KeyAction::Down, modifiers, true);
-        }
-    }
-    for key in window.get_keys_released() {
-        if let Some(key_code) = minifb_key_to_js_key_code(key) {
-            let _ = input.send_keyboard(key_code, KeyAction::Up, modifiers, true);
-        }
-    }
+    false
 }
 
-fn update_native_mouse_button(
+fn send_sdl3_mouse_position(
     input: &StreamInputSender,
-    previous: &mut bool,
-    current: bool,
-    button: StreamMouseButton,
+    x: f32,
+    y: f32,
+    reference_width: usize,
+    reference_height: usize,
+    canvas: &sdl3::render::WindowCanvas,
 ) {
-    if *previous == current {
+    let Ok((output_width, output_height)) = canvas.output_size() else {
         return;
-    }
-    let action = if current {
-        ButtonAction::Press
-    } else {
-        ButtonAction::Release
+    };
+    let video_region = scaled_video_region(
+        reference_width,
+        reference_height,
+        output_width as usize,
+        output_height as usize,
+    );
+    let x = clamp_f32_to_stream_i16(x - video_region.x, video_region.width);
+    let y = clamp_f32_to_stream_i16(y - video_region.y, video_region.height);
+    let _ = input.send_mouse_position(
+        x,
+        y,
+        clamp_f32_to_i16(video_region.width),
+        clamp_f32_to_i16(video_region.height),
+    );
+}
+
+fn send_sdl3_mouse_button(
+    input: &StreamInputSender,
+    mouse_btn: sdl3::mouse::MouseButton,
+    action: ButtonAction,
+) {
+    let button = match mouse_btn {
+        sdl3::mouse::MouseButton::Left => StreamMouseButton::Left,
+        sdl3::mouse::MouseButton::Middle => StreamMouseButton::Middle,
+        sdl3::mouse::MouseButton::Right => StreamMouseButton::Right,
+        sdl3::mouse::MouseButton::X1 => StreamMouseButton::X1,
+        sdl3::mouse::MouseButton::X2 => StreamMouseButton::X2,
+        sdl3::mouse::MouseButton::Unknown => return,
     };
     let _ = input.send_mouse_button(action, button);
-    *previous = current;
 }
 
-fn native_key_modifiers(window: &minifb::Window) -> KeyModifiers {
-    let keys = window.get_keys();
+fn sdl3_key_modifiers(keymod: sdl3::keyboard::Mod) -> KeyModifiers {
     KeyModifiers {
-        shift: keys.contains(&minifb::Key::LeftShift) || keys.contains(&minifb::Key::RightShift),
-        ctrl: keys.contains(&minifb::Key::LeftCtrl) || keys.contains(&minifb::Key::RightCtrl),
-        alt: keys.contains(&minifb::Key::LeftAlt) || keys.contains(&minifb::Key::RightAlt),
-        meta: keys.contains(&minifb::Key::LeftSuper) || keys.contains(&minifb::Key::RightSuper),
+        shift: keymod.intersects(sdl3::keyboard::Mod::LSHIFTMOD | sdl3::keyboard::Mod::RSHIFTMOD),
+        ctrl: keymod.intersects(sdl3::keyboard::Mod::LCTRLMOD | sdl3::keyboard::Mod::RCTRLMOD),
+        alt: keymod.intersects(sdl3::keyboard::Mod::LALTMOD | sdl3::keyboard::Mod::RALTMOD),
+        meta: keymod.intersects(sdl3::keyboard::Mod::LGUIMOD | sdl3::keyboard::Mod::RGUIMOD),
     }
 }
 
-fn minifb_key_to_js_key_code(key: minifb::Key) -> Option<i16> {
+fn sdl3_keycode_to_js_key_code(key: sdl3::keyboard::Keycode) -> Option<i16> {
     let key_code = match key {
-        minifb::Key::Backspace => 8,
-        minifb::Key::Tab => 9,
-        minifb::Key::Enter | minifb::Key::NumPadEnter => 13,
-        minifb::Key::LeftShift | minifb::Key::RightShift => 16,
-        minifb::Key::LeftCtrl | minifb::Key::RightCtrl => 17,
-        minifb::Key::LeftAlt | minifb::Key::RightAlt => 18,
-        minifb::Key::Pause => 19,
-        minifb::Key::CapsLock => 20,
-        minifb::Key::Escape => 27,
-        minifb::Key::Space => 32,
-        minifb::Key::PageUp => 33,
-        minifb::Key::PageDown => 34,
-        minifb::Key::End => 35,
-        minifb::Key::Home => 36,
-        minifb::Key::Left => 37,
-        minifb::Key::Up => 38,
-        minifb::Key::Right => 39,
-        minifb::Key::Down => 40,
-        minifb::Key::Insert => 45,
-        minifb::Key::Delete => 46,
-        minifb::Key::Key0 => 48,
-        minifb::Key::Key1 => 49,
-        minifb::Key::Key2 => 50,
-        minifb::Key::Key3 => 51,
-        minifb::Key::Key4 => 52,
-        minifb::Key::Key5 => 53,
-        minifb::Key::Key6 => 54,
-        minifb::Key::Key7 => 55,
-        minifb::Key::Key8 => 56,
-        minifb::Key::Key9 => 57,
-        minifb::Key::A => 65,
-        minifb::Key::B => 66,
-        minifb::Key::C => 67,
-        minifb::Key::D => 68,
-        minifb::Key::E => 69,
-        minifb::Key::F => 70,
-        minifb::Key::G => 71,
-        minifb::Key::H => 72,
-        minifb::Key::I => 73,
-        minifb::Key::J => 74,
-        minifb::Key::K => 75,
-        minifb::Key::L => 76,
-        minifb::Key::M => 77,
-        minifb::Key::N => 78,
-        minifb::Key::O => 79,
-        minifb::Key::P => 80,
-        minifb::Key::Q => 81,
-        minifb::Key::R => 82,
-        minifb::Key::S => 83,
-        minifb::Key::T => 84,
-        minifb::Key::U => 85,
-        minifb::Key::V => 86,
-        minifb::Key::W => 87,
-        minifb::Key::X => 88,
-        minifb::Key::Y => 89,
-        minifb::Key::Z => 90,
-        minifb::Key::LeftSuper | minifb::Key::RightSuper => 91,
-        minifb::Key::Menu => 93,
-        minifb::Key::NumPad0 => 96,
-        minifb::Key::NumPad1 => 97,
-        minifb::Key::NumPad2 => 98,
-        minifb::Key::NumPad3 => 99,
-        minifb::Key::NumPad4 => 100,
-        minifb::Key::NumPad5 => 101,
-        minifb::Key::NumPad6 => 102,
-        minifb::Key::NumPad7 => 103,
-        minifb::Key::NumPad8 => 104,
-        minifb::Key::NumPad9 => 105,
-        minifb::Key::NumPadAsterisk => 106,
-        minifb::Key::NumPadPlus => 107,
-        minifb::Key::NumPadMinus => 109,
-        minifb::Key::NumPadDot => 110,
-        minifb::Key::NumPadSlash => 111,
-        minifb::Key::F1 => 112,
-        minifb::Key::F2 => 113,
-        minifb::Key::F3 => 114,
-        minifb::Key::F4 => 115,
-        minifb::Key::F5 => 116,
-        minifb::Key::F6 => 117,
-        minifb::Key::F7 => 118,
-        minifb::Key::F8 => 119,
-        minifb::Key::F9 => 120,
-        minifb::Key::F10 => 121,
-        minifb::Key::F11 => 122,
-        minifb::Key::F12 => 123,
-        minifb::Key::NumLock => 144,
-        minifb::Key::ScrollLock => 145,
-        minifb::Key::Semicolon => 186,
-        minifb::Key::Equal => 187,
-        minifb::Key::Comma => 188,
-        minifb::Key::Minus => 189,
-        minifb::Key::Period => 190,
-        minifb::Key::Slash => 191,
-        minifb::Key::Backquote => 192,
-        minifb::Key::LeftBracket => 219,
-        minifb::Key::Backslash => 220,
-        minifb::Key::RightBracket => 221,
-        minifb::Key::Apostrophe => 222,
-        minifb::Key::F13 => 124,
-        minifb::Key::F14 => 125,
-        minifb::Key::F15 => 126,
-        minifb::Key::Unknown => return None,
-        minifb::Key::Count => return None,
+        sdl3::keyboard::Keycode::Backspace => 8,
+        sdl3::keyboard::Keycode::Tab => 9,
+        sdl3::keyboard::Keycode::Return | sdl3::keyboard::Keycode::KpEnter => 13,
+        sdl3::keyboard::Keycode::LShift | sdl3::keyboard::Keycode::RShift => 16,
+        sdl3::keyboard::Keycode::LCtrl | sdl3::keyboard::Keycode::RCtrl => 17,
+        sdl3::keyboard::Keycode::LAlt | sdl3::keyboard::Keycode::RAlt => 18,
+        sdl3::keyboard::Keycode::Pause => 19,
+        sdl3::keyboard::Keycode::CapsLock => 20,
+        sdl3::keyboard::Keycode::Escape => 27,
+        sdl3::keyboard::Keycode::Space => 32,
+        sdl3::keyboard::Keycode::PageUp => 33,
+        sdl3::keyboard::Keycode::PageDown => 34,
+        sdl3::keyboard::Keycode::End => 35,
+        sdl3::keyboard::Keycode::Home => 36,
+        sdl3::keyboard::Keycode::Left => 37,
+        sdl3::keyboard::Keycode::Up => 38,
+        sdl3::keyboard::Keycode::Right => 39,
+        sdl3::keyboard::Keycode::Down => 40,
+        sdl3::keyboard::Keycode::Insert => 45,
+        sdl3::keyboard::Keycode::Delete => 46,
+        sdl3::keyboard::Keycode::_0 => 48,
+        sdl3::keyboard::Keycode::_1 => 49,
+        sdl3::keyboard::Keycode::_2 => 50,
+        sdl3::keyboard::Keycode::_3 => 51,
+        sdl3::keyboard::Keycode::_4 => 52,
+        sdl3::keyboard::Keycode::_5 => 53,
+        sdl3::keyboard::Keycode::_6 => 54,
+        sdl3::keyboard::Keycode::_7 => 55,
+        sdl3::keyboard::Keycode::_8 => 56,
+        sdl3::keyboard::Keycode::_9 => 57,
+        sdl3::keyboard::Keycode::A => 65,
+        sdl3::keyboard::Keycode::B => 66,
+        sdl3::keyboard::Keycode::C => 67,
+        sdl3::keyboard::Keycode::D => 68,
+        sdl3::keyboard::Keycode::E => 69,
+        sdl3::keyboard::Keycode::F => 70,
+        sdl3::keyboard::Keycode::G => 71,
+        sdl3::keyboard::Keycode::H => 72,
+        sdl3::keyboard::Keycode::I => 73,
+        sdl3::keyboard::Keycode::J => 74,
+        sdl3::keyboard::Keycode::K => 75,
+        sdl3::keyboard::Keycode::L => 76,
+        sdl3::keyboard::Keycode::M => 77,
+        sdl3::keyboard::Keycode::N => 78,
+        sdl3::keyboard::Keycode::O => 79,
+        sdl3::keyboard::Keycode::P => 80,
+        sdl3::keyboard::Keycode::Q => 81,
+        sdl3::keyboard::Keycode::R => 82,
+        sdl3::keyboard::Keycode::S => 83,
+        sdl3::keyboard::Keycode::T => 84,
+        sdl3::keyboard::Keycode::U => 85,
+        sdl3::keyboard::Keycode::V => 86,
+        sdl3::keyboard::Keycode::W => 87,
+        sdl3::keyboard::Keycode::X => 88,
+        sdl3::keyboard::Keycode::Y => 89,
+        sdl3::keyboard::Keycode::Z => 90,
+        sdl3::keyboard::Keycode::LGui | sdl3::keyboard::Keycode::RGui => 91,
+        sdl3::keyboard::Keycode::Menu => 93,
+        sdl3::keyboard::Keycode::Kp0 => 96,
+        sdl3::keyboard::Keycode::Kp1 => 97,
+        sdl3::keyboard::Keycode::Kp2 => 98,
+        sdl3::keyboard::Keycode::Kp3 => 99,
+        sdl3::keyboard::Keycode::Kp4 => 100,
+        sdl3::keyboard::Keycode::Kp5 => 101,
+        sdl3::keyboard::Keycode::Kp6 => 102,
+        sdl3::keyboard::Keycode::Kp7 => 103,
+        sdl3::keyboard::Keycode::Kp8 => 104,
+        sdl3::keyboard::Keycode::Kp9 => 105,
+        sdl3::keyboard::Keycode::KpMultiply => 106,
+        sdl3::keyboard::Keycode::KpPlus => 107,
+        sdl3::keyboard::Keycode::KpMinus => 109,
+        sdl3::keyboard::Keycode::KpPeriod => 110,
+        sdl3::keyboard::Keycode::KpDivide => 111,
+        sdl3::keyboard::Keycode::F1 => 112,
+        sdl3::keyboard::Keycode::F2 => 113,
+        sdl3::keyboard::Keycode::F3 => 114,
+        sdl3::keyboard::Keycode::F4 => 115,
+        sdl3::keyboard::Keycode::F5 => 116,
+        sdl3::keyboard::Keycode::F6 => 117,
+        sdl3::keyboard::Keycode::F7 => 118,
+        sdl3::keyboard::Keycode::F8 => 119,
+        sdl3::keyboard::Keycode::F9 => 120,
+        sdl3::keyboard::Keycode::F10 => 121,
+        sdl3::keyboard::Keycode::F11 => 122,
+        sdl3::keyboard::Keycode::F12 => 123,
+        sdl3::keyboard::Keycode::F13 => 124,
+        sdl3::keyboard::Keycode::F14 => 125,
+        sdl3::keyboard::Keycode::F15 => 126,
+        sdl3::keyboard::Keycode::NumLockClear => 144,
+        sdl3::keyboard::Keycode::ScrollLock => 145,
+        sdl3::keyboard::Keycode::Semicolon => 186,
+        sdl3::keyboard::Keycode::Equals => 187,
+        sdl3::keyboard::Keycode::Comma => 188,
+        sdl3::keyboard::Keycode::Minus => 189,
+        sdl3::keyboard::Keycode::Period => 190,
+        sdl3::keyboard::Keycode::Slash => 191,
+        sdl3::keyboard::Keycode::Grave => 192,
+        sdl3::keyboard::Keycode::LeftBracket => 219,
+        sdl3::keyboard::Keycode::Backslash => 220,
+        sdl3::keyboard::Keycode::RightBracket => 221,
+        sdl3::keyboard::Keycode::Apostrophe => 222,
+        sdl3::keyboard::Keycode::Unknown => return None,
+        _ => return None,
     };
     Some(key_code)
 }
@@ -1005,7 +1128,7 @@ fn scaled_video_region(
     region
 }
 
-fn rgba_to_minifb_buffer(frame: &RgbaVideoFrame) -> Result<Vec<u32>, String> {
+fn validate_rgba_frame(frame: &RgbaVideoFrame) -> Result<(), String> {
     if frame.width <= 0 || frame.height <= 0 {
         return Err("decoded frame has invalid dimensions".into());
     }
@@ -1013,12 +1136,7 @@ fn rgba_to_minifb_buffer(frame: &RgbaVideoFrame) -> Result<Vec<u32>, String> {
     if frame.pixels.len() < pixel_count * 4 {
         return Err("decoded frame buffer is shorter than expected".into());
     }
-
-    let mut output = Vec::with_capacity(pixel_count);
-    for pixel in frame.pixels.chunks_exact(4).take(pixel_count) {
-        output.push(((pixel[0] as u32) << 16) | ((pixel[1] as u32) << 8) | pixel[2] as u32);
-    }
-    Ok(output)
+    Ok(())
 }
 
 #[cfg(moonlight_common_c_linked)]
