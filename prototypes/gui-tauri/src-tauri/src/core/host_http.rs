@@ -76,7 +76,7 @@ impl HostEndpoint {
     }
 
     pub fn http_unpair_url(&self) -> String {
-        format!("http://{}:{}/unpair", self.address, self.http_port)
+        self.url_with_query("http", self.http_port, "unpair", "")
     }
 
     pub fn launch_url(&self, query: &str) -> String {
@@ -92,15 +92,28 @@ impl HostEndpoint {
     }
 
     fn endpoint_url(&self, endpoint: &str) -> String {
-        format!("https://{}:{}/{}", self.address, self.https_port, endpoint)
+        self.url_with_query("https", self.https_port, endpoint, "")
     }
 
     fn url_with_query(&self, scheme: &str, port: u16, endpoint: &str, query: &str) -> String {
+        let host = self.host_for_url();
         if query.is_empty() {
-            return format!("{scheme}://{}:{port}/{endpoint}", self.address);
+            return format!("{scheme}://{host}:{port}/{endpoint}");
         }
 
-        format!("{scheme}://{}:{port}/{endpoint}?{query}", self.address)
+        format!("{scheme}://{host}:{port}/{endpoint}?{query}")
+    }
+
+    fn host_for_url(&self) -> String {
+        let address = self.address.trim();
+        if address.starts_with('[') && address.ends_with(']') {
+            return address.to_string();
+        }
+        if !address.contains(':') {
+            return address.to_string();
+        }
+
+        format!("[{}]", address.replace('%', "%25"))
     }
 }
 
@@ -495,6 +508,25 @@ mod tests {
         let error = HostEndpoint::from_address(" ").unwrap_err();
 
         assert_eq!("Host address is required.", error.to_string());
+    }
+
+    #[test]
+    fn host_endpoint_formats_ipv6_and_scoped_ipv6_urls() {
+        let ipv6 = HostEndpoint::from_address("fd00::1234").unwrap();
+        let scoped = HostEndpoint::from_address("fe80::6673:b6d8:21d5:a620%6").unwrap();
+
+        assert_eq!(
+            "https://[fd00::1234]:47984/serverinfo",
+            ipv6.server_info_url()
+        );
+        assert_eq!(
+            "https://[fe80::6673:b6d8:21d5:a620%256]:47984/serverinfo",
+            scoped.server_info_url()
+        );
+        assert_eq!(
+            "http://[fe80::6673:b6d8:21d5:a620%256]:47989/pair?devicename=roth",
+            scoped.http_pair_url("devicename=roth")
+        );
     }
 
     #[test]
