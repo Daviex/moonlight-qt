@@ -24,6 +24,7 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
+          "$APPDATA/boxart/**",
           "$CACHE/Moonlight Game Streaming Project/Moonlight/cache/boxart/**",
           "$EXE/boxart/**",
           "$EXE/native/boxart/**"

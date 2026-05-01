@@ -317,9 +317,11 @@ fn send_input(label: &str, send: impl FnOnce() -> i32) -> Result<(), CoreError> 
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(moonlight_common_c_linked))]
+    use super::StreamInputSender;
     use super::{
         ButtonAction, ControllerCapabilities, ControllerState, ControllerType, KeyAction,
-        KeyModifiers, MouseButton, StreamInputSender,
+        KeyModifiers, MouseButton,
     };
     use crate::core::gamestream_sys;
 

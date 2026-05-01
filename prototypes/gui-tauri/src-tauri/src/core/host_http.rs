@@ -71,6 +71,15 @@ impl HostEndpoint {
         self.endpoint_url("applist")
     }
 
+    pub fn app_asset_url(&self, app_id: &str) -> String {
+        self.url_with_query(
+            "https",
+            self.https_port,
+            "appasset",
+            &format!("appid={app_id}&AssetType=2&AssetIdx=0"),
+        )
+    }
+
     pub fn http_pair_url(&self, query: &str) -> String {
         self.url_with_query("http", self.http_port, "pair", query)
     }
@@ -207,6 +216,8 @@ fn hdr_query_parameters(supported_video_formats: i32) -> &'static str {
 pub trait HostHttpTransport {
     fn get_text(&self, url: &str) -> Result<String, CoreError>;
 
+    fn get_bytes(&self, url: &str) -> Result<Vec<u8>, CoreError>;
+
     fn get_text_with_client_identity(
         &self,
         url: &str,
@@ -274,11 +285,38 @@ impl ReqwestHostHttpTransport {
             CoreError::Backend(format!("Unable to read host response from {url}: {error}"))
         })
     }
+
+    fn get_bytes_with_client(
+        &self,
+        client: &reqwest::blocking::Client,
+        url: &str,
+    ) -> Result<Vec<u8>, CoreError> {
+        let response = client.get(url).send().map_err(|error| {
+            CoreError::Backend(format!("Host request failed for {url}: {error}"))
+        })?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(CoreError::Backend(format!(
+                "Host request failed for {url}: HTTP {status}"
+            )));
+        }
+
+        response
+            .bytes()
+            .map(|bytes| bytes.to_vec())
+            .map_err(|error| {
+                CoreError::Backend(format!("Unable to read host response from {url}: {error}"))
+            })
+    }
 }
 
 impl HostHttpTransport for ReqwestHostHttpTransport {
     fn get_text(&self, url: &str) -> Result<String, CoreError> {
         self.get_text_with_client(&self.client, url)
+    }
+
+    fn get_bytes(&self, url: &str) -> Result<Vec<u8>, CoreError> {
+        self.get_bytes_with_client(&self.client, url)
     }
 
     fn get_text_with_client_identity(
@@ -320,6 +358,20 @@ where
     pub fn fetch_app_list(&self, endpoint: &HostEndpoint) -> Result<Vec<HostApp>, CoreError> {
         let body = self.transport.get_text(&endpoint.app_list_url())?;
         parse_app_list(&body)
+    }
+
+    pub fn fetch_box_art(
+        &self,
+        endpoint: &HostEndpoint,
+        app_id: &str,
+    ) -> Result<Vec<u8>, CoreError> {
+        let bytes = self.transport.get_bytes(&endpoint.app_asset_url(app_id))?;
+        if bytes.is_empty() {
+            return Err(CoreError::Backend(format!(
+                "Host returned empty box art for app {app_id}."
+            )));
+        }
+        Ok(bytes)
     }
 
     pub fn launch_app(
@@ -381,12 +433,19 @@ impl HostApp {
 }
 
 pub fn parse_server_info(xml: &str) -> Result<ServerInfo, CoreError> {
+    let state = optional_tag(xml, "state");
+    let current_game_id = if state.ends_with("_SERVER_BUSY") {
+        optional_tag(xml, "currentgame").parse::<i32>().unwrap_or(0)
+    } else {
+        0
+    };
+
     Ok(ServerInfo {
         app_version: optional_tag(xml, "appversion"),
         gfe_version: optional_tag(xml, "GfeVersion"),
         unique_id: optional_tag(xml, "uniqueid"),
-        state: optional_tag(xml, "state"),
-        current_game_id: optional_tag(xml, "currentgame").parse::<i32>().unwrap_or(0),
+        state,
+        current_game_id,
         pair_status: optional_tag(xml, "PairStatus"),
         server_codec_mode_support: optional_tag(xml, "ServerCodecModeSupport")
             .parse::<i32>()
@@ -406,7 +465,7 @@ pub fn parse_app_list(xml: &str) -> Result<Vec<HostApp>, CoreError> {
             name,
             hidden: false,
             direct_launch: false,
-            app_collector_game: false,
+            app_collector_game: optional_tag(block, "IsAppCollectorGame") == "1",
         });
     }
 
@@ -535,6 +594,11 @@ mod tests {
             }
             Ok("<root><App><ID>1</ID><AppTitle>Desktop</AppTitle></App></root>".into())
         }
+
+        fn get_bytes(&self, url: &str) -> Result<Vec<u8>, CoreError> {
+            self.requests.borrow_mut().push(url.to_string());
+            Ok(vec![0x89, b'P', b'N', b'G'])
+        }
     }
 
     #[test]
@@ -552,6 +616,10 @@ mod tests {
         assert_eq!(
             "https://192.168.1.20:47984/applist",
             endpoint.app_list_url()
+        );
+        assert_eq!(
+            "https://192.168.1.20:47984/appasset?appid=123&AssetType=2&AssetIdx=0",
+            endpoint.app_asset_url("123")
         );
         assert_eq!(
             "http://192.168.1.20:47989/unpair",
@@ -638,7 +706,7 @@ mod tests {
             <root>
                 <appversion>Sunshine v0.23.1</appversion>
                 <GfeVersion>3.23</GfeVersion>
-                <state>MJOLNIR_SERVER</state>
+                <state>MJOLNIR_SERVER_BUSY</state>
                 <uniqueid>abc123</uniqueid>
                 <currentgame>12345</currentgame>
                 <PairStatus>1</PairStatus>
@@ -649,7 +717,7 @@ mod tests {
         .unwrap();
 
         assert_eq!("Sunshine v0.23.1", info.app_version);
-        assert_eq!("MJOLNIR_SERVER", info.state);
+        assert_eq!("MJOLNIR_SERVER_BUSY", info.state);
         assert_eq!("abc123", info.unique_id);
         assert_eq!(12345, info.current_game_id);
         assert_eq!(65535, info.server_codec_mode_support);
@@ -661,7 +729,7 @@ mod tests {
             r#"
             <root>
                 <App><ID>1</ID><AppTitle>Desktop</AppTitle></App>
-                <App><ID>2</ID><AppTitle>Steam Big Picture</AppTitle></App>
+                <App><ID>2</ID><AppTitle>Steam Big Picture</AppTitle><IsAppCollectorGame>1</IsAppCollectorGame></App>
             </root>
             "#,
         )
@@ -670,6 +738,7 @@ mod tests {
         assert_eq!(2, apps.len());
         assert_eq!("1", apps[0].id);
         assert_eq!("Steam Big Picture", apps[1].name);
+        assert!(apps[1].app_collector_game);
     }
 
     #[test]
@@ -695,6 +764,21 @@ mod tests {
 
         assert!(entry.running);
         assert!(entry.direct_launch);
+    }
+
+    #[test]
+    fn client_fetches_box_art_bytes() {
+        let transport = FakeTransport::default();
+        let client = HostHttpClient::new(transport);
+        let endpoint = HostEndpoint::from_address("sunshine.local").unwrap();
+
+        let bytes = client.fetch_box_art(&endpoint, "7").unwrap();
+
+        assert_eq!(vec![0x89, b'P', b'N', b'G'], bytes);
+        assert_eq!(
+            vec!["https://sunshine.local:47984/appasset?appid=7&AssetType=2&AssetIdx=0"],
+            client.transport.requests.into_inner()
+        );
     }
 
     #[test]

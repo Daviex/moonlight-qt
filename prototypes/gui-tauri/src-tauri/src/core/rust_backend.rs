@@ -25,6 +25,10 @@ use super::types::{
     AppEntry, BackendInfo, CommandStatus, DisplayInfo, HostDetails, HostEntry, HostStatus,
     NetworkTestResult, PairingChallenge, StreamingSettings, SystemInfo,
 };
+use sha2::{Digest, Sha256};
+use std::collections::HashSet;
+use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::thread::{self, JoinHandle};
@@ -43,6 +47,8 @@ pub struct RustBackend {
     event_sender: Option<Sender<BridgeEvent>>,
     stream_callbacks: Option<StreamCallbacks>,
     stream_thread: Option<JoinHandle<()>>,
+    box_art_dir: Option<PathBuf>,
+    pending_box_art_fetches: HashSet<(String, String)>,
 }
 
 impl RustBackend {
@@ -67,10 +73,12 @@ impl RustBackend {
         app_data_dir: impl Into<PathBuf>,
         event_sender: Option<Sender<BridgeEvent>>,
     ) -> Result<Self, String> {
-        let state_store = JsonStateStore::in_app_data_dir(app_data_dir);
+        let app_data_dir = app_data_dir.into();
+        let state_store = JsonStateStore::in_app_data_dir(&app_data_dir);
         let state = state_store.load().map_err(|error| error.to_string())?;
         let mut backend =
             Self::from_state_with_event_sender(state, Some(state_store), event_sender);
+        backend.box_art_dir = Some(app_data_dir.join("boxart"));
         backend.ensure_client_identity()?;
         Ok(backend)
     }
@@ -98,6 +106,8 @@ impl RustBackend {
             event_sender,
             stream_callbacks: None,
             stream_thread: None,
+            box_art_dir: None,
+            pending_box_art_fetches: HashSet::new(),
         }
     }
 
@@ -208,6 +218,7 @@ impl RustBackend {
 
     fn refresh_apps_from_host(
         &mut self,
+        host: &StoredHost,
         address: &str,
         running_game_id: i32,
     ) -> Result<(), String> {
@@ -215,14 +226,117 @@ impl RustBackend {
             return Err("Host HTTP client is unavailable.".into());
         };
         let endpoint = HostEndpoint::from_address(address).map_err(|error| error.to_string())?;
+        let previous_apps = self.apps.clone();
         let apps = client
             .fetch_app_list(&endpoint)
             .map_err(|error| error.to_string())?
             .into_iter()
-            .map(|app| app.into_entry(running_game_id, String::new()))
-            .collect();
+            .map(|app| {
+                let box_art_url = self.cached_box_art_url(&host.uuid, &app.id);
+                let previous = previous_apps.iter().find(|entry| entry.id == app.id);
+                let mut entry = app.into_entry(running_game_id, box_art_url);
+                if let Some(previous) = previous {
+                    entry.hidden = previous.hidden;
+                    entry.direct_launch = previous.direct_launch;
+                }
+                entry
+            })
+            .collect::<Vec<_>>();
         self.apps = apps;
+        self.queue_missing_box_art_fetches(host, address);
         self.persist()
+    }
+
+    fn cached_box_art_url(&self, host_uuid: &str, app_id: &str) -> String {
+        let Some(path) = self.box_art_path(host_uuid, app_id) else {
+            return String::new();
+        };
+        match fs::metadata(&path) {
+            Ok(metadata) if metadata.len() > 0 => file_url_from_path(&path),
+            _ => String::new(),
+        }
+    }
+
+    fn box_art_path(&self, host_uuid: &str, app_id: &str) -> Option<PathBuf> {
+        self.box_art_dir.as_ref().map(|dir| {
+            dir.join(safe_cache_key(host_uuid))
+                .join(format!("{}.png", safe_cache_key(app_id)))
+        })
+    }
+
+    fn queue_missing_box_art_fetches(&mut self, host: &StoredHost, address: &str) {
+        if self.box_art_dir.is_none() {
+            return;
+        }
+        let Ok(endpoint) = HostEndpoint::from_address(address) else {
+            return;
+        };
+
+        let host_uuid = host.uuid.clone();
+        let host_id = host.id.clone();
+        let event_sender = self.event_sender.clone();
+        let mut fetches = Vec::new();
+        for app in &self.apps {
+            if !app.box_art_url.is_empty() {
+                continue;
+            }
+            let Some(path) = self.box_art_path(&host_uuid, &app.id) else {
+                continue;
+            };
+            let fetch_key = (host_uuid.clone(), app.id.clone());
+            if !self.pending_box_art_fetches.insert(fetch_key) {
+                continue;
+            }
+            fetches.push((app.id.clone(), app.name.clone(), path));
+        }
+
+        if fetches.is_empty() {
+            return;
+        }
+
+        thread::spawn(move || {
+            let client = match BlockingHostHttpClient::connect() {
+                Ok(client) => client,
+                Err(error) => {
+                    eprintln!("Rust backend box art client initialization failed: {error}");
+                    return;
+                }
+            };
+
+            for (app_id, app_name, path) in fetches {
+                if path.exists() {
+                    continue;
+                }
+                if let Some(parent) = path.parent() {
+                    if let Err(error) = fs::create_dir_all(parent) {
+                        eprintln!("Rust backend box art cache directory creation failed: {error}");
+                        continue;
+                    }
+                }
+                let bytes = match client.fetch_box_art(&endpoint, &app_id) {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        eprintln!("Rust backend box art fetch failed for {app_name}: {error}");
+                        continue;
+                    }
+                };
+                if let Err(error) = fs::write(&path, bytes) {
+                    eprintln!("Rust backend box art cache write failed for {app_name}: {error}");
+                    continue;
+                }
+                if let Some(event_sender) = &event_sender {
+                    let _ = event_sender.send(BridgeEvent {
+                        kind: BridgeEventKind::AppChanged,
+                        message: format!("Box art loaded for {app_name}."),
+                        host_id: Some(host_id.clone()),
+                        app_id: Some(app_id),
+                        controller_action: None,
+                        update_version: None,
+                        update_url: None,
+                    });
+                }
+            }
+        });
     }
 
     fn prepare_live_stream(
@@ -601,7 +715,8 @@ impl MoonlightCore for RustBackend {
             .map(|info| info.current_game_id)
             .unwrap_or(0);
         // Keep the persisted app list when the host is offline or not reachable yet.
-        let _ = self.refresh_apps_from_host(&stored_host.manual_address, running_game_id);
+        let _ =
+            self.refresh_apps_from_host(&stored_host, &stored_host.manual_address, running_game_id);
 
         Ok(self
             .apps
@@ -1005,10 +1120,49 @@ fn start_stream_runner_thread(
     })
 }
 
+fn safe_cache_key(value: &str) -> String {
+    let trimmed = value.trim();
+    if !trimmed.is_empty()
+        && trimmed.len() <= 64
+        && trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        return trimmed.to_string();
+    }
+
+    let mut hasher = Sha256::new();
+    hasher.update(value.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn file_url_from_path(path: &Path) -> String {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    if cfg!(windows) {
+        format!("file:///{}", percent_encode_file_path(&normalized))
+    } else {
+        format!("file://{}", percent_encode_file_path(&normalized))
+    }
+}
+
+fn percent_encode_file_path(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b':' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char)
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
+
 #[cfg(test)]
 mod tests {
     use super::RustBackend;
     use crate::core::backend::MoonlightCore;
+    #[cfg(not(moonlight_common_c_linked))]
     use crate::core::storage::JsonStateStore;
     use std::path::PathBuf;
     use std::thread;
