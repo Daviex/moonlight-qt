@@ -435,6 +435,28 @@ fn decode_unit_bytes(decode_unit: &gamestream_sys::DecodeUnit) -> u64 {
     total
 }
 
+unsafe fn copy_decode_unit_payload(decode_unit: &gamestream_sys::DecodeUnit) -> Vec<u8> {
+    let capacity = decode_unit_bytes(decode_unit)
+        .try_into()
+        .unwrap_or_default();
+    let mut payload = Vec::with_capacity(capacity);
+    let mut entry = decode_unit.buffer_list;
+    let mut entries_seen = 0;
+    while !entry.is_null() && entries_seen < 256 {
+        // SAFETY: The caller guarantees the Limelight decode-unit linked list is valid.
+        let current = unsafe { &*entry };
+        if !current.data.is_null() && current.length > 0 {
+            let length: usize = current.length.try_into().unwrap_or_default();
+            // SAFETY: The caller guarantees each non-null buffer is valid for length bytes.
+            let data = unsafe { std::slice::from_raw_parts(current.data.cast::<u8>(), length) };
+            payload.extend_from_slice(data);
+        }
+        entry = current.next;
+        entries_seen += 1;
+    }
+    payload
+}
+
 unsafe extern "C" fn headless_audio_init(
     audio_configuration: c_int,
     opus_config: *const gamestream_sys::OpusMultistreamConfiguration,
@@ -1137,6 +1159,32 @@ mod tests {
             super::AudioSinkState::default(),
             super::audio_sink_state_snapshot()
         );
+    }
+
+    #[test]
+    fn decode_unit_payload_is_copied_in_buffer_order() {
+        let mut second_payload = [4_i8, 5, 6];
+        let mut first_payload = [1_i8, 2, 3];
+        let mut second_entry = gamestream_sys::LEntry {
+            data: second_payload.as_mut_ptr(),
+            length: second_payload.len() as i32,
+            ..gamestream_sys::LEntry::default()
+        };
+        let mut first_entry = gamestream_sys::LEntry {
+            next: &mut second_entry,
+            data: first_payload.as_mut_ptr(),
+            length: first_payload.len() as i32,
+            ..gamestream_sys::LEntry::default()
+        };
+        let decode_unit = gamestream_sys::DecodeUnit {
+            buffer_list: &mut first_entry,
+            ..gamestream_sys::DecodeUnit::default()
+        };
+
+        let payload = unsafe { super::copy_decode_unit_payload(&decode_unit) };
+
+        assert_eq!(vec![1, 2, 3, 4, 5, 6], payload);
+        assert_eq!(6, super::decode_unit_bytes(&decode_unit));
     }
 
     #[test]
