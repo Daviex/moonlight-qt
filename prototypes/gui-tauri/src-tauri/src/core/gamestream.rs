@@ -20,6 +20,8 @@ use std::sync::mpsc::{self, Sender, SyncSender};
 use std::sync::{Arc, Mutex, OnceLock};
 
 const DEFAULT_VIDEO_PACKET_SIZE: u32 = 1392;
+const NATIVE_VIDEO_INPUT_POLL_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1);
+const NATIVE_VIDEO_EVENT_POLL_FPS: usize = 1000;
 
 static STREAM_EVENT_CONTEXT: OnceLock<Mutex<Option<StreamEventContext>>> = OnceLock::new();
 static AUDIO_SINK_STATE: OnceLock<Mutex<AudioSinkState>> = OnceLock::new();
@@ -666,7 +668,7 @@ fn stop_native_video_renderer() {
 }
 
 fn send_native_video_frame(frame: RgbaVideoFrame) {
-    if let Ok(slot) = VIDEO_RENDERER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+    if let Ok(mut slot) = VIDEO_RENDERER_STATE.get_or_init(|| Mutex::new(None)).lock() {
         if let Some(renderer) = slot.as_ref() {
             match renderer.frame_sender.try_send(frame) {
                 Ok(()) | Err(mpsc::TrySendError::Full(_)) => {}
@@ -675,6 +677,7 @@ fn send_native_video_frame(frame: RgbaVideoFrame) {
                         BridgeEventKind::Status,
                         "Native video renderer is no longer accepting frames.".into(),
                     );
+                    *slot = None;
                 }
             }
         }
@@ -698,6 +701,8 @@ fn native_video_renderer_loop(
     )
     .map_err(|error| error.to_string())?;
     logger::log("native video renderer window created");
+    window.set_cursor_visibility(false);
+    window.set_target_fps(NATIVE_VIDEO_EVENT_POLL_FPS);
     let mut last_buffer = vec![0; width * height];
     let mut last_width = width;
     let mut last_height = height;
@@ -717,7 +722,7 @@ fn native_video_renderer_loop(
             last_width,
             last_height,
         );
-        match frame_receiver.recv_timeout(std::time::Duration::from_millis(16)) {
+        match frame_receiver.recv_timeout(NATIVE_VIDEO_INPUT_POLL_TIMEOUT) {
             Ok(frame) => {
                 let converted = rgba_to_minifb_buffer(&frame)?;
                 last_width = frame.width as usize;

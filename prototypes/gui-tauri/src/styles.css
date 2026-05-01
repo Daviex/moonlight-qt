@@ -529,7 +529,7 @@ nav button.nav-active {
   border: 1px dashed var(--color-accent);
   border-radius: var(--radius-lg);
   color: var(--color-text);
-  cursor: crosshair;
+  cursor: none;
   outline: none;
   padding: 1rem;
   user-select: none;
