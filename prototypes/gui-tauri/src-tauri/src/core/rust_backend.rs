@@ -2,7 +2,7 @@ use super::backend::MoonlightCore;
 use super::discovery::{discover_nvstream_hosts, merge_discovered_hosts};
 use super::error::CoreError;
 use super::events::{BridgeEvent, BridgeEventKind};
-use super::gamestream::GameStreamRunner;
+use super::gamestream::{GameStreamRunner, StreamCallbacks};
 use super::host_http::{
     BlockingHostHttpClient, HostEndpoint, ReqwestHostHttpTransport, ServerInfo, StartAppRequest,
 };
@@ -38,6 +38,7 @@ pub struct RustBackend {
     host_http: Option<BlockingHostHttpClient>,
     active_stream_plan: Option<StreamLaunchPlan>,
     event_sender: Option<Sender<BridgeEvent>>,
+    stream_callbacks: Option<StreamCallbacks>,
 }
 
 impl RustBackend {
@@ -91,6 +92,7 @@ impl RustBackend {
             host_http: BlockingHostHttpClient::connect().ok(),
             active_stream_plan: None,
             event_sender,
+            stream_callbacks: None,
         }
     }
 
@@ -587,7 +589,26 @@ impl MoonlightCore for RustBackend {
         let app = self.app_mut(app_id)?.clone();
         let plan = StreamLaunchPlan::new(&stored_host, &app, &self.settings)
             .map_err(|error| error.to_string())?;
-        let _prepared_stream = self.prepare_live_stream(&plan)?;
+        let prepared_stream = self.prepare_live_stream(&plan)?;
+        let callbacks = if let Some(mut prepared_stream) = prepared_stream {
+            let mut callbacks = self
+                .event_sender
+                .clone()
+                .map(|sender| {
+                    StreamCallbacks::connection_lifecycle_with_events(
+                        sender,
+                        plan.host_id.clone(),
+                        plan.app_id.clone(),
+                    )
+                })
+                .unwrap_or_else(StreamCallbacks::connection_lifecycle);
+            GameStreamRunner
+                .start(&mut prepared_stream.raw, &mut callbacks)
+                .map_err(|error| error.to_string())?;
+            Some(callbacks)
+        } else {
+            None
+        };
 
         self.session
             .launch(plan.host_id.clone(), plan.app_id.clone())
@@ -599,6 +620,7 @@ impl MoonlightCore for RustBackend {
         let app_name = plan.app_name.clone();
         self.app_mut(app_id)?.running = true;
         self.active_stream_plan = Some(plan);
+        self.stream_callbacks = callbacks;
 
         Ok(CommandStatus {
             message: format!("Launch requested for {app_name}."),
@@ -630,7 +652,9 @@ impl MoonlightCore for RustBackend {
         for app in &mut self.apps {
             app.running = false;
         }
+        GameStreamRunner.stop();
         self.active_stream_plan = None;
+        self.stream_callbacks = None;
         self.session.finish();
 
         Ok(CommandStatus {

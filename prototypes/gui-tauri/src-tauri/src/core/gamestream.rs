@@ -1,13 +1,18 @@
 #![allow(dead_code)]
 
 use super::error::CoreError;
+use super::events::{BridgeEvent, BridgeEventKind};
 use super::gamestream_sys;
 #[cfg(moonlight_common_c_linked)]
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int};
+use std::sync::mpsc::Sender;
+use std::sync::{Mutex, OnceLock};
 
 const DEFAULT_VIDEO_PACKET_SIZE: u32 = 1392;
+
+static STREAM_EVENT_CONTEXT: OnceLock<Mutex<Option<StreamEventContext>>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AudioConfiguration {
@@ -89,6 +94,13 @@ pub struct StreamCallbacks {
     pub audio: gamestream_sys::AudioRendererCallbacks,
 }
 
+#[derive(Clone, Debug)]
+struct StreamEventContext {
+    sender: Sender<BridgeEvent>,
+    host_id: String,
+    app_id: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServerConnectionConfiguration {
     pub address: String,
@@ -120,6 +132,19 @@ impl StreamCallbacks {
         callbacks
     }
 
+    pub fn connection_lifecycle_with_events(
+        sender: Sender<BridgeEvent>,
+        host_id: impl Into<String>,
+        app_id: impl Into<String>,
+    ) -> Self {
+        set_stream_event_context(StreamEventContext {
+            sender,
+            host_id: host_id.into(),
+            app_id: app_id.into(),
+        });
+        Self::connection_lifecycle()
+    }
+
     pub fn as_raw_parts(
         &mut self,
     ) -> (
@@ -132,30 +157,88 @@ impl StreamCallbacks {
 }
 
 unsafe extern "C" fn connection_stage_starting(stage: c_int) {
-    eprintln!("GameStream stage starting: {}", stage_name(stage));
+    let stage = stage_name(stage);
+    let message = format!("GameStream stage starting: {stage}.");
+    eprintln!("{message}");
+    emit_stream_event(BridgeEventKind::SessionChanged, message);
 }
 
 unsafe extern "C" fn connection_stage_complete(stage: c_int) {
-    eprintln!("GameStream stage complete: {}", stage_name(stage));
+    let stage = stage_name(stage);
+    let message = format!("GameStream stage complete: {stage}.");
+    eprintln!("{message}");
+    emit_stream_event(BridgeEventKind::SessionChanged, message);
 }
 
 unsafe extern "C" fn connection_stage_failed(stage: c_int, error_code: c_int) {
-    eprintln!(
-        "GameStream stage failed: {} (error {error_code})",
-        stage_name(stage)
-    );
+    let stage = stage_name(stage);
+    let message = format!("GameStream stage failed: {stage} (error {error_code}).");
+    eprintln!("{message}");
+    emit_stream_event(BridgeEventKind::Status, message);
 }
 
 unsafe extern "C" fn connection_started() {
-    eprintln!("GameStream connection started.");
+    let message = "Stream session active.".to_string();
+    eprintln!("{message}");
+    emit_stream_event(BridgeEventKind::SessionChanged, message);
 }
 
 unsafe extern "C" fn connection_terminated(error_code: c_int) {
-    eprintln!("GameStream connection terminated with code {error_code}.");
+    let message = if error_code == gamestream_sys::ML_ERROR_GRACEFUL_TERMINATION {
+        "Stream session cleanup completed.".to_string()
+    } else {
+        format!("Stream session terminated with code {error_code}.")
+    };
+    eprintln!("{message}");
+    let kind = if error_code == gamestream_sys::ML_ERROR_GRACEFUL_TERMINATION {
+        BridgeEventKind::SessionChanged
+    } else {
+        BridgeEventKind::Status
+    };
+    emit_stream_event(kind, message);
 }
 
 unsafe extern "C" fn connection_status_update(connection_status: c_int) {
-    eprintln!("GameStream connection status update: {connection_status}.");
+    let message = connection_status_message(connection_status);
+    eprintln!("{message}");
+    emit_stream_event(BridgeEventKind::Status, message);
+}
+
+fn set_stream_event_context(context: StreamEventContext) {
+    if let Ok(mut slot) = STREAM_EVENT_CONTEXT.get_or_init(|| Mutex::new(None)).lock() {
+        *slot = Some(context);
+    }
+}
+
+fn emit_stream_event(kind: BridgeEventKind, message: String) {
+    let Some(context) = stream_event_context() else {
+        return;
+    };
+    let _ = context.sender.send(BridgeEvent {
+        kind,
+        message,
+        host_id: Some(context.host_id),
+        app_id: Some(context.app_id),
+        controller_action: None,
+        update_version: None,
+        update_url: None,
+    });
+}
+
+fn stream_event_context() -> Option<StreamEventContext> {
+    STREAM_EVENT_CONTEXT
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|slot| slot.clone())
+}
+
+fn connection_status_message(connection_status: c_int) -> String {
+    match connection_status {
+        gamestream_sys::CONN_STATUS_OKAY => "GameStream connection quality is okay.".into(),
+        gamestream_sys::CONN_STATUS_POOR => "GameStream connection quality is poor.".into(),
+        _ => format!("GameStream connection status update: {connection_status}."),
+    }
 }
 
 fn stage_name(stage: c_int) -> String {
@@ -434,13 +517,16 @@ fn bytes_to_c_chars(bytes: [u8; 16]) -> [c_char; 16] {
 #[cfg(test)]
 mod tests {
     use super::{
-        AudioConfiguration, RawSessionConfiguration, RemoteInputCrypto,
-        ServerConnectionConfiguration, StreamConfiguration, StreamingRemotely,
+        connection_status_message, emit_stream_event, set_stream_event_context, AudioConfiguration,
+        RawSessionConfiguration, RemoteInputCrypto, ServerConnectionConfiguration,
+        StreamConfiguration, StreamEventContext, StreamingRemotely,
     };
+    use crate::core::events::BridgeEventKind;
     use crate::core::gamestream_sys;
     use crate::core::settings::default_streaming_settings;
     use std::ffi::CStr;
     use std::os::raw::c_int;
+    use std::sync::mpsc;
 
     #[test]
     fn stream_configuration_maps_to_raw_c_layout_values() {
@@ -614,6 +700,39 @@ mod tests {
         assert!(callbacks.connection.connection_started.is_some());
         assert!(callbacks.connection.connection_terminated.is_some());
         assert!(callbacks.connection.connection_status_update.is_some());
+    }
+
+    #[test]
+    fn connection_status_messages_match_ui_contract() {
+        assert_eq!(
+            "GameStream connection quality is okay.",
+            connection_status_message(gamestream_sys::CONN_STATUS_OKAY)
+        );
+        assert_eq!(
+            "GameStream connection quality is poor.",
+            connection_status_message(gamestream_sys::CONN_STATUS_POOR)
+        );
+    }
+
+    #[test]
+    fn stream_events_include_active_host_and_app() {
+        let (sender, receiver) = mpsc::channel();
+        set_stream_event_context(StreamEventContext {
+            sender,
+            host_id: "host-1".into(),
+            app_id: "app-1".into(),
+        });
+
+        emit_stream_event(
+            BridgeEventKind::SessionChanged,
+            "Stream session active.".into(),
+        );
+
+        let event = receiver.recv().unwrap();
+        assert_eq!(BridgeEventKind::SessionChanged, event.kind);
+        assert_eq!("Stream session active.", event.message);
+        assert_eq!(Some("host-1".into()), event.host_id);
+        assert_eq!(Some("app-1".into()), event.app_id);
     }
 
     #[test]
