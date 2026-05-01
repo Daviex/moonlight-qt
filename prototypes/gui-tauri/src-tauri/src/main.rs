@@ -1,5 +1,6 @@
 mod backend;
 mod core;
+#[cfg(feature = "legacy-ipc")]
 mod ipc_backend;
 mod logger;
 mod mock_backend;

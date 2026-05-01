@@ -14,3 +14,4 @@ tauri = { version = "2", features = ["protocol-asset"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+legacy-ipc = []

@@ -1,5 +1,6 @@
 use super::backend::MoonlightCore;
 use super::rust_backend::RustBackend;
+#[cfg(feature = "legacy-ipc")]
 use crate::ipc_backend::IpcBackend;
 use crate::logger;
 use crate::mock_backend::MockBackend;
@@ -14,16 +15,14 @@ enum BackendSelection {
 }
 
 pub fn create_backend(app_handle: tauri::AppHandle) -> Box<dyn MoonlightCore> {
-    match select_backend(
-        std::env::var(BACKEND_MODE_ENV).ok().as_deref(),
-        IpcBackend::staged_helper_path(),
-    ) {
+    match select_backend(std::env::var(BACKEND_MODE_ENV).ok().as_deref(), None) {
         BackendSelection::ForcedIpc => create_forced_ipc_backend(app_handle),
         BackendSelection::Rust => create_rust_backend(),
         BackendSelection::Mock => create_mock_backend(),
     }
 }
 
+#[cfg(feature = "legacy-ipc")]
 fn create_forced_ipc_backend(app_handle: tauri::AppHandle) -> Box<dyn MoonlightCore> {
     logger::log("creating IPC backend");
     match IpcBackend::from_environment(app_handle) {
@@ -36,6 +35,14 @@ fn create_forced_ipc_backend(app_handle: tauri::AppHandle) -> Box<dyn MoonlightC
             panic!("failed to initialize IPC backend: {error}");
         }
     }
+}
+
+#[cfg(not(feature = "legacy-ipc"))]
+fn create_forced_ipc_backend(_app_handle: tauri::AppHandle) -> Box<dyn MoonlightCore> {
+    logger::log("legacy IPC backend requested but legacy-ipc feature is disabled");
+    panic!(
+        "legacy IPC backend requested, but this binary was built without the legacy-ipc feature"
+    );
 }
 
 fn create_mock_backend() -> Box<dyn MoonlightCore> {

@@ -129,7 +129,11 @@ if "%TAURI_WITH_NATIVE_HELPER%"=="1" (
 )
 
 pushd "%TAURI_ROOT%"
-call npm run tauri -- build --no-bundle
+if "%TAURI_WITH_NATIVE_HELPER%"=="1" (
+    call npm run tauri -- build --no-bundle --features legacy-ipc
+) else (
+    call npm run tauri -- build --no-bundle
+)
 if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
 popd
 

@@ -23,7 +23,7 @@ scripts\build-tauri-prototype.bat
 
 This keeps the production Widgets package unchanged. The script first checks that it is running from the repository root, that the prototype package/manifests exist, and that npm, Cargo, rustc, and the local Tauri CLI dependency are available. On Windows it also warns if the WebView2 runtime is not detected in the standard registry locations, because the staged Tauri shell needs WebView2 at launch time. It then builds the Tauri shell with `--no-bundle`, stages `MoonlightTauri.exe` under `build\tauri-prototype`, and writes `Launch-Moonlight-Tauri.bat` for the default in-process Rust backend. It also writes `Launch-Moonlight-Tauri-Debug.bat`, which sets `MOONLIGHT_TAURI_DEBUG=1` and writes `MoonlightTauri.log` beside the staged executable. Set `TAURI_PACKAGE_ZIP=1` to also produce `build\installer-tauri-prototype-release\MoonlightTauriPrototype-<arch>-<version>.zip` from the staged package.
 
-To stage the legacy native IPC helper for fallback testing, set `TAURI_WITH_NATIVE_HELPER=1` before running `scripts\build-tauri-prototype.bat`. In that mode, the script builds or reuses `build\deploy-*-release\Moonlight.exe`, copies it under `build\tauri-prototype\native`, and writes `Launch-Moonlight-Tauri-IPC.bat` plus `Launch-Moonlight-Tauri-IPC-Debug.bat`. If a fresh native build already exists, set both `TAURI_WITH_NATIVE_HELPER=1` and `SKIP_NATIVE_BUILD=1` to reuse it.
+To stage the legacy native IPC helper for fallback testing, set `TAURI_WITH_NATIVE_HELPER=1` before running `scripts\build-tauri-prototype.bat`. In that mode, the script builds the Tauri shell with the `legacy-ipc` Cargo feature, builds or reuses `build\deploy-*-release\Moonlight.exe`, copies it under `build\tauri-prototype\native`, and writes `Launch-Moonlight-Tauri-IPC.bat` plus `Launch-Moonlight-Tauri-IPC-Debug.bat`. If a fresh native build already exists, set both `TAURI_WITH_NATIVE_HELPER=1` and `SKIP_NATIVE_BUILD=1` to reuse it.
 
 ## Migration notes
 
@@ -65,7 +65,7 @@ The Rust side now separates the production command surface from the in-process R
 1. `src-tauri\src\backend.rs` keeps compatibility re-exports for DTOs and the `MoonlightBackend` trait.
 2. `src-tauri\src\core\rust_backend.rs` contains the default in-process Rust backend. It uses Rust-owned host storage, settings validation, app/session state, and system-info DTOs without launching a helper process.
 3. `src-tauri\src\mock_backend.rs` contains the explicit in-memory mock implementation for UI-only testing.
-4. `src-tauri\src\ipc_backend.rs` contains the legacy bridge fallback. It can spawn a native helper process and forward commands over a line-delimited JSON protocol when `MOONLIGHT_TAURI_BACKEND=ipc` is set.
+4. `src-tauri\src\ipc_backend.rs` contains the legacy bridge fallback behind the `legacy-ipc` Cargo feature. It can spawn a native helper process and forward commands over a line-delimited JSON protocol when `MOONLIGHT_TAURI_BACKEND=ipc` is set in a fallback build.
 5. `src-tauri\src\main.rs` owns the Tauri commands, event emission, and backend registration.
 
 The default dev and packaged backend is now the in-process Rust backend, so the prototype launches without extra native processes and does not auto-select IPC just because `native\Moonlight.exe` is present. Use `MOONLIGHT_TAURI_BACKEND=mock` for UI-only mock testing. To force the IPC bridge from an unstaged dev build, run the Tauri shell with:
