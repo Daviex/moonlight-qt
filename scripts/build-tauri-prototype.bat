@@ -54,6 +54,10 @@ if "%TAURI_PACKAGE_ZIP%"=="1" (
     if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
 )
 
+if not defined MOONLIGHT_COMMON_C_LIB_DIR (
+    call :DetectMoonlightCommonCLibDir
+)
+
 for /F "delims=" %%V in ('npm --version') do set NPM_VERSION=%%V
 for /F "delims=" %%V in ('cargo --version') do set CARGO_VERSION=%%V
 for /F "delims=" %%V in ('rustc --version') do set RUSTC_VERSION=%%V
@@ -223,5 +227,24 @@ where %~1 >nul 2>nul
 if !ERRORLEVEL! NEQ 0 (
     echo %~2
     exit /b 1
+)
+exit /b 0
+
+:DetectMoonlightCommonCLibDir
+for %%D in (
+    "%SOURCE_ROOT%\build\moonlight-common-c\Release"
+    "%SOURCE_ROOT%\build\moonlight-common-c\release"
+    "%SOURCE_ROOT%\build\moonlight-common-c"
+    "%SOURCE_ROOT%\build\moonlight-common-c-release\Release"
+    "%SOURCE_ROOT%\moonlight-common-c\moonlight-common-c\build\Release"
+    "%SOURCE_ROOT%\moonlight-common-c\moonlight-common-c\build"
+) do (
+    if not defined MOONLIGHT_COMMON_C_LIB_DIR (
+        if exist "%%~D\moonlight-common-c.lib" (
+            set "MOONLIGHT_COMMON_C_LIB_DIR=%%~D"
+            echo Auto-detected moonlight-common-c import library:
+            echo !MOONLIGHT_COMMON_C_LIB_DIR!
+        )
+    )
 )
 exit /b 0
