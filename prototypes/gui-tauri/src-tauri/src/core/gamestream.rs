@@ -94,6 +94,11 @@ pub struct StreamCallbacks {
     pub audio: gamestream_sys::AudioRendererCallbacks,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StreamOutputMode {
+    Headless,
+}
+
 #[derive(Clone, Debug)]
 struct StreamEventContext {
     sender: Sender<BridgeEvent>,
@@ -122,6 +127,10 @@ pub struct RawSessionConfiguration {
 
 impl StreamCallbacks {
     pub fn connection_lifecycle() -> Self {
+        Self::connection_lifecycle_for_output(StreamOutputMode::Headless)
+    }
+
+    pub fn connection_lifecycle_for_output(output_mode: StreamOutputMode) -> Self {
         let mut callbacks = Self::default();
         callbacks.connection.stage_starting = Some(connection_stage_starting);
         callbacks.connection.stage_complete = Some(connection_stage_complete);
@@ -129,8 +138,9 @@ impl StreamCallbacks {
         callbacks.connection.connection_started = Some(connection_started);
         callbacks.connection.connection_terminated = Some(connection_terminated);
         callbacks.connection.connection_status_update = Some(connection_status_update);
-        callbacks.video = headless_video_callbacks();
-        callbacks.audio = headless_audio_callbacks();
+        let output_callbacks = output_mode.callbacks();
+        callbacks.video = output_callbacks.video;
+        callbacks.audio = output_callbacks.audio;
         callbacks
     }
 
@@ -155,6 +165,23 @@ impl StreamCallbacks {
         *mut gamestream_sys::AudioRendererCallbacks,
     ) {
         (&mut self.connection, &mut self.video, &mut self.audio)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct StreamOutputCallbacks {
+    video: gamestream_sys::DecoderRendererCallbacks,
+    audio: gamestream_sys::AudioRendererCallbacks,
+}
+
+impl StreamOutputMode {
+    fn callbacks(self) -> StreamOutputCallbacks {
+        match self {
+            Self::Headless => StreamOutputCallbacks {
+                video: headless_video_callbacks(),
+                audio: headless_audio_callbacks(),
+            },
+        }
     }
 }
 
@@ -816,6 +843,18 @@ mod tests {
         assert!(callbacks.connection.connection_started.is_some());
         assert!(callbacks.connection.connection_terminated.is_some());
         assert!(callbacks.connection.connection_status_update.is_some());
+        assert!(callbacks.video.setup.is_some());
+        assert!(callbacks.video.submit_decode_unit.is_some());
+        assert!(callbacks.audio.init.is_some());
+        assert!(callbacks.audio.decode_and_play_sample.is_some());
+    }
+
+    #[test]
+    fn output_mode_installs_media_callbacks() {
+        let callbacks = super::StreamCallbacks::connection_lifecycle_for_output(
+            super::StreamOutputMode::Headless,
+        );
+
         assert!(callbacks.video.setup.is_some());
         assert!(callbacks.video.submit_decode_unit.is_some());
         assert!(callbacks.audio.init.is_some());
