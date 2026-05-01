@@ -206,6 +206,7 @@ struct AudioSinkState {
     started: bool,
     samples_received: u64,
     bytes_received: u64,
+    last_packet: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -559,10 +560,12 @@ unsafe extern "C" fn headless_audio_decode_and_play_sample(
     }
 
     let mut first_sample = false;
+    let packet = unsafe { copy_audio_packet(sample_data, sample_length) };
     store_audio_sink_state(|state| {
         first_sample = state.samples_received == 0;
         state.samples_received = state.samples_received.saturating_add(1);
         state.bytes_received = state.bytes_received.saturating_add(sample_length as u64);
+        state.last_packet = packet;
     });
     if first_sample {
         emit_stream_event(
@@ -570,6 +573,16 @@ unsafe extern "C" fn headless_audio_decode_and_play_sample(
             format!("Headless audio sink received its first packet ({sample_length} bytes)."),
         );
     }
+}
+
+unsafe fn copy_audio_packet(sample_data: *const c_char, sample_length: c_int) -> Vec<u8> {
+    if sample_data.is_null() || sample_length <= 0 {
+        return Vec::new();
+    }
+
+    let length: usize = sample_length.try_into().unwrap_or_default();
+    // SAFETY: The caller guarantees this audio packet pointer is valid for sample_length bytes.
+    unsafe { std::slice::from_raw_parts(sample_data.cast::<u8>(), length) }.to_vec()
 }
 
 fn store_audio_sink_state(update: impl FnOnce(&mut AudioSinkState)) {
@@ -1167,6 +1180,7 @@ mod tests {
         assert!(!state.started);
         assert_eq!(1, state.samples_received);
         assert_eq!(encoded_sample.len() as u64, state.bytes_received);
+        assert_eq!(vec![1, 2, 3, 4], state.last_packet);
         assert_eq!(
             gamestream_sys::CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION,
             audio.capabilities
@@ -1211,6 +1225,15 @@ mod tests {
 
         assert_eq!(vec![1, 2, 3, 4, 5, 6], payload);
         assert_eq!(6, super::decode_unit_bytes(&decode_unit));
+    }
+
+    #[test]
+    fn audio_packet_payload_is_copied_to_owned_bytes() {
+        let mut packet = [9_i8, 8, 7, 6];
+
+        let payload = unsafe { super::copy_audio_packet(packet.as_mut_ptr(), packet.len() as i32) };
+
+        assert_eq!(vec![9, 8, 7, 6], payload);
     }
 
     #[test]
