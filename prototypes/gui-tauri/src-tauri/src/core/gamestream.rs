@@ -6,7 +6,7 @@ use super::gamestream_sys;
 #[cfg(moonlight_common_c_linked)]
 use std::ffi::CStr;
 use std::ffi::CString;
-use std::os::raw::{c_char, c_int};
+use std::os::raw::{c_char, c_int, c_void};
 use std::sync::mpsc::Sender;
 use std::sync::{Mutex, OnceLock};
 
@@ -129,6 +129,8 @@ impl StreamCallbacks {
         callbacks.connection.connection_started = Some(connection_started);
         callbacks.connection.connection_terminated = Some(connection_terminated);
         callbacks.connection.connection_status_update = Some(connection_status_update);
+        callbacks.video = headless_video_callbacks();
+        callbacks.audio = headless_audio_callbacks();
         callbacks
     }
 
@@ -239,6 +241,120 @@ fn connection_status_message(connection_status: c_int) -> String {
         gamestream_sys::CONN_STATUS_POOR => "GameStream connection quality is poor.".into(),
         _ => format!("GameStream connection status update: {connection_status}."),
     }
+}
+
+fn headless_video_callbacks() -> gamestream_sys::DecoderRendererCallbacks {
+    gamestream_sys::DecoderRendererCallbacks {
+        setup: Some(headless_video_setup),
+        start: Some(headless_video_start),
+        stop: Some(headless_video_stop),
+        cleanup: Some(headless_video_cleanup),
+        submit_decode_unit: Some(headless_video_submit_decode_unit),
+        capabilities: 0,
+    }
+}
+
+fn headless_audio_callbacks() -> gamestream_sys::AudioRendererCallbacks {
+    gamestream_sys::AudioRendererCallbacks {
+        init: Some(headless_audio_init),
+        start: Some(headless_audio_start),
+        stop: Some(headless_audio_stop),
+        cleanup: Some(headless_audio_cleanup),
+        decode_and_play_sample: Some(headless_audio_decode_and_play_sample),
+        capabilities: 0,
+    }
+}
+
+unsafe extern "C" fn headless_video_setup(
+    video_format: c_int,
+    width: c_int,
+    height: c_int,
+    redraw_rate: c_int,
+    _context: *mut c_void,
+    _dr_flags: c_int,
+) -> c_int {
+    emit_stream_event(
+        BridgeEventKind::Status,
+        format!(
+            "Headless video sink configured for {width}x{height}@{redraw_rate} format {video_format}."
+        ),
+    );
+    gamestream_sys::DR_OK
+}
+
+unsafe extern "C" fn headless_video_start() {
+    emit_stream_event(
+        BridgeEventKind::Status,
+        "Headless video sink started.".into(),
+    );
+}
+
+unsafe extern "C" fn headless_video_stop() {
+    emit_stream_event(
+        BridgeEventKind::Status,
+        "Headless video sink stopped.".into(),
+    );
+}
+
+unsafe extern "C" fn headless_video_cleanup() {
+    emit_stream_event(
+        BridgeEventKind::Status,
+        "Headless video sink cleaned up.".into(),
+    );
+}
+
+unsafe extern "C" fn headless_video_submit_decode_unit(
+    _decode_unit: *mut gamestream_sys::DecodeUnit,
+) -> c_int {
+    gamestream_sys::DR_OK
+}
+
+unsafe extern "C" fn headless_audio_init(
+    audio_configuration: c_int,
+    opus_config: *const gamestream_sys::OpusMultistreamConfiguration,
+    _context: *mut c_void,
+    _ar_flags: c_int,
+) -> c_int {
+    let channel_count = if opus_config.is_null() {
+        0
+    } else {
+        // SAFETY: Limelight supplies a valid OPUS_MULTISTREAM_CONFIGURATION pointer for init.
+        unsafe { (*opus_config).channel_count }
+    };
+    emit_stream_event(
+        BridgeEventKind::Status,
+        format!(
+            "Headless audio sink configured for audio {audio_configuration} with {channel_count} channels."
+        ),
+    );
+    0
+}
+
+unsafe extern "C" fn headless_audio_start() {
+    emit_stream_event(
+        BridgeEventKind::Status,
+        "Headless audio sink started.".into(),
+    );
+}
+
+unsafe extern "C" fn headless_audio_stop() {
+    emit_stream_event(
+        BridgeEventKind::Status,
+        "Headless audio sink stopped.".into(),
+    );
+}
+
+unsafe extern "C" fn headless_audio_cleanup() {
+    emit_stream_event(
+        BridgeEventKind::Status,
+        "Headless audio sink cleaned up.".into(),
+    );
+}
+
+unsafe extern "C" fn headless_audio_decode_and_play_sample(
+    _sample_data: *mut c_char,
+    _sample_length: c_int,
+) {
 }
 
 fn stage_name(stage: c_int) -> String {
@@ -700,6 +816,43 @@ mod tests {
         assert!(callbacks.connection.connection_started.is_some());
         assert!(callbacks.connection.connection_terminated.is_some());
         assert!(callbacks.connection.connection_status_update.is_some());
+        assert!(callbacks.video.setup.is_some());
+        assert!(callbacks.video.submit_decode_unit.is_some());
+        assert!(callbacks.audio.init.is_some());
+        assert!(callbacks.audio.decode_and_play_sample.is_some());
+    }
+
+    #[test]
+    fn headless_media_callbacks_are_safe_noop_sinks() {
+        let video = super::headless_video_callbacks();
+        let audio = super::headless_audio_callbacks();
+        let mut opus = gamestream_sys::OpusMultistreamConfiguration {
+            sample_rate: 48_000,
+            channel_count: 2,
+            streams: 1,
+            coupled_streams: 1,
+            samples_per_frame: 240,
+            mapping: [0; 8],
+        };
+
+        let video_setup = video.setup.unwrap();
+        let video_submit = video.submit_decode_unit.unwrap();
+        let audio_init = audio.init.unwrap();
+
+        let video_result = unsafe { video_setup(1, 1920, 1080, 60, std::ptr::null_mut(), 0) };
+        let submit_result = unsafe { video_submit(std::ptr::null_mut()) };
+        let audio_result = unsafe {
+            audio_init(
+                gamestream_sys::AUDIO_CONFIGURATION_STEREO,
+                &mut opus,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+
+        assert_eq!(gamestream_sys::DR_OK, video_result);
+        assert_eq!(gamestream_sys::DR_OK, submit_result);
+        assert_eq!(0, audio_result);
     }
 
     #[test]
