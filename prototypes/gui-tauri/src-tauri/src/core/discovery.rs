@@ -2,7 +2,8 @@
 
 use super::error::CoreError;
 use super::host_store::{HostStore, StoredHost};
-use mdns_sd::{ServiceDaemon, ServiceEvent};
+use mdns_sd::{ScopedIp, ServiceDaemon, ServiceEvent};
+use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
 const NVSTREAM_SERVICE_TYPE: &str = "_nvstream._tcp.local.";
@@ -82,6 +83,25 @@ pub fn merge_discovered_hosts(hosts: &mut HostStore, records: Vec<DiscoveryRecor
     changed_host_ids
 }
 
+pub fn preferred_discovery_address<'a>(
+    addresses: impl IntoIterator<Item = &'a ScopedIp>,
+) -> Option<String> {
+    let mut global_ipv6 = None;
+    let mut link_local_ipv6 = None;
+    for address in addresses {
+        match address.to_ip_addr() {
+            IpAddr::V4(_) => return Some(address.to_string()),
+            IpAddr::V6(ipv6) if !is_link_local_ipv6(&ipv6) => {
+                global_ipv6.get_or_insert_with(|| address.to_string());
+            }
+            IpAddr::V6(_) => {
+                link_local_ipv6.get_or_insert_with(|| address.to_string());
+            }
+        }
+    }
+    global_ipv6.or(link_local_ipv6)
+}
+
 pub fn discover_nvstream_hosts(timeout: Duration) -> Result<Vec<DiscoveryRecord>, CoreError> {
     let mdns = ServiceDaemon::new()
         .map_err(|error| CoreError::Backend(format!("Unable to start mDNS discovery: {error}")))?;
@@ -100,7 +120,7 @@ pub fn discover_nvstream_hosts(timeout: Duration) -> Result<Vec<DiscoveryRecord>
                 if !info.is_valid() {
                     continue;
                 }
-                let Some(address) = info.addresses.iter().next().map(ToString::to_string) else {
+                let Some(address) = preferred_discovery_address(info.addresses.iter()) else {
                     continue;
                 };
                 let mac_address = info
@@ -122,6 +142,10 @@ pub fn discover_nvstream_hosts(timeout: Duration) -> Result<Vec<DiscoveryRecord>
 
     let _ = mdns.shutdown();
     Ok(deduplicate_records(records))
+}
+
+fn is_link_local_ipv6(address: &std::net::Ipv6Addr) -> bool {
+    (address.segments()[0] & 0xffc0) == 0xfe80
 }
 
 fn same_host(host: &StoredHost, record: &DiscoveryRecord) -> bool {
@@ -154,9 +178,12 @@ impl CaseFold for str {
 #[cfg(test)]
 mod tests {
     use super::{
-        deduplicate_records, merge_discovered_hosts, service_instance_name, DiscoveryRecord,
+        deduplicate_records, merge_discovered_hosts, preferred_discovery_address,
+        service_instance_name, DiscoveryRecord,
     };
     use crate::core::host_store::{HostStore, StoredHost};
+    use mdns_sd::ScopedIp;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     #[test]
     fn discovery_record_key_is_normalized() {
@@ -198,6 +225,48 @@ mod tests {
 
         assert_eq!(1, records.len());
         assert_eq!("Gaming PC", records[0].name);
+    }
+
+    #[test]
+    fn discovery_prefers_ipv4_over_scoped_link_local_ipv6() {
+        let addresses = [
+            ScopedIp::from(IpAddr::V6(Ipv6Addr::new(
+                0xfe80, 0, 0, 0, 0x6673, 0xb6d8, 0x21d5, 0xa620,
+            ))),
+            ScopedIp::from(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 44))),
+        ];
+
+        assert_eq!(
+            Some("192.168.1.44".into()),
+            preferred_discovery_address(addresses.iter())
+        );
+    }
+
+    #[test]
+    fn discovery_uses_global_ipv6_before_link_local_ipv6() {
+        let addresses = [
+            ScopedIp::from(IpAddr::V6(Ipv6Addr::new(
+                0xfe80, 0, 0, 0, 0x6673, 0xb6d8, 0x21d5, 0xa620,
+            ))),
+            ScopedIp::from(IpAddr::V6(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 0x1234))),
+        ];
+
+        assert_eq!(
+            Some("fd00::1234".into()),
+            preferred_discovery_address(addresses.iter())
+        );
+    }
+
+    #[test]
+    fn discovery_falls_back_to_link_local_ipv6_when_it_is_all_we_have() {
+        let addresses = [ScopedIp::from(IpAddr::V6(Ipv6Addr::new(
+            0xfe80, 0, 0, 0, 0x6673, 0xb6d8, 0x21d5, 0xa620,
+        )))];
+
+        assert_eq!(
+            Some("fe80::6673:b6d8:21d5:a620".into()),
+            preferred_discovery_address(addresses.iter())
+        );
     }
 
     #[test]
