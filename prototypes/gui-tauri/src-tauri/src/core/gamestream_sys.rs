@@ -37,6 +37,14 @@ pub const fn capability_slices_per_frame(slices: u8) -> c_int {
 }
 
 #[cfg(moonlight_common_c_linked)]
+pub const AV_PIX_FMT_YUV420P: c_int = 0;
+#[cfg(moonlight_common_c_linked)]
+pub const AV_PIX_FMT_YUVJ420P: c_int = 12;
+#[cfg(moonlight_common_c_linked)]
+pub const AV_PIX_FMT_NV12: c_int = 23;
+#[cfg(moonlight_common_c_linked)]
+pub const AV_PIX_FMT_NV21: c_int = 24;
+#[cfg(moonlight_common_c_linked)]
 pub const AV_PIX_FMT_RGBA: c_int = 26;
 #[cfg(moonlight_common_c_linked)]
 pub const SWS_FAST_BILINEAR: c_int = 1;

@@ -299,7 +299,58 @@ struct VideoSinkState {
     bytes_received: u64,
     last_frame_number: c_int,
     last_frame_payload: Vec<u8>,
-    last_rgba_frame: Option<RgbaVideoFrame>,
+    last_decoded_frame: Option<DecodedVideoFrame>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum DecodedVideoFrame {
+    Rgba(RgbaVideoFrame),
+    Yuv420(Yuv420VideoFrame),
+    Nv12(NvVideoFrame),
+    Nv21(NvVideoFrame),
+}
+
+impl DecodedVideoFrame {
+    fn width(&self) -> c_int {
+        match self {
+            Self::Rgba(frame) => frame.width,
+            Self::Yuv420(frame) => frame.width,
+            Self::Nv12(frame) | Self::Nv21(frame) => frame.width,
+        }
+    }
+
+    fn height(&self) -> c_int {
+        match self {
+            Self::Rgba(frame) => frame.height,
+            Self::Yuv420(frame) => frame.height,
+            Self::Nv12(frame) | Self::Nv21(frame) => frame.height,
+        }
+    }
+
+    fn frame_number(&self) -> c_int {
+        match self {
+            Self::Rgba(frame) => frame.frame_number,
+            Self::Yuv420(frame) => frame.frame_number,
+            Self::Nv12(frame) | Self::Nv21(frame) => frame.frame_number,
+        }
+    }
+
+    fn decoded_at(&self) -> Instant {
+        match self {
+            Self::Rgba(frame) => frame.decoded_at,
+            Self::Yuv420(frame) => frame.decoded_at,
+            Self::Nv12(frame) | Self::Nv21(frame) => frame.decoded_at,
+        }
+    }
+
+    fn texture_format(&self) -> Sdl3VideoTextureFormat {
+        match self {
+            Self::Rgba(_) => Sdl3VideoTextureFormat::Rgba,
+            Self::Yuv420(_) => Sdl3VideoTextureFormat::Yuv420,
+            Self::Nv12(_) => Sdl3VideoTextureFormat::Nv12,
+            Self::Nv21(_) => Sdl3VideoTextureFormat::Nv21,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -309,6 +360,33 @@ struct RgbaVideoFrame {
     frame_number: c_int,
     decoded_at: Instant,
     pixels: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Yuv420VideoFrame {
+    width: c_int,
+    height: c_int,
+    frame_number: c_int,
+    decoded_at: Instant,
+    y: VideoPlane,
+    u: VideoPlane,
+    v: VideoPlane,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NvVideoFrame {
+    width: c_int,
+    height: c_int,
+    frame_number: c_int,
+    decoded_at: Instant,
+    y: VideoPlane,
+    uv: VideoPlane,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct VideoPlane {
+    pixels: Vec<u8>,
+    pitch: usize,
 }
 
 struct NativeVideoRenderer {
@@ -325,8 +403,23 @@ struct VideoDecoderThread {
 
 #[derive(Default)]
 struct LatestVideoFrameSlot {
-    frame: Mutex<Option<RgbaVideoFrame>>,
+    frame: Mutex<Option<DecodedVideoFrame>>,
     available: Condvar,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Sdl3VideoTextureFormat {
+    Rgba,
+    Yuv420,
+    Nv12,
+    Nv21,
+}
+
+struct Sdl3VideoTexture<'a> {
+    texture: sdl3::render::Texture<'a>,
+    width: usize,
+    height: usize,
+    format: Sdl3VideoTextureFormat,
 }
 
 struct NativeVideoQueueDiagnostics {
@@ -928,7 +1021,7 @@ fn decode_pull_video_payload(
     decoder: &mut SoftwareVideoDecoder,
     payload: &[u8],
     frame_number: c_int,
-) -> Option<RgbaVideoFrame> {
+) -> Option<DecodedVideoFrame> {
     match decoder.decode(payload, frame_number) {
         Ok(frame) => frame,
         Err(error) => {
@@ -945,7 +1038,7 @@ fn update_video_sink_after_decode(
     frame_number: c_int,
     bytes_received: u64,
     payload: Vec<u8>,
-    decoded_frame: Option<RgbaVideoFrame>,
+    decoded_frame: Option<DecodedVideoFrame>,
 ) -> VideoSinkUpdate {
     let mut update = VideoSinkUpdate {
         first_frame: false,
@@ -963,7 +1056,7 @@ fn update_video_sink_after_decode(
             update.first_decoded_frame = state.decoded_frames == 0;
             state.decoded_frames = state.decoded_frames.saturating_add(1);
             send_native_video_frame(frame.clone());
-            state.last_rgba_frame = Some(frame);
+            state.last_decoded_frame = Some(frame);
         }
     });
     update
@@ -1041,8 +1134,8 @@ fn stop_native_video_renderer() {
     }
 }
 
-fn send_native_video_frame(frame: RgbaVideoFrame) {
-    let frame_number = frame.frame_number;
+fn send_native_video_frame(frame: DecodedVideoFrame) {
+    let frame_number = frame.frame_number();
     if let Ok(slot) = VIDEO_RENDERER_STATE.get_or_init(|| Mutex::new(None)).lock() {
         if let Some(renderer) = slot.as_ref() {
             let Ok(mut pending_frame) = renderer.frame_slot.frame.lock() else {
@@ -1182,9 +1275,12 @@ fn native_video_renderer_loop(
     let mut canvas = window.into_canvas();
     let texture_creator = canvas.texture_creator();
     disable_sdl3_renderer_vsync(&canvas);
-    let mut texture = create_sdl3_rgba_texture(&texture_creator, width, height)?;
-    let mut texture_width = width;
-    let mut texture_height = height;
+    let mut video_texture = create_sdl3_video_texture(
+        &texture_creator,
+        width,
+        height,
+        Sdl3VideoTextureFormat::Rgba,
+    )?;
     sdl.mouse().show_cursor(false);
     sdl.mouse().capture(true);
     sdl.mouse().set_relative_mouse_mode(canvas.window(), true);
@@ -1204,8 +1300,8 @@ fn native_video_renderer_loop(
             if handle_sdl3_video_event(
                 event,
                 &input_sender,
-                texture_width,
-                texture_height,
+                video_texture.width,
+                video_texture.height,
                 &mut canvas,
                 &mut controllers,
                 &mut pending_controller_axis_updates,
@@ -1220,32 +1316,51 @@ fn native_video_renderer_loop(
         );
         match receive_latest_video_frame(&frame_slot) {
             Some(frame) => {
-                validate_rgba_frame(&frame)?;
-                let frame_width = frame.width as usize;
-                let frame_height = frame.height as usize;
-                if frame_width != texture_width || frame_height != texture_height {
-                    texture =
-                        create_sdl3_rgba_texture(&texture_creator, frame_width, frame_height)?;
-                    texture_width = frame_width;
-                    texture_height = frame_height;
+                validate_decoded_video_frame(&frame)?;
+                let frame_width = frame.width() as usize;
+                let frame_height = frame.height() as usize;
+                let frame_format = frame.texture_format();
+                if frame_width != video_texture.width
+                    || frame_height != video_texture.height
+                    || frame_format != video_texture.format
+                {
+                    video_texture = create_sdl3_video_texture(
+                        &texture_creator,
+                        frame_width,
+                        frame_height,
+                        frame_format,
+                    )?;
                     diagnostics.recreated_textures =
                         diagnostics.recreated_textures.saturating_add(1);
                     logger::log(format!(
-                        "SDL3 video texture recreated; width={texture_width}; height={texture_height}; frame={}",
-                        frame.frame_number
+                        "SDL3 video texture recreated; width={}; height={}; format={:?}; frame={}",
+                        video_texture.width,
+                        video_texture.height,
+                        video_texture.format,
+                        frame.frame_number()
                     ));
                 }
                 let update_start = Instant::now();
-                texture
-                    .update(None, &frame.pixels, frame_width * 4)
+                update_sdl3_video_texture(&mut video_texture.texture, &frame)
                     .map_err(|error| error.to_string())?;
                 let update_us = update_start.elapsed().as_micros();
                 let render_start = Instant::now();
-                render_sdl3_video_frame(&mut canvas, &texture, texture_width, texture_height)?;
+                render_sdl3_video_frame(
+                    &mut canvas,
+                    &video_texture.texture,
+                    video_texture.width,
+                    video_texture.height,
+                )?;
                 let render_us = render_start.elapsed().as_micros();
-                let frame_age_us = frame.decoded_at.elapsed().as_micros();
-                diagnostics.record_frame(frame.frame_number, update_us, render_us, frame_age_us, 0);
-                diagnostics.maybe_log(texture_width, texture_height, &canvas);
+                let frame_age_us = frame.decoded_at().elapsed().as_micros();
+                diagnostics.record_frame(
+                    frame.frame_number(),
+                    update_us,
+                    render_us,
+                    frame_age_us,
+                    0,
+                );
+                diagnostics.maybe_log(video_texture.width, video_texture.height, &canvas);
             }
             None => {}
         }
@@ -1268,7 +1383,7 @@ fn native_video_renderer_loop(
     Ok(())
 }
 
-fn receive_latest_video_frame(frame_slot: &LatestVideoFrameSlot) -> Option<RgbaVideoFrame> {
+fn receive_latest_video_frame(frame_slot: &LatestVideoFrameSlot) -> Option<DecodedVideoFrame> {
     let Ok(mut pending_frame) = frame_slot.frame.lock() else {
         return None;
     };
@@ -1284,18 +1399,76 @@ fn receive_latest_video_frame(frame_slot: &LatestVideoFrameSlot) -> Option<RgbaV
     pending_frame.take()
 }
 
-fn create_sdl3_rgba_texture<'a>(
+fn create_sdl3_video_texture<'a>(
     texture_creator: &'a sdl3::render::TextureCreator<sdl3::video::WindowContext>,
     width: usize,
     height: usize,
-) -> Result<sdl3::render::Texture<'a>, String> {
-    texture_creator
-        .create_texture_streaming(
-            sdl3::pixels::PixelFormat::RGBA32,
-            width as u32,
-            height as u32,
+    format: Sdl3VideoTextureFormat,
+) -> Result<Sdl3VideoTexture<'a>, String> {
+    let pixel_format = match format {
+        Sdl3VideoTextureFormat::Rgba => sdl3::pixels::PixelFormat::RGBA32,
+        Sdl3VideoTextureFormat::Yuv420 => sdl3::pixels::PixelFormat::IYUV,
+        Sdl3VideoTextureFormat::Nv12 => sdl3::pixels::PixelFormat::NV12,
+        Sdl3VideoTextureFormat::Nv21 => sdl3::pixels::PixelFormat::NV21,
+    };
+    let texture = texture_creator
+        .create_texture_streaming(pixel_format, width as u32, height as u32)
+        .map_err(|error| error.to_string())?;
+    Ok(Sdl3VideoTexture {
+        texture,
+        width,
+        height,
+        format,
+    })
+}
+
+fn update_sdl3_video_texture(
+    texture: &mut sdl3::render::Texture<'_>,
+    frame: &DecodedVideoFrame,
+) -> Result<(), String> {
+    match frame {
+        DecodedVideoFrame::Rgba(frame) => texture
+            .update(None, &frame.pixels, frame.width as usize * 4)
+            .map_err(|error| error.to_string()),
+        DecodedVideoFrame::Yuv420(frame) => texture
+            .update_yuv(
+                None,
+                &frame.y.pixels,
+                frame.y.pitch,
+                &frame.u.pixels,
+                frame.u.pitch,
+                &frame.v.pixels,
+                frame.v.pitch,
+            )
+            .map_err(|error| error.to_string()),
+        DecodedVideoFrame::Nv12(frame) | DecodedVideoFrame::Nv21(frame) => {
+            update_sdl3_nv_texture(texture, &frame.y, &frame.uv)
+        }
+    }
+}
+
+fn update_sdl3_nv_texture(
+    texture: &mut sdl3::render::Texture<'_>,
+    y: &VideoPlane,
+    uv: &VideoPlane,
+) -> Result<(), String> {
+    let y_pitch = c_int::try_from(y.pitch).map_err(|_| "NV12 Y pitch overflows int")?;
+    let uv_pitch = c_int::try_from(uv.pitch).map_err(|_| "NV12 UV pitch overflows int")?;
+    let updated = unsafe {
+        sdl3::sys::render::SDL_UpdateNVTexture(
+            texture.raw(),
+            std::ptr::null(),
+            y.pixels.as_ptr(),
+            y_pitch,
+            uv.pixels.as_ptr(),
+            uv_pitch,
         )
-        .map_err(|error| error.to_string())
+    };
+    if updated {
+        Ok(())
+    } else {
+        Err(sdl3::get_error().to_string())
+    }
 }
 
 fn disable_sdl3_renderer_vsync(canvas: &sdl3::render::WindowCanvas) {
@@ -2032,13 +2205,37 @@ fn scaled_video_region(
     region
 }
 
-fn validate_rgba_frame(frame: &RgbaVideoFrame) -> Result<(), String> {
-    if frame.width <= 0 || frame.height <= 0 {
+fn validate_decoded_video_frame(frame: &DecodedVideoFrame) -> Result<(), String> {
+    if frame.width() <= 0 || frame.height() <= 0 {
         return Err("decoded frame has invalid dimensions".into());
     }
-    let pixel_count = frame.width as usize * frame.height as usize;
-    if frame.pixels.len() < pixel_count * 4 {
-        return Err("decoded frame buffer is shorter than expected".into());
+    match frame {
+        DecodedVideoFrame::Rgba(frame) => {
+            let pixel_count = frame.width as usize * frame.height as usize;
+            if frame.pixels.len() < pixel_count * 4 {
+                return Err("decoded RGBA frame buffer is shorter than expected".into());
+            }
+        }
+        DecodedVideoFrame::Yuv420(frame) => {
+            validate_video_plane(&frame.y, frame.height as usize, "Y")?;
+            validate_video_plane(&frame.u, frame.height as usize / 2, "U")?;
+            validate_video_plane(&frame.v, frame.height as usize / 2, "V")?;
+        }
+        DecodedVideoFrame::Nv12(frame) | DecodedVideoFrame::Nv21(frame) => {
+            validate_video_plane(&frame.y, frame.height as usize, "Y")?;
+            validate_video_plane(&frame.uv, frame.height as usize / 2, "UV")?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_video_plane(plane: &VideoPlane, rows: usize, name: &str) -> Result<(), String> {
+    let expected_len = plane.pitch.saturating_mul(rows);
+    if plane.pixels.len() < expected_len {
+        return Err(format!(
+            "decoded {name} plane is shorter than expected: {} < {expected_len}",
+            plane.pixels.len()
+        ));
     }
     Ok(())
 }
@@ -2171,7 +2368,7 @@ impl SoftwareVideoDecoder {
         &mut self,
         payload: &[u8],
         frame_number: c_int,
-    ) -> Result<Option<RgbaVideoFrame>, String> {
+    ) -> Result<Option<DecodedVideoFrame>, String> {
         if payload.is_empty() {
             return Ok(None);
         }
@@ -2204,7 +2401,7 @@ impl SoftwareVideoDecoder {
                     "FFmpeg frame receive failed with code {receive_result}"
                 ));
             }
-            last_frame = Some(self.convert_current_frame(frame_number)?);
+            last_frame = Some(self.copy_current_frame(frame_number)?);
             // SAFETY: frame is owned by this decoder and may be reused after unref.
             unsafe { gamestream_sys::av_frame_unref(self.frame) };
         }
@@ -2212,7 +2409,7 @@ impl SoftwareVideoDecoder {
         Ok(last_frame)
     }
 
-    fn convert_current_frame(&mut self, frame_number: c_int) -> Result<RgbaVideoFrame, String> {
+    fn copy_current_frame(&mut self, frame_number: c_int) -> Result<DecodedVideoFrame, String> {
         // SAFETY: frame is currently filled by avcodec_receive_frame.
         let frame = unsafe { &*self.frame };
         let width = frame.width;
@@ -2221,6 +2418,19 @@ impl SoftwareVideoDecoder {
         if width <= 0 || height <= 0 {
             return Err("FFmpeg returned a decoded frame with invalid dimensions".into());
         }
+        match source_format {
+            gamestream_sys::AV_PIX_FMT_YUV420P | gamestream_sys::AV_PIX_FMT_YUVJ420P => {
+                return copy_yuv420_frame(frame, frame_number);
+            }
+            gamestream_sys::AV_PIX_FMT_NV12 => {
+                return copy_nv_frame(frame, frame_number, false);
+            }
+            gamestream_sys::AV_PIX_FMT_NV21 => {
+                return copy_nv_frame(frame, frame_number, true);
+            }
+            _ => {}
+        }
+
         if self.sws_context.is_null()
             || self.sws_source_width != width
             || self.sws_source_height != height
@@ -2285,14 +2495,105 @@ impl SoftwareVideoDecoder {
             ));
         }
 
-        Ok(RgbaVideoFrame {
+        Ok(DecodedVideoFrame::Rgba(RgbaVideoFrame {
             width,
             height,
             frame_number,
             decoded_at: Instant::now(),
             pixels,
-        })
+        }))
     }
+}
+
+#[cfg(moonlight_common_c_linked)]
+fn copy_yuv420_frame(
+    frame: &gamestream_sys::AVFrame,
+    frame_number: c_int,
+) -> Result<DecodedVideoFrame, String> {
+    let width = frame.width as usize;
+    let height = frame.height as usize;
+    let chroma_width = width / 2;
+    let chroma_height = height / 2;
+    Ok(DecodedVideoFrame::Yuv420(Yuv420VideoFrame {
+        width: frame.width,
+        height: frame.height,
+        frame_number,
+        decoded_at: Instant::now(),
+        y: copy_av_frame_plane(frame.data[0], frame.linesize[0], width, height, "Y")?,
+        u: copy_av_frame_plane(
+            frame.data[1],
+            frame.linesize[1],
+            chroma_width,
+            chroma_height,
+            "U",
+        )?,
+        v: copy_av_frame_plane(
+            frame.data[2],
+            frame.linesize[2],
+            chroma_width,
+            chroma_height,
+            "V",
+        )?,
+    }))
+}
+
+#[cfg(moonlight_common_c_linked)]
+fn copy_nv_frame(
+    frame: &gamestream_sys::AVFrame,
+    frame_number: c_int,
+    nv21: bool,
+) -> Result<DecodedVideoFrame, String> {
+    let width = frame.width as usize;
+    let height = frame.height as usize;
+    let decoded_at = Instant::now();
+    let frame = NvVideoFrame {
+        width: frame.width,
+        height: frame.height,
+        frame_number,
+        decoded_at,
+        y: copy_av_frame_plane(frame.data[0], frame.linesize[0], width, height, "Y")?,
+        uv: copy_av_frame_plane(frame.data[1], frame.linesize[1], width, height / 2, "UV")?,
+    };
+    if nv21 {
+        Ok(DecodedVideoFrame::Nv21(frame))
+    } else {
+        Ok(DecodedVideoFrame::Nv12(frame))
+    }
+}
+
+#[cfg(moonlight_common_c_linked)]
+fn copy_av_frame_plane(
+    data: *mut c_uchar,
+    linesize: c_int,
+    row_bytes: usize,
+    rows: usize,
+    name: &str,
+) -> Result<VideoPlane, String> {
+    if data.is_null() {
+        return Err(format!("FFmpeg returned a null {name} plane"));
+    }
+    if linesize < row_bytes as c_int {
+        return Err(format!(
+            "FFmpeg returned a short {name} linesize: {linesize} < {row_bytes}"
+        ));
+    }
+    let stride = linesize as usize;
+    let mut pixels = vec![0; row_bytes.saturating_mul(rows)];
+    for row in 0..rows {
+        let source_offset = row.saturating_mul(stride);
+        let target_offset = row.saturating_mul(row_bytes);
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                data.add(source_offset),
+                pixels.as_mut_ptr().add(target_offset),
+                row_bytes,
+            );
+        }
+    }
+    Ok(VideoPlane {
+        pixels,
+        pitch: row_bytes,
+    })
 }
 
 #[cfg(moonlight_common_c_linked)]
@@ -2366,7 +2667,7 @@ impl Drop for FfmpegPacket {
 }
 
 #[cfg(moonlight_common_c_linked)]
-fn decode_video_payload(payload: &[u8], frame_number: c_int) -> Option<RgbaVideoFrame> {
+fn decode_video_payload(payload: &[u8], frame_number: c_int) -> Option<DecodedVideoFrame> {
     let mut slot = VIDEO_DECODER_STATE
         .get_or_init(|| Mutex::new(None))
         .lock()
@@ -3471,6 +3772,52 @@ mod tests {
 
         assert_eq!(vec![1, 2, 3, 4, 5, 6], payload);
         assert_eq!(6, super::decode_unit_bytes(&decode_unit));
+    }
+
+    #[cfg(moonlight_common_c_linked)]
+    #[test]
+    fn av_frame_planes_are_copied_without_padding() {
+        let mut source = [1_u8, 2, 3, 99, 4, 5, 6, 98];
+
+        let plane = super::copy_av_frame_plane(source.as_mut_ptr(), 4, 3, 2, "test").unwrap();
+
+        assert_eq!(3, plane.pitch);
+        assert_eq!(vec![1, 2, 3, 4, 5, 6], plane.pixels);
+    }
+
+    #[test]
+    fn decoded_frame_texture_formats_match_sdl_upload_paths() {
+        let decoded_at = std::time::Instant::now();
+        let rgba = super::DecodedVideoFrame::Rgba(super::RgbaVideoFrame {
+            width: 4,
+            height: 4,
+            frame_number: 7,
+            decoded_at,
+            pixels: vec![0; 4 * 4 * 4],
+        });
+        let yuv = super::DecodedVideoFrame::Yuv420(super::Yuv420VideoFrame {
+            width: 4,
+            height: 4,
+            frame_number: 8,
+            decoded_at,
+            y: super::VideoPlane {
+                pixels: vec![0; 16],
+                pitch: 4,
+            },
+            u: super::VideoPlane {
+                pixels: vec![0; 4],
+                pitch: 2,
+            },
+            v: super::VideoPlane {
+                pixels: vec![0; 4],
+                pitch: 2,
+            },
+        });
+
+        assert_eq!(super::Sdl3VideoTextureFormat::Rgba, rgba.texture_format());
+        assert_eq!(super::Sdl3VideoTextureFormat::Yuv420, yuv.texture_format());
+        assert!(super::validate_decoded_video_frame(&rgba).is_ok());
+        assert!(super::validate_decoded_video_frame(&yuv).is_ok());
     }
 
     #[test]
