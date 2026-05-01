@@ -232,9 +232,23 @@ impl RustBackend {
         };
         let endpoint = HostEndpoint::from_address(address).map_err(|error| error.to_string())?;
         let previous_apps = self.apps.clone();
-        let apps = client
-            .fetch_app_list(&endpoint)
-            .map_err(|error| error.to_string())?
+        let host_apps = if host.paired {
+            let identity = self.client_identity.as_ref().ok_or_else(|| {
+                "Client identity is unavailable for paired host requests.".to_string()
+            })?;
+            client
+                .fetch_app_list_with_client_identity(
+                    &endpoint,
+                    &identity.certificate_pem,
+                    &identity.private_key_pem,
+                )
+                .map_err(|error| error.to_string())?
+        } else {
+            client
+                .fetch_app_list(&endpoint)
+                .map_err(|error| error.to_string())?
+        };
+        let apps = host_apps
             .into_iter()
             .map(|app| {
                 let box_art_url = self.cached_box_art_url(&host.uuid, &app.id);
@@ -299,6 +313,11 @@ impl RustBackend {
             return;
         }
 
+        let identity = if host.paired {
+            self.client_identity.clone()
+        } else {
+            None
+        };
         thread::spawn(move || {
             let client = match BlockingHostHttpClient::connect() {
                 Ok(client) => client,
@@ -318,7 +337,16 @@ impl RustBackend {
                         continue;
                     }
                 }
-                let bytes = match client.fetch_box_art(&endpoint, &app_id) {
+                let bytes = match identity.as_ref() {
+                    Some(identity) => client.fetch_box_art_with_client_identity(
+                        &endpoint,
+                        &app_id,
+                        &identity.certificate_pem,
+                        &identity.private_key_pem,
+                    ),
+                    None => client.fetch_box_art(&endpoint, &app_id),
+                };
+                let bytes = match bytes {
                     Ok(bytes) => bytes,
                     Err(error) => {
                         eprintln!("Rust backend box art fetch failed for {app_name}: {error}");
@@ -384,13 +412,24 @@ impl RustBackend {
             gamepad_mask: 0,
             persist_game_controllers_on_disconnect: !self.settings.multi_controller,
         };
+        let identity = self.client_identity.as_ref().ok_or_else(|| {
+            "Client identity is unavailable for paired host requests.".to_string()
+        })?;
         let start_session = match request_kind {
-            StreamStartRequestKind::Launch => {
-                client.launch_app(&endpoint, &request, &plan.stream_config)
-            }
-            StreamStartRequestKind::Resume => {
-                client.resume_app(&endpoint, &request, &plan.stream_config)
-            }
+            StreamStartRequestKind::Launch => client.launch_app_with_client_identity(
+                &endpoint,
+                &request,
+                &plan.stream_config,
+                &identity.certificate_pem,
+                &identity.private_key_pem,
+            ),
+            StreamStartRequestKind::Resume => client.resume_app_with_client_identity(
+                &endpoint,
+                &request,
+                &plan.stream_config,
+                &identity.certificate_pem,
+                &identity.private_key_pem,
+            ),
         }
         .map_err(|error| error.to_string())?;
 
@@ -947,9 +986,19 @@ impl MoonlightCore for RustBackend {
             if let Some(client) = &self.host_http {
                 let endpoint =
                     HostEndpoint::from_address(&host.address).map_err(|error| error.to_string())?;
-                client
-                    .quit_app(&endpoint)
-                    .map_err(|error| error.to_string())?;
+                if let Some(identity) = self.client_identity.as_ref() {
+                    client
+                        .quit_app_with_client_identity(
+                            &endpoint,
+                            &identity.certificate_pem,
+                            &identity.private_key_pem,
+                        )
+                        .map_err(|error| error.to_string())?;
+                } else {
+                    client
+                        .quit_app(&endpoint)
+                        .map_err(|error| error.to_string())?;
+                }
             }
         }
         for app in &mut self.apps {

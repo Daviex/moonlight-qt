@@ -233,6 +233,15 @@ pub trait HostHttpTransport {
     ) -> Result<String, CoreError> {
         self.get_text(url)
     }
+
+    fn get_bytes_with_client_identity(
+        &self,
+        url: &str,
+        _certificate_pem: &str,
+        _private_key_pem: &str,
+    ) -> Result<Vec<u8>, CoreError> {
+        self.get_bytes(url)
+    }
 }
 
 pub struct ReqwestHostHttpTransport {
@@ -335,6 +344,16 @@ impl HostHttpTransport for ReqwestHostHttpTransport {
         let client = self.client_with_identity(certificate_pem, private_key_pem)?;
         self.get_text_with_client(&client, url)
     }
+
+    fn get_bytes_with_client_identity(
+        &self,
+        url: &str,
+        certificate_pem: &str,
+        private_key_pem: &str,
+    ) -> Result<Vec<u8>, CoreError> {
+        let client = self.client_with_identity(certificate_pem, private_key_pem)?;
+        self.get_bytes_with_client(&client, url)
+    }
 }
 
 pub struct HostHttpClient<T> {
@@ -367,12 +386,46 @@ where
         parse_app_list(&body)
     }
 
+    pub fn fetch_app_list_with_client_identity(
+        &self,
+        endpoint: &HostEndpoint,
+        certificate_pem: &str,
+        private_key_pem: &str,
+    ) -> Result<Vec<HostApp>, CoreError> {
+        let body = self.transport.get_text_with_client_identity(
+            &endpoint.app_list_url(),
+            certificate_pem,
+            private_key_pem,
+        )?;
+        parse_app_list(&body)
+    }
+
     pub fn fetch_box_art(
         &self,
         endpoint: &HostEndpoint,
         app_id: &str,
     ) -> Result<Vec<u8>, CoreError> {
         let bytes = self.transport.get_bytes(&endpoint.app_asset_url(app_id))?;
+        if bytes.is_empty() {
+            return Err(CoreError::Backend(format!(
+                "Host returned empty box art for app {app_id}."
+            )));
+        }
+        Ok(bytes)
+    }
+
+    pub fn fetch_box_art_with_client_identity(
+        &self,
+        endpoint: &HostEndpoint,
+        app_id: &str,
+        certificate_pem: &str,
+        private_key_pem: &str,
+    ) -> Result<Vec<u8>, CoreError> {
+        let bytes = self.transport.get_bytes_with_client_identity(
+            &endpoint.app_asset_url(app_id),
+            certificate_pem,
+            private_key_pem,
+        )?;
         if bytes.is_empty() {
             return Err(CoreError::Backend(format!(
                 "Host returned empty box art for app {app_id}."
@@ -393,6 +446,22 @@ where
         parse_start_app_response(&body)
     }
 
+    pub fn launch_app_with_client_identity(
+        &self,
+        endpoint: &HostEndpoint,
+        request: &StartAppRequest,
+        stream: &gamestream::StreamConfiguration,
+        certificate_pem: &str,
+        private_key_pem: &str,
+    ) -> Result<StartAppSession, CoreError> {
+        let body = self.transport.get_text_with_client_identity(
+            &endpoint.launch_url(&request.launch_query(stream)),
+            certificate_pem,
+            private_key_pem,
+        )?;
+        parse_start_app_response(&body)
+    }
+
     pub fn resume_app(
         &self,
         endpoint: &HostEndpoint,
@@ -405,8 +474,38 @@ where
         parse_start_app_response(&body)
     }
 
+    pub fn resume_app_with_client_identity(
+        &self,
+        endpoint: &HostEndpoint,
+        request: &StartAppRequest,
+        stream: &gamestream::StreamConfiguration,
+        certificate_pem: &str,
+        private_key_pem: &str,
+    ) -> Result<StartAppSession, CoreError> {
+        let body = self.transport.get_text_with_client_identity(
+            &endpoint.resume_url(&request.launch_query(stream)),
+            certificate_pem,
+            private_key_pem,
+        )?;
+        parse_start_app_response(&body)
+    }
+
     pub fn quit_app(&self, endpoint: &HostEndpoint) -> Result<(), CoreError> {
         let body = self.transport.get_text(&endpoint.cancel_url())?;
+        verify_response_status(&body)
+    }
+
+    pub fn quit_app_with_client_identity(
+        &self,
+        endpoint: &HostEndpoint,
+        certificate_pem: &str,
+        private_key_pem: &str,
+    ) -> Result<(), CoreError> {
+        let body = self.transport.get_text_with_client_identity(
+            &endpoint.cancel_url(),
+            certificate_pem,
+            private_key_pem,
+        )?;
         verify_response_status(&body)
     }
 }
@@ -610,6 +709,7 @@ mod tests {
     #[derive(Default)]
     struct FakeTransport {
         requests: RefCell<Vec<String>>,
+        identity_requests: RefCell<Vec<String>>,
     }
 
     impl HostHttpTransport for FakeTransport {
@@ -633,6 +733,26 @@ mod tests {
         fn get_bytes(&self, url: &str) -> Result<Vec<u8>, CoreError> {
             self.requests.borrow_mut().push(url.to_string());
             Ok(vec![0x89, b'P', b'N', b'G'])
+        }
+
+        fn get_text_with_client_identity(
+            &self,
+            url: &str,
+            _certificate_pem: &str,
+            _private_key_pem: &str,
+        ) -> Result<String, CoreError> {
+            self.identity_requests.borrow_mut().push(url.to_string());
+            self.get_text(url)
+        }
+
+        fn get_bytes_with_client_identity(
+            &self,
+            url: &str,
+            _certificate_pem: &str,
+            _private_key_pem: &str,
+        ) -> Result<Vec<u8>, CoreError> {
+            self.identity_requests.borrow_mut().push(url.to_string());
+            self.get_bytes(url)
         }
     }
 
@@ -732,6 +852,23 @@ mod tests {
         let apps = client.fetch_app_list(&endpoint).unwrap();
 
         assert_eq!("Desktop", apps[0].name);
+    }
+
+    #[test]
+    fn paired_app_list_uses_client_identity_transport() {
+        let transport = FakeTransport::default();
+        let client = HostHttpClient::new(transport);
+        let endpoint = HostEndpoint::from_address("sunshine.local").unwrap();
+
+        let apps = client
+            .fetch_app_list_with_client_identity(&endpoint, "cert", "key")
+            .unwrap();
+
+        assert_eq!("Desktop", apps[0].name);
+        assert_eq!(
+            vec!["https://sunshine.local:47984/applist"],
+            client.transport.identity_requests.into_inner()
+        );
     }
 
     #[test]
@@ -847,6 +984,23 @@ mod tests {
         assert_eq!(
             vec!["https://sunshine.local:47984/appasset?appid=7&AssetType=2&AssetIdx=0"],
             client.transport.requests.into_inner()
+        );
+    }
+
+    #[test]
+    fn paired_box_art_uses_client_identity_transport() {
+        let transport = FakeTransport::default();
+        let client = HostHttpClient::new(transport);
+        let endpoint = HostEndpoint::from_address("sunshine.local").unwrap();
+
+        let bytes = client
+            .fetch_box_art_with_client_identity(&endpoint, "7", "cert", "key")
+            .unwrap();
+
+        assert_eq!(vec![0x89, b'P', b'N', b'G'], bytes);
+        assert_eq!(
+            vec!["https://sunshine.local:47984/appasset?appid=7&AssetType=2&AssetIdx=0"],
+            client.transport.identity_requests.into_inner()
         );
     }
 
