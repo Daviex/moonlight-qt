@@ -12,13 +12,20 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServerInfo {
+    pub hostname: String,
     pub app_version: String,
     pub gfe_version: String,
     pub state: String,
     pub unique_id: String,
+    pub mac_address: String,
+    pub local_ip: String,
+    pub external_ip: String,
+    pub external_port: u16,
+    pub https_port: u16,
     pub current_game_id: i32,
     pub pair_status: String,
     pub server_codec_mode_support: i32,
+    pub gpu_model: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -441,16 +448,44 @@ pub fn parse_server_info(xml: &str) -> Result<ServerInfo, CoreError> {
     };
 
     Ok(ServerInfo {
+        hostname: optional_tag(xml, "hostname"),
         app_version: optional_tag(xml, "appversion"),
         gfe_version: optional_tag(xml, "GfeVersion"),
         unique_id: optional_tag(xml, "uniqueid"),
+        mac_address: normalized_mac_address(&optional_tag(xml, "mac")),
+        local_ip: usable_local_ip(&optional_tag(xml, "LocalIP")),
+        external_ip: optional_tag(xml, "ExternalIP"),
+        external_port: optional_tag(xml, "ExternalPort")
+            .parse::<u16>()
+            .unwrap_or(DEFAULT_HTTP_PORT),
+        https_port: optional_tag(xml, "HttpsPort")
+            .parse::<u16>()
+            .unwrap_or(DEFAULT_HTTPS_PORT),
         state,
         current_game_id,
         pair_status: optional_tag(xml, "PairStatus"),
         server_codec_mode_support: optional_tag(xml, "ServerCodecModeSupport")
             .parse::<i32>()
             .unwrap_or(0),
+        gpu_model: optional_tag(xml, "gputype"),
     })
+}
+
+fn usable_local_ip(value: &str) -> String {
+    if value.starts_with("127.") {
+        String::new()
+    } else {
+        value.to_string()
+    }
+}
+
+fn normalized_mac_address(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed == "00:00:00:00:00:00" {
+        String::new()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 pub fn parse_app_list(xml: &str) -> Result<Vec<HostApp>, CoreError> {
@@ -704,23 +739,57 @@ mod tests {
         let info = parse_server_info(
             r#"
             <root>
+                <hostname>DESKTOP-1234</hostname>
                 <appversion>Sunshine v0.23.1</appversion>
                 <GfeVersion>3.23</GfeVersion>
                 <state>MJOLNIR_SERVER_BUSY</state>
                 <uniqueid>abc123</uniqueid>
+                <mac>00:11:22:33:44:55</mac>
+                <LocalIP>192.168.1.20</LocalIP>
+                <ExternalIP>203.0.113.4</ExternalIP>
+                <ExternalPort>48000</ExternalPort>
+                <HttpsPort>47985</HttpsPort>
                 <currentgame>12345</currentgame>
                 <PairStatus>1</PairStatus>
                 <ServerCodecModeSupport>65535</ServerCodecModeSupport>
+                <gputype>NVIDIA RTX</gputype>
             </root>
             "#,
         )
         .unwrap();
 
+        assert_eq!("DESKTOP-1234", info.hostname);
         assert_eq!("Sunshine v0.23.1", info.app_version);
         assert_eq!("MJOLNIR_SERVER_BUSY", info.state);
         assert_eq!("abc123", info.unique_id);
+        assert_eq!("00:11:22:33:44:55", info.mac_address);
+        assert_eq!("192.168.1.20", info.local_ip);
+        assert_eq!("203.0.113.4", info.external_ip);
+        assert_eq!(48000, info.external_port);
+        assert_eq!(47985, info.https_port);
         assert_eq!(12345, info.current_game_id);
         assert_eq!(65535, info.server_codec_mode_support);
+        assert_eq!("NVIDIA RTX", info.gpu_model);
+    }
+
+    #[test]
+    fn parses_server_info_ignores_stale_current_game_when_idle() {
+        let info = parse_server_info(
+            r#"
+            <root>
+                <state>SERVER_AVAILABLE</state>
+                <currentgame>12345</currentgame>
+                <mac>00:00:00:00:00:00</mac>
+                <LocalIP>127.0.0.1</LocalIP>
+            </root>
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(0, info.current_game_id);
+        assert!(info.mac_address.is_empty());
+        assert!(info.local_ip.is_empty());
+        assert_eq!(47984, info.https_port);
     }
 
     #[test]

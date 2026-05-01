@@ -203,13 +203,20 @@ mod tests {
     fn launch_plan_prepares_raw_session_inputs_after_http_launch() {
         let plan = StreamLaunchPlan::new(&host(), &app(), &default_streaming_settings()).unwrap();
         let server_info = ServerInfo {
+            hostname: "Gaming PC".into(),
             app_version: "Sunshine".into(),
             gfe_version: "3.0".into(),
             state: String::new(),
             unique_id: "uuid".into(),
+            mac_address: String::new(),
+            local_ip: "192.168.1.20".into(),
+            external_ip: String::new(),
+            external_port: 47989,
+            https_port: 47984,
             current_game_id: 0,
             pair_status: "1".into(),
             server_codec_mode_support: 0x101,
+            gpu_model: String::new(),
         };
         let start_session = StartAppSession {
             rtsp_session_url: Some("rtsp://session".into()),

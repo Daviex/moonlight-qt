@@ -696,9 +696,50 @@ impl MoonlightCore for RustBackend {
             .map(|info| info.pair_status.clone())
             .filter(|pair_status| !pair_status.is_empty())
             .unwrap_or_else(|| if host.paired { "Paired" } else { "Unpaired" }.into());
+        let name = live_info
+            .as_ref()
+            .and_then(|info| non_empty_string(&info.hostname))
+            .unwrap_or_else(|| host.name.clone());
+        let uuid = live_info
+            .as_ref()
+            .and_then(|info| non_empty_string(&info.unique_id))
+            .unwrap_or_else(|| host.uuid.clone());
+        let local_address = live_info
+            .as_ref()
+            .and_then(|info| non_empty_string(&info.local_ip))
+            .unwrap_or_else(|| host.manual_address.clone());
+        let remote_address = live_info
+            .as_ref()
+            .and_then(|info| non_empty_string(&info.external_ip))
+            .unwrap_or_default();
+        let mac_address = live_info
+            .as_ref()
+            .and_then(|info| non_empty_string(&info.mac_address))
+            .unwrap_or_else(|| host.mac_address.clone());
+        let https_port = live_info
+            .as_ref()
+            .map(|info| i32::from(info.https_port))
+            .unwrap_or(47984);
+        let gpu_model = live_info
+            .as_ref()
+            .and_then(|info| non_empty_string(&info.gpu_model))
+            .unwrap_or_else(|| "Unknown".into());
+        let details = match live_info.as_ref() {
+            Some(info) => format!(
+                "Name: {name}\nActive Address: {}\nLocal Address: {local_address}\nRemote Address: {}\nHTTPS Port: {}\nGPU: {gpu_model}\nCodec Support: {}",
+                host.manual_address,
+                if remote_address.is_empty() { "Unavailable" } else { &remote_address },
+                info.https_port,
+                info.server_codec_mode_support,
+            ),
+            None => format!(
+                "Name: {name}\nActive Address: {}\nHost is offline or unreachable.",
+                host.manual_address
+            ),
+        };
 
         Ok(HostDetails {
-            name: host.name.clone(),
+            name,
             address: host.manual_address.clone(),
             status: if live_info.is_some() {
                 HostStatus::Online
@@ -707,25 +748,22 @@ impl MoonlightCore for RustBackend {
             },
             paired: host.paired,
             running: running_game_id != 0 || self.apps.iter().any(|app| app.running),
-            wakeable: !host.mac_address.is_empty(),
+            wakeable: !mac_address.is_empty(),
             server_supported: true,
-            uuid: host.uuid,
-            local_address: host.manual_address.clone(),
-            remote_address: String::new(),
+            uuid,
+            local_address,
+            remote_address,
             ipv6_address: String::new(),
             manual_address: host.manual_address.clone(),
-            mac_address: host.mac_address,
+            mac_address,
             pair_state,
             running_game_id,
-            https_port: 47984,
+            https_port,
             app_version,
             gfe_version,
             server_version,
-            gpu_model: "Unknown".into(),
-            details: format!(
-                "Name: {}\nActive Address: {}",
-                host.name, host.manual_address
-            ),
+            gpu_model,
+            details,
         })
     }
 
@@ -1254,6 +1292,15 @@ fn safe_cache_key(value: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(value.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+fn non_empty_string(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn file_url_from_path(path: &Path) -> String {
