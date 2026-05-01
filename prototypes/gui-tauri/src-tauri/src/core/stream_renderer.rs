@@ -60,22 +60,9 @@ impl VideoDecoderPreference {
 
 fn select_backend(preference: VideoDecoderPreference) -> StreamRendererBackend {
     match preference {
-        VideoDecoderPreference::ForceSoftware => StreamRendererBackend::SoftwareSdl,
-        VideoDecoderPreference::Automatic | VideoDecoderPreference::ForceHardware => {
-            platform_hardware_backend()
-        }
-    }
-}
-
-fn platform_hardware_backend() -> StreamRendererBackend {
-    #[cfg(target_os = "windows")]
-    {
-        StreamRendererBackend::D3d11
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        StreamRendererBackend::SoftwareSdl
+        VideoDecoderPreference::Automatic
+        | VideoDecoderPreference::ForceHardware
+        | VideoDecoderPreference::ForceSoftware => StreamRendererBackend::SoftwareSdl,
     }
 }
 
@@ -85,14 +72,11 @@ mod tests {
     use crate::core::settings::default_streaming_settings;
 
     #[test]
-    fn renderer_plan_uses_hardware_backend_by_default() {
+    fn renderer_plan_reports_active_software_backend_by_default() {
         let settings = default_streaming_settings();
         let plan = StreamRendererPlan::new(&settings).unwrap();
 
         assert_eq!(VideoDecoderPreference::Automatic, plan.decoder_preference);
-        #[cfg(target_os = "windows")]
-        assert_eq!(StreamRendererBackend::D3d11, plan.backend);
-        #[cfg(not(target_os = "windows"))]
         assert_eq!(StreamRendererBackend::SoftwareSdl, plan.backend);
         assert!(plan.vsync);
     }

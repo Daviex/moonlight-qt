@@ -446,6 +446,10 @@ struct NativeVideoDecodeDiagnostics {
     last_frame_number: c_int,
     missing_decode_units: u64,
     max_decode_unit_gap: c_int,
+    rgba_frames: u64,
+    yuv420_frames: u64,
+    nv12_frames: u64,
+    nv21_frames: u64,
 }
 
 struct NativeVideoRenderDiagnostics {
@@ -463,6 +467,10 @@ struct NativeVideoRenderDiagnostics {
     stale_queue_frames: u64,
     max_frame_gap: c_int,
     last_frame_number: c_int,
+    rgba_frames: u64,
+    yuv420_frames: u64,
+    nv12_frames: u64,
+    nv21_frames: u64,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -526,6 +534,10 @@ impl Default for NativeVideoDecodeDiagnostics {
             last_frame_number: 0,
             missing_decode_units: 0,
             max_decode_unit_gap: 0,
+            rgba_frames: 0,
+            yuv420_frames: 0,
+            nv12_frames: 0,
+            nv21_frames: 0,
         }
     }
 }
@@ -548,12 +560,17 @@ impl NativeVideoRenderDiagnostics {
             stale_queue_frames: 0,
             max_frame_gap: 0,
             last_frame_number: 0,
+            rgba_frames: 0,
+            yuv420_frames: 0,
+            nv12_frames: 0,
+            nv21_frames: 0,
         }
     }
 
     fn record_frame(
         &mut self,
         frame_number: c_int,
+        format: Sdl3VideoTextureFormat,
         update_us: u128,
         render_us: u128,
         frame_age_us: u128,
@@ -565,6 +582,20 @@ impl NativeVideoRenderDiagnostics {
             self.max_frame_gap = self.max_frame_gap.max(gap);
         }
         self.displayed_frames = self.displayed_frames.saturating_add(1);
+        match format {
+            Sdl3VideoTextureFormat::Rgba => {
+                self.rgba_frames = self.rgba_frames.saturating_add(1);
+            }
+            Sdl3VideoTextureFormat::Yuv420 => {
+                self.yuv420_frames = self.yuv420_frames.saturating_add(1);
+            }
+            Sdl3VideoTextureFormat::Nv12 => {
+                self.nv12_frames = self.nv12_frames.saturating_add(1);
+            }
+            Sdl3VideoTextureFormat::Nv21 => {
+                self.nv21_frames = self.nv21_frames.saturating_add(1);
+            }
+        }
         self.last_frame_number = frame_number;
         self.total_update_us = self.total_update_us.saturating_add(update_us);
         self.total_render_us = self.total_render_us.saturating_add(render_us);
@@ -605,13 +636,17 @@ impl NativeVideoRenderDiagnostics {
             .map(|(width, height)| format!("{width}x{height}"))
             .unwrap_or_else(|error| format!("unavailable:{error}"));
         logger::log(format!(
-            "SDL3 video diagnostics: displayed={}; fps={:.1}; texture={}x{}; output={}; texture_recreates={}; last_frame={}; skipped_frame_numbers={}; stale_queue_frames={}; max_frame_gap={}; avg_frame_age_us={}; max_frame_age_us={}; avg_update_us={}; max_update_us={}; avg_render_us={}; max_render_us={}",
+            "SDL3 video diagnostics: displayed={}; fps={:.1}; texture={}x{}; output={}; texture_recreates={}; rgba_frames={}; yuv420_frames={}; nv12_frames={}; nv21_frames={}; last_frame={}; skipped_frame_numbers={}; stale_queue_frames={}; max_frame_gap={}; avg_frame_age_us={}; max_frame_age_us={}; avg_update_us={}; max_update_us={}; avg_render_us={}; max_render_us={}",
             self.displayed_frames,
             self.displayed_frames as f64 / elapsed,
             texture_width,
             texture_height,
             output_size,
             self.recreated_textures,
+            self.rgba_frames,
+            self.yuv420_frames,
+            self.nv12_frames,
+            self.nv21_frames,
             self.last_frame_number,
             self.skipped_frame_numbers,
             self.stale_queue_frames,
@@ -1003,10 +1038,14 @@ fn process_pull_video_decode_unit(
     let decoded_frame = decode_pull_video_payload(decoder, &payload, decode_unit.frame_number);
     let decode_us = decode_start.elapsed().as_micros();
     let decoded = decoded_frame.is_some();
+    let decoded_format = decoded_frame
+        .as_ref()
+        .map(DecodedVideoFrame::texture_format);
     record_native_video_decode_diagnostics(
         decode_unit.frame_number,
         bytes_received,
         decoded,
+        decoded_format,
         decode_us,
     );
     let update = update_video_sink_after_decode(
@@ -1202,6 +1241,7 @@ fn record_native_video_decode_diagnostics(
     frame_number: c_int,
     bytes_received: u64,
     decoded: bool,
+    decoded_format: Option<Sdl3VideoTextureFormat>,
     decode_us: u128,
 ) {
     let Ok(mut diagnostics) = VIDEO_DECODE_DIAGNOSTICS
@@ -1224,6 +1264,21 @@ fn record_native_video_decode_diagnostics(
     if decoded {
         diagnostics.decoded_frames = diagnostics.decoded_frames.saturating_add(1);
     }
+    match decoded_format {
+        Some(Sdl3VideoTextureFormat::Rgba) => {
+            diagnostics.rgba_frames = diagnostics.rgba_frames.saturating_add(1);
+        }
+        Some(Sdl3VideoTextureFormat::Yuv420) => {
+            diagnostics.yuv420_frames = diagnostics.yuv420_frames.saturating_add(1);
+        }
+        Some(Sdl3VideoTextureFormat::Nv12) => {
+            diagnostics.nv12_frames = diagnostics.nv12_frames.saturating_add(1);
+        }
+        Some(Sdl3VideoTextureFormat::Nv21) => {
+            diagnostics.nv21_frames = diagnostics.nv21_frames.saturating_add(1);
+        }
+        None => {}
+    }
     if diagnostics.last_log_at.elapsed() >= NATIVE_VIDEO_DIAGNOSTIC_INTERVAL {
         let elapsed = diagnostics.started_at.elapsed().as_secs_f64().max(0.001);
         let average_decode_us = if diagnostics.decode_units == 0 {
@@ -1232,12 +1287,16 @@ fn record_native_video_decode_diagnostics(
             diagnostics.total_decode_us / diagnostics.decode_units as u128
         };
         logger::log(format!(
-            "FFmpeg software decode diagnostics: units={}; decoded={}; decode_ratio_pct={:.1}; unit_fps={:.1}; decoded_fps={:.1}; missing_units={}; max_unit_gap={}; avg_decode_us={}; max_decode_us={}; mb_received={:.1}; last_frame={}",
+            "FFmpeg software decode diagnostics: units={}; decoded={}; decode_ratio_pct={:.1}; unit_fps={:.1}; decoded_fps={:.1}; rgba_frames={}; yuv420_frames={}; nv12_frames={}; nv21_frames={}; missing_units={}; max_unit_gap={}; avg_decode_us={}; max_decode_us={}; mb_received={:.1}; last_frame={}",
             diagnostics.decode_units,
             diagnostics.decoded_frames,
             diagnostics.decoded_frames as f64 * 100.0 / diagnostics.decode_units.max(1) as f64,
             diagnostics.decode_units as f64 / elapsed,
             diagnostics.decoded_frames as f64 / elapsed,
+            diagnostics.rgba_frames,
+            diagnostics.yuv420_frames,
+            diagnostics.nv12_frames,
+            diagnostics.nv21_frames,
             diagnostics.missing_decode_units,
             diagnostics.max_decode_unit_gap,
             average_decode_us,
@@ -1358,6 +1417,7 @@ fn native_video_renderer_loop(
                 let frame_age_us = frame.decoded_at().elapsed().as_micros();
                 diagnostics.record_frame(
                     frame.frame_number(),
+                    frame_format,
                     update_us,
                     render_us,
                     frame_age_us,
