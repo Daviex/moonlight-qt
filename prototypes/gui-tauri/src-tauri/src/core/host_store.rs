@@ -13,6 +13,8 @@ pub struct StoredHost {
     pub uuid: String,
     pub paired: bool,
     pub mac_address: String,
+    #[serde(default)]
+    pub server_certificate_pem: String,
 }
 
 impl StoredHost {
@@ -94,6 +96,7 @@ mod tests {
             uuid: "uuid-1".into(),
             paired: true,
             mac_address: "00:11:22:33:44:55".into(),
+            server_certificate_pem: String::new(),
         }
     }
 

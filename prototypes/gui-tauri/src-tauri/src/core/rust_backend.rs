@@ -1,7 +1,10 @@
 use super::backend::MoonlightCore;
-use super::host_http::{BlockingHostHttpClient, HostEndpoint, ServerInfo};
+use super::host_http::{
+    BlockingHostHttpClient, HostEndpoint, ReqwestHostHttpTransport, ServerInfo,
+};
 use super::host_store::{HostStore, StoredHost};
 use super::identity::ClientIdentity;
+use super::pairing::{generate_pairing_pin, PairingClient, PairingRequest};
 use super::session::SessionMachine;
 #[cfg(test)]
 use super::settings::default_streaming_settings;
@@ -14,6 +17,7 @@ use super::types::{
     NetworkTestResult, PairingChallenge, StreamingSettings, SystemInfo,
 };
 use std::path::PathBuf;
+use std::thread;
 
 pub struct RustBackend {
     hosts: HostStore,
@@ -95,6 +99,31 @@ impl RustBackend {
         self.hosts.add_or_update(host);
     }
 
+    fn complete_pairing_in_store(
+        state_store: JsonStateStore,
+        host_id: String,
+        server_uuid: String,
+        server_certificate_pem: String,
+    ) -> Result<(), String> {
+        let mut state = state_store.load().map_err(|error| error.to_string())?;
+        let Some(mut host) = state
+            .hosts
+            .hosts()
+            .iter()
+            .find(|host| host.id == host_id)
+            .cloned()
+        else {
+            return Err(format!("Host '{host_id}' was not found."));
+        };
+        host.paired = true;
+        if !server_uuid.trim().is_empty() {
+            host.uuid = server_uuid;
+        }
+        host.server_certificate_pem = server_certificate_pem;
+        state.hosts.add_or_update(host);
+        state_store.save(&state).map_err(|error| error.to_string())
+    }
+
     fn host_entry(&self, host_id: &str) -> Result<HostEntry, String> {
         self.hosts
             .entries()
@@ -150,6 +179,7 @@ fn sample_state() -> StoredState {
         uuid: "rust-gaming-pc".into(),
         paired: true,
         mac_address: "00:11:22:33:44:55".into(),
+        server_certificate_pem: String::new(),
     });
     hosts.add_or_update(StoredHost {
         id: "living-room".into(),
@@ -158,6 +188,7 @@ fn sample_state() -> StoredState {
         uuid: "rust-living-room".into(),
         paired: true,
         mac_address: "00:11:22:33:44:66".into(),
+        server_certificate_pem: String::new(),
     });
     hosts.add_or_update(StoredHost {
         id: "new-host".into(),
@@ -166,6 +197,7 @@ fn sample_state() -> StoredState {
         uuid: "rust-new-host".into(),
         paired: false,
         mac_address: String::new(),
+        server_certificate_pem: String::new(),
     });
 
     StoredState {
@@ -203,6 +235,7 @@ impl MoonlightCore for RustBackend {
             uuid: format!("manual-{id}"),
             paired: false,
             mac_address: String::new(),
+            server_certificate_pem: String::new(),
         });
         self.persist()?;
 
@@ -216,13 +249,52 @@ impl MoonlightCore for RustBackend {
 
     fn pair_host(&mut self, host_id: &str) -> Result<PairingChallenge, String> {
         let mut host = self.stored_host(host_id)?;
-        host.paired = true;
-        self.update_host(host.clone());
-        self.persist()?;
+        let pin = generate_pairing_pin();
+
+        if self.state_store.is_none() {
+            host.paired = true;
+            self.update_host(host.clone());
+            self.persist()?;
+        } else {
+            let server_info = self.fetch_server_info(&host.manual_address)?;
+            let state_store = self.state_store.clone().unwrap();
+            let endpoint = HostEndpoint::from_address(host.manual_address.clone())
+                .map_err(|error| error.to_string())?;
+            let identity = self
+                .client_identity
+                .clone()
+                .ok_or_else(|| "Client identity is unavailable.".to_string())?;
+            let request = PairingRequest::new(
+                host.id.clone(),
+                pin.clone(),
+                server_info.app_version.clone(),
+            )
+            .map_err(|error| error.to_string())?;
+            let host_id = host.id.clone();
+            let server_uuid = server_info.unique_id.clone();
+
+            thread::spawn(move || {
+                let result = ReqwestHostHttpTransport::new()
+                    .map(PairingClient::new)
+                    .and_then(|client| client.pair(&endpoint, &request, &identity))
+                    .map_err(|error| error.to_string())
+                    .and_then(|completed| {
+                        Self::complete_pairing_in_store(
+                            state_store,
+                            host_id,
+                            server_uuid,
+                            completed.server_certificate_pem,
+                        )
+                    });
+                if let Err(error) = result {
+                    eprintln!("Rust backend pairing failed: {error}");
+                }
+            });
+        }
 
         Ok(PairingChallenge {
-            pin: "1234".into(),
-            message: format!("Enter PIN 1234 on {} to complete pairing.", host.name),
+            pin: pin.clone(),
+            message: format!("Enter PIN {pin} on {} to complete pairing.", host.name),
         })
     }
 
@@ -577,14 +649,13 @@ mod tests {
         let host_id = {
             let mut backend = RustBackend::from_storage_dir(&state_dir).unwrap();
             let (_, host_id) = backend.add_host("192.168.1.51".into()).unwrap();
-            backend.pair_host(&host_id).unwrap();
             host_id
         };
 
         let mut reloaded = RustBackend::from_storage_dir(&state_dir).unwrap();
         let hosts = reloaded.list_hosts().unwrap();
 
-        assert!(hosts.iter().any(|host| host.id == host_id && host.paired));
+        assert!(hosts.iter().any(|host| host.id == host_id && !host.paired));
     }
 
     #[test]
@@ -617,5 +688,36 @@ mod tests {
         let reloaded = RustBackend::from_storage_dir(&state_dir).unwrap();
 
         assert!(reloaded.client_identity.is_some());
+    }
+
+    #[test]
+    fn completed_pairing_updates_persisted_host_certificate() {
+        let state_dir = unique_state_dir("completed-pairing");
+        let state_store = crate::core::storage::JsonStateStore::in_app_data_dir(&state_dir);
+        let host_id = {
+            let mut backend = RustBackend::from_storage_dir(&state_dir).unwrap();
+            let (_, host_id) = backend.add_host("192.168.1.52".into()).unwrap();
+            host_id
+        };
+
+        RustBackend::complete_pairing_in_store(
+            state_store.clone(),
+            host_id.clone(),
+            "server-uuid".into(),
+            "-----BEGIN CERTIFICATE-----\npaired\n-----END CERTIFICATE-----".into(),
+        )
+        .unwrap();
+
+        let state = state_store.load().unwrap();
+        let host = state
+            .hosts
+            .hosts()
+            .iter()
+            .find(|host| host.id == host_id)
+            .unwrap();
+
+        assert!(host.paired);
+        assert_eq!("server-uuid", host.uuid);
+        assert!(host.server_certificate_pem.contains("paired"));
     }
 }

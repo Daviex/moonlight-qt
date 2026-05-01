@@ -1,8 +1,11 @@
 #![allow(dead_code)]
 
 use super::error::CoreError;
-use super::host_http::HostEndpoint;
+use super::host_http::{HostEndpoint, HostHttpTransport};
+use super::identity::{certificate_signature, verify_certificate_signature, ClientIdentity};
 use aes::cipher::{block_padding::NoPadding, BlockDecryptMut, BlockEncryptMut, KeyInit};
+use rand::rngs::OsRng;
+use rand::RngCore;
 
 type Aes128EcbEncryptor = ecb::Encryptor<aes::Aes128>;
 type Aes128EcbDecryptor = ecb::Decryptor<aes::Aes128>;
@@ -54,6 +57,22 @@ pub struct PairingMaterial {
     pub client_pairing_secret_hex: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PairingSecrets {
+    pub salt: [u8; CHALLENGE_LENGTH],
+    pub random_challenge: [u8; CHALLENGE_LENGTH],
+    pub client_secret: [u8; CHALLENGE_LENGTH],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompletedPairing {
+    pub server_certificate_pem: String,
+}
+
+pub fn generate_pairing_pin() -> String {
+    format!("{:04}", OsRng.next_u32() % 10_000)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PairingHashAlgorithm {
     Sha1,
@@ -99,6 +118,21 @@ impl PairingRequest {
     }
 }
 
+impl PairingSecrets {
+    pub fn generate() -> Self {
+        let mut rng = OsRng;
+        let mut secrets = Self {
+            salt: [0; CHALLENGE_LENGTH],
+            random_challenge: [0; CHALLENGE_LENGTH],
+            client_secret: [0; CHALLENGE_LENGTH],
+        };
+        rng.fill_bytes(&mut secrets.salt);
+        rng.fill_bytes(&mut secrets.random_challenge);
+        rng.fill_bytes(&mut secrets.client_secret);
+        secrets
+    }
+}
+
 impl PairingHashAlgorithm {
     pub fn for_app_version(app_version: &str) -> Result<Self, CoreError> {
         let major = app_version
@@ -106,11 +140,7 @@ impl PairingHashAlgorithm {
             .next()
             .unwrap_or_default()
             .parse::<u32>()
-            .map_err(|_| {
-                CoreError::Validation(format!(
-                    "Host app version '{app_version}' does not start with a numeric generation."
-                ))
-            })?;
+            .unwrap_or(0);
 
         if major >= 7 {
             Ok(Self::Sha256)
@@ -340,6 +370,170 @@ pub fn parse_pairing_response(xml: &str) -> PairingResponse {
     }
 }
 
+pub trait PairingTransport {
+    fn get_text(&self, url: &str) -> Result<String, CoreError>;
+}
+
+impl<T> PairingTransport for T
+where
+    T: HostHttpTransport,
+{
+    fn get_text(&self, url: &str) -> Result<String, CoreError> {
+        HostHttpTransport::get_text(self, url)
+    }
+}
+
+pub struct PairingClient<T> {
+    transport: T,
+}
+
+impl<T> PairingClient<T>
+where
+    T: PairingTransport,
+{
+    pub fn new(transport: T) -> Self {
+        Self { transport }
+    }
+
+    pub fn pair(
+        &self,
+        endpoint: &HostEndpoint,
+        request: &PairingRequest,
+        identity: &ClientIdentity,
+    ) -> Result<CompletedPairing, CoreError> {
+        self.pair_with_secrets(endpoint, request, identity, &PairingSecrets::generate())
+    }
+
+    pub fn pair_with_secrets(
+        &self,
+        endpoint: &HostEndpoint,
+        request: &PairingRequest,
+        identity: &ClientIdentity,
+        secrets: &PairingSecrets,
+    ) -> Result<CompletedPairing, CoreError> {
+        request.validate()?;
+        identity.validate()?;
+
+        let algorithm = PairingHashAlgorithm::for_app_version(&request.app_version)?;
+        let aes_key = derive_aes_key(&secrets.salt, &request.pin, algorithm)?;
+        let encrypted_challenge = encrypt_client_challenge(&secrets.random_challenge, &aes_key)?;
+        let client_cert_signature = identity.certificate_signature()?;
+        let client_cert_hex = encode_hex(identity.certificate_pem.as_bytes());
+
+        let get_cert_xml = self.transport.get_text(&endpoint.http_pair_url(&format!(
+            "devicename=roth&updateState=1&phrase=getservercert&salt={}&clientcert={}",
+            encode_hex(&secrets.salt),
+            client_cert_hex
+        )))?;
+        let get_cert = parse_pairing_response(&get_cert_xml);
+        if !get_cert.paired {
+            return Err(CoreError::Backend("Pairing failed at stage #1.".into()));
+        }
+        if get_cert.plain_cert_hex.is_empty() {
+            self.try_unpair(endpoint);
+            return Err(CoreError::Backend(
+                "Server is already handling another pairing request.".into(),
+            ));
+        }
+
+        let server_certificate = decode_hex("server certificate", &get_cert.plain_cert_hex)?;
+        let server_certificate_pem = String::from_utf8(server_certificate).map_err(|error| {
+            CoreError::Validation(format!(
+                "Server certificate is not valid UTF-8 PEM: {error}"
+            ))
+        })?;
+
+        let challenge_xml = self.transport.get_text(&endpoint.http_pair_url(&format!(
+            "devicename=roth&updateState=1&clientchallenge={}",
+            encode_hex(&encrypted_challenge)
+        )))?;
+        let challenge = parse_pairing_response(&challenge_xml);
+        if !challenge.paired {
+            self.try_unpair(endpoint);
+            return Err(CoreError::Backend("Pairing failed at stage #2.".into()));
+        }
+
+        let encrypted_response =
+            decode_hex("challenge response", &challenge.challenge_response_hex)?;
+        let server_challenge = decrypt_server_challenge(&encrypted_response, &aes_key, algorithm)?;
+        let encrypted_challenge_response = encrypt_server_challenge_response_hash(
+            &server_challenge.server_challenge,
+            &client_cert_signature,
+            &secrets.client_secret,
+            &aes_key,
+            algorithm,
+        )?;
+
+        let response_xml = self.transport.get_text(&endpoint.http_pair_url(&format!(
+            "devicename=roth&updateState=1&serverchallengeresp={}",
+            encode_hex(&encrypted_challenge_response)
+        )))?;
+        let response = parse_pairing_response(&response_xml);
+        if !response.paired {
+            self.try_unpair(endpoint);
+            return Err(CoreError::Backend("Pairing failed at stage #3.".into()));
+        }
+
+        let pairing_secret = decode_hex("pairing secret", &response.pairing_secret_hex)?;
+        if pairing_secret.len() < CHALLENGE_LENGTH {
+            self.try_unpair(endpoint);
+            return Err(CoreError::Validation(
+                "Pairing secret is shorter than expected.".into(),
+            ));
+        }
+        let server_secret = &pairing_secret[..CHALLENGE_LENGTH];
+        let server_signature = &pairing_secret[CHALLENGE_LENGTH..];
+        if !verify_certificate_signature(server_secret, server_signature, &server_certificate_pem)?
+        {
+            self.try_unpair(endpoint);
+            return Err(CoreError::Backend(
+                "Server pairing signature verification failed.".into(),
+            ));
+        }
+
+        let expected_response = expected_server_response(
+            &secrets.random_challenge,
+            &certificate_signature(&server_certificate_pem)?,
+            server_secret,
+            algorithm,
+        )?;
+        if expected_response != server_challenge.server_response {
+            self.try_unpair(endpoint);
+            return Err(CoreError::Validation(
+                "Pairing PIN was rejected by the host.".into(),
+            ));
+        }
+
+        let client_secret_signature = identity.sign_message(&secrets.client_secret)?;
+        let client_secret =
+            client_pairing_secret(&secrets.client_secret, &client_secret_signature)?;
+        let client_secret_xml = self.transport.get_text(&endpoint.http_pair_url(&format!(
+            "devicename=roth&updateState=1&clientpairingsecret={}",
+            encode_hex(&client_secret)
+        )))?;
+        if !parse_pairing_response(&client_secret_xml).paired {
+            self.try_unpair(endpoint);
+            return Err(CoreError::Backend("Pairing failed at stage #4.".into()));
+        }
+
+        let challenge_xml = self.transport.get_text(
+            &endpoint.https_pair_url("devicename=roth&updateState=1&phrase=pairchallenge"),
+        )?;
+        if !parse_pairing_response(&challenge_xml).paired {
+            self.try_unpair(endpoint);
+            return Err(CoreError::Backend("Pairing failed at stage #5.".into()));
+        }
+
+        Ok(CompletedPairing {
+            server_certificate_pem,
+        })
+    }
+
+    fn try_unpair(&self, endpoint: &HostEndpoint) {
+        let _ = self.transport.get_text(&endpoint.http_unpair_url());
+    }
+}
+
 pub fn parse_pairing_state(pair_status: &str, error_message: Option<&str>) -> PairingState {
     match pair_status.trim() {
         "1" | "paired" | "Paired" => PairingState::Paired,
@@ -428,12 +622,102 @@ fn optional_tag(xml: &str, tag: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        client_pairing_secret, decode_hex, derive_aes_key, encode_hex, encrypt_client_challenge,
+        aes_128_ecb_encrypt, certificate_signature, client_pairing_secret, decode_hex,
+        derive_aes_key, encode_hex, encrypt_client_challenge,
         encrypt_server_challenge_response_hash, expected_server_response, parse_pairing_response,
-        parse_pairing_state, PairingHashAlgorithm, PairingHttpSequence, PairingMaterial,
-        PairingRequest, PairingState,
+        parse_pairing_state, PairingClient, PairingHashAlgorithm, PairingHttpSequence,
+        PairingMaterial, PairingRequest, PairingSecrets, PairingState, PairingTransport,
     };
+    use crate::core::error::CoreError;
     use crate::core::host_http::HostEndpoint;
+    use crate::core::identity::ClientIdentity;
+    use std::cell::RefCell;
+
+    struct FakePairingTransport {
+        requests: RefCell<Vec<String>>,
+        server_identity: ClientIdentity,
+        secrets: PairingSecrets,
+        pin: String,
+        app_version: String,
+        server_challenge: [u8; 16],
+        server_secret: [u8; 16],
+    }
+
+    impl FakePairingTransport {
+        fn new(server_identity: ClientIdentity, secrets: PairingSecrets) -> Self {
+            Self {
+                requests: RefCell::new(Vec::new()),
+                server_identity,
+                secrets,
+                pin: "1234".into(),
+                app_version: "7.1.431".into(),
+                server_challenge: [0x55; 16],
+                server_secret: [0x77; 16],
+            }
+        }
+
+        fn aes_key(&self) -> [u8; 16] {
+            derive_aes_key(
+                &self.secrets.salt,
+                &self.pin,
+                PairingHashAlgorithm::for_app_version(&self.app_version).unwrap(),
+            )
+            .unwrap()
+        }
+    }
+
+    impl PairingTransport for FakePairingTransport {
+        fn get_text(&self, url: &str) -> Result<String, CoreError> {
+            self.requests.borrow_mut().push(url.to_string());
+            if url.contains("phrase=getservercert") {
+                return Ok(format!(
+                    "<root><paired>1</paired><plaincert>{}</plaincert></root>",
+                    encode_hex(self.server_identity.certificate_pem.as_bytes())
+                ));
+            }
+            if url.contains("clientchallenge=") {
+                let algorithm = PairingHashAlgorithm::for_app_version(&self.app_version).unwrap();
+                let expected_response = expected_server_response(
+                    &self.secrets.random_challenge,
+                    &certificate_signature(&self.server_identity.certificate_pem).unwrap(),
+                    &self.server_secret,
+                    algorithm,
+                )
+                .unwrap();
+                let mut payload =
+                    Vec::with_capacity(expected_response.len() + self.server_challenge.len());
+                payload.extend_from_slice(&expected_response);
+                payload.extend_from_slice(&self.server_challenge);
+
+                return Ok(format!(
+                    "<root><paired>1</paired><challengeresponse>{}</challengeresponse></root>",
+                    encode_hex(&aes_128_ecb_encrypt(&payload, &self.aes_key()).unwrap())
+                ));
+            }
+            if url.contains("serverchallengeresp=") {
+                return Ok(format!(
+                    "<root><paired>1</paired><pairingsecret>{}</pairingsecret></root>",
+                    encode_hex(
+                        &client_pairing_secret(
+                            &self.server_secret,
+                            &self
+                                .server_identity
+                                .sign_message(&self.server_secret)
+                                .unwrap(),
+                        )
+                        .unwrap(),
+                    )
+                ));
+            }
+            if url.contains("clientpairingsecret=") || url.contains("phrase=pairchallenge") {
+                return Ok("<root><paired>1</paired></root>".into());
+            }
+            if url.ends_with("/unpair") {
+                return Ok("<root></root>".into());
+            }
+            Err(CoreError::Backend(format!("Unexpected URL: {url}")))
+        }
+    }
 
     #[test]
     fn pairing_request_requires_four_digit_pin() {
@@ -532,6 +816,10 @@ mod tests {
             PairingHashAlgorithm::for_app_version("6.1.0").unwrap()
         );
         assert_eq!(
+            PairingHashAlgorithm::Sha1,
+            PairingHashAlgorithm::for_app_version("Sunshine v0.23.1").unwrap()
+        );
+        assert_eq!(
             PairingHashAlgorithm::Sha256,
             PairingHashAlgorithm::for_app_version("7.1.431").unwrap()
         );
@@ -601,5 +889,33 @@ mod tests {
             "101112131415161718191a1b1c1d1e1f636c69656e742d7369676e6174757265",
             encode_hex(&pairing_secret)
         );
+    }
+
+    #[test]
+    fn pairing_client_completes_native_http_sequence() {
+        let client_identity = ClientIdentity::generate().unwrap();
+        let server_identity = ClientIdentity::generate().unwrap();
+        let secrets = PairingSecrets {
+            salt: [0x11; 16],
+            random_challenge: [0x22; 16],
+            client_secret: [0x33; 16],
+        };
+        let transport = FakePairingTransport::new(server_identity.clone(), secrets.clone());
+        let endpoint = HostEndpoint::from_address("192.168.1.20").unwrap();
+        let request = PairingRequest::new("gaming-pc", "1234", "7.1.431").unwrap();
+        let client = PairingClient::new(transport);
+
+        let completed = client
+            .pair_with_secrets(&endpoint, &request, &client_identity, &secrets)
+            .unwrap();
+
+        assert_eq!(
+            server_identity.certificate_pem,
+            completed.server_certificate_pem
+        );
+        assert_eq!(5, client.transport.requests.borrow().len());
+        assert!(client.transport.requests.borrow()[0]
+            .contains("phrase=getservercert&salt=11111111111111111111111111111111"));
+        assert!(client.transport.requests.borrow()[4].starts_with("https://"));
     }
 }

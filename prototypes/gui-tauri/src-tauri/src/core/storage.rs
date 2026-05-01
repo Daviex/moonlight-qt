@@ -205,6 +205,7 @@ mod tests {
             uuid: "uuid-1".into(),
             paired: true,
             mac_address: "00:11:22:33:44:55".into(),
+            server_certificate_pem: String::new(),
         }
     }
 
