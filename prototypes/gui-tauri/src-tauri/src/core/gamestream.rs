@@ -16,6 +16,8 @@ use std::ffi::CString;
 #[cfg(moonlight_common_c_linked)]
 use std::os::raw::c_uchar;
 use std::os::raw::{c_char, c_int, c_void};
+#[cfg(moonlight_common_c_linked)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -39,6 +41,8 @@ static AUDIO_PLAYBACK_STATE: OnceLock<Mutex<Option<AudioPlayback>>> = OnceLock::
 static VIDEO_SINK_STATE: OnceLock<Mutex<VideoSinkState>> = OnceLock::new();
 #[cfg(moonlight_common_c_linked)]
 static VIDEO_DECODER_STATE: OnceLock<Mutex<Option<SoftwareVideoDecoder>>> = OnceLock::new();
+#[cfg(moonlight_common_c_linked)]
+static VIDEO_DECODER_THREAD: OnceLock<Mutex<Option<VideoDecoderThread>>> = OnceLock::new();
 static VIDEO_RENDERER_STATE: OnceLock<Mutex<Option<NativeVideoRenderer>>> = OnceLock::new();
 static VIDEO_QUEUE_DIAGNOSTICS: OnceLock<Mutex<NativeVideoQueueDiagnostics>> = OnceLock::new();
 static VIDEO_DECODE_DIAGNOSTICS: OnceLock<Mutex<NativeVideoDecodeDiagnostics>> = OnceLock::new();
@@ -313,6 +317,12 @@ struct NativeVideoRenderer {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
+#[cfg(moonlight_common_c_linked)]
+struct VideoDecoderThread {
+    should_stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
 #[derive(Default)]
 struct LatestVideoFrameSlot {
     frame: Mutex<Option<RgbaVideoFrame>>,
@@ -525,6 +535,18 @@ impl Drop for NativeVideoRenderer {
 }
 
 #[cfg(moonlight_common_c_linked)]
+impl Drop for VideoDecoderThread {
+    fn drop(&mut self) {
+        self.should_stop.store(true, Ordering::Release);
+        // SAFETY: Wakes the Limelight pull-renderer wait so the decoder thread can observe should_stop.
+        unsafe { gamestream_sys::LiWakeWaitForVideoFrame() };
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+#[cfg(moonlight_common_c_linked)]
 #[derive(Debug)]
 struct SoftwareVideoDecoder {
     codec_context: *mut gamestream_sys::AVCodecContext,
@@ -682,7 +704,7 @@ fn headless_video_callbacks() -> gamestream_sys::DecoderRendererCallbacks {
         start: Some(headless_video_start),
         stop: Some(headless_video_stop),
         cleanup: Some(headless_video_cleanup),
-        submit_decode_unit: Some(headless_video_submit_decode_unit),
+        submit_decode_unit: None,
         capabilities: native_software_video_capabilities(),
     }
 }
@@ -691,7 +713,10 @@ fn native_software_video_capabilities() -> c_int {
     let slices = std::thread::available_parallelism()
         .map(|parallelism| parallelism.get().min(4) as u8)
         .unwrap_or(1);
-    gamestream_sys::capability_slices_per_frame(slices)
+    gamestream_sys::CAPABILITY_PULL_RENDERER
+        | gamestream_sys::CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC
+        | gamestream_sys::CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1
+        | gamestream_sys::capability_slices_per_frame(slices)
 }
 
 fn headless_audio_callbacks() -> gamestream_sys::AudioRendererCallbacks {
@@ -762,6 +787,8 @@ unsafe extern "C" fn headless_video_start() {
     store_video_sink_state(|state| {
         state.started = true;
     });
+    #[cfg(moonlight_common_c_linked)]
+    start_video_decoder_thread();
     emit_stream_event(
         BridgeEventKind::Status,
         "Headless video sink started.".into(),
@@ -769,6 +796,8 @@ unsafe extern "C" fn headless_video_start() {
 }
 
 unsafe extern "C" fn headless_video_stop() {
+    #[cfg(moonlight_common_c_linked)]
+    stop_video_decoder_thread();
     store_video_sink_state(|state| {
         state.started = false;
     });
@@ -779,6 +808,8 @@ unsafe extern "C" fn headless_video_stop() {
 }
 
 unsafe extern "C" fn headless_video_cleanup() {
+    #[cfg(moonlight_common_c_linked)]
+    stop_video_decoder_thread();
     stop_native_video_renderer();
     #[cfg(moonlight_common_c_linked)]
     if let Ok(mut slot) = VIDEO_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
@@ -793,7 +824,67 @@ unsafe extern "C" fn headless_video_cleanup() {
     );
 }
 
-unsafe extern "C" fn headless_video_submit_decode_unit(
+#[cfg(moonlight_common_c_linked)]
+fn start_video_decoder_thread() {
+    stop_video_decoder_thread();
+    let decoder = VIDEO_DECODER_STATE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|mut slot| slot.take());
+    let Some(decoder) = decoder else {
+        logger::log("Video decoder thread was not started because no decoder is configured");
+        return;
+    };
+    let should_stop = Arc::new(AtomicBool::new(false));
+    let thread_should_stop = Arc::clone(&should_stop);
+    let thread = std::thread::spawn(move || video_decoder_thread_loop(decoder, thread_should_stop));
+    if let Ok(mut slot) = VIDEO_DECODER_THREAD.get_or_init(|| Mutex::new(None)).lock() {
+        *slot = Some(VideoDecoderThread {
+            should_stop,
+            thread: Some(thread),
+        });
+    }
+    logger::log("Rust video decoder thread started with moonlight-common-c pull renderer");
+}
+
+#[cfg(moonlight_common_c_linked)]
+fn stop_video_decoder_thread() {
+    if let Ok(mut slot) = VIDEO_DECODER_THREAD.get_or_init(|| Mutex::new(None)).lock() {
+        if slot.is_some() {
+            logger::log("Stopping Rust video decoder thread");
+        }
+        *slot = None;
+    }
+}
+
+#[cfg(moonlight_common_c_linked)]
+fn video_decoder_thread_loop(mut decoder: SoftwareVideoDecoder, should_stop: Arc<AtomicBool>) {
+    while !should_stop.load(Ordering::Acquire) {
+        let mut frame_handle: *mut c_void = std::ptr::null_mut();
+        let mut decode_unit: *mut gamestream_sys::DecodeUnit = std::ptr::null_mut();
+        // SAFETY: Output pointers are valid stack locals. Limelight owns the returned decode unit
+        // until LiCompleteVideoFrame() is called below.
+        let got_frame =
+            unsafe { gamestream_sys::LiWaitForNextVideoFrame(&mut frame_handle, &mut decode_unit) };
+        if !got_frame {
+            continue;
+        }
+        if should_stop.load(Ordering::Acquire) {
+            // SAFETY: frame_handle was returned by LiWaitForNextVideoFrame and must be completed once.
+            unsafe { gamestream_sys::LiCompleteVideoFrame(frame_handle, gamestream_sys::DR_OK) };
+            break;
+        }
+        let status = process_pull_video_decode_unit(&mut decoder, decode_unit);
+        // SAFETY: frame_handle was returned by LiWaitForNextVideoFrame and must be completed once.
+        unsafe { gamestream_sys::LiCompleteVideoFrame(frame_handle, status) };
+    }
+    logger::log("Rust video decoder thread stopped");
+}
+
+#[cfg(moonlight_common_c_linked)]
+fn process_pull_video_decode_unit(
+    decoder: &mut SoftwareVideoDecoder,
     decode_unit: *mut gamestream_sys::DecodeUnit,
 ) -> c_int {
     if decode_unit.is_null() {
@@ -805,10 +896,16 @@ unsafe extern "C" fn headless_video_submit_decode_unit(
     let bytes_received = decode_unit_bytes(decode_unit);
     let payload = unsafe { copy_decode_unit_payload(decode_unit) };
     let decode_start = Instant::now();
-    #[cfg(moonlight_common_c_linked)]
-    let decoded_frame = decode_video_payload(&payload, decode_unit.frame_number);
-    #[cfg(not(moonlight_common_c_linked))]
-    let decoded_frame: Option<RgbaVideoFrame> = None;
+    let decoded_frame = match decoder.decode(&payload, decode_unit.frame_number) {
+        Ok(frame) => frame,
+        Err(error) => {
+            emit_stream_event(
+                BridgeEventKind::Status,
+                format!("Software video decode failed: {error}."),
+            );
+            None
+        }
+    };
     let decode_us = decode_start.elapsed().as_micros();
     let decoded = decoded_frame.is_some();
     record_native_video_decode_diagnostics(
@@ -3201,7 +3298,8 @@ mod tests {
         assert!(callbacks.connection.connection_terminated.is_some());
         assert!(callbacks.connection.connection_status_update.is_some());
         assert!(callbacks.video.setup.is_some());
-        assert!(callbacks.video.submit_decode_unit.is_some());
+        assert!(callbacks.video.submit_decode_unit.is_none());
+        assert!(callbacks.video.capabilities & gamestream_sys::CAPABILITY_PULL_RENDERER != 0);
         assert!(callbacks.audio.init.is_some());
         assert!(callbacks.audio.decode_and_play_sample.is_some());
     }
@@ -3213,7 +3311,8 @@ mod tests {
         );
 
         assert!(callbacks.video.setup.is_some());
-        assert!(callbacks.video.submit_decode_unit.is_some());
+        assert!(callbacks.video.submit_decode_unit.is_none());
+        assert!(callbacks.video.capabilities & gamestream_sys::CAPABILITY_PULL_RENDERER != 0);
         assert!(callbacks.audio.init.is_some());
         assert!(callbacks.audio.decode_and_play_sample.is_some());
     }
@@ -3222,20 +3321,6 @@ mod tests {
     fn headless_media_callbacks_are_safe_noop_sinks() {
         let video = super::headless_video_callbacks();
         let audio = super::headless_audio_callbacks();
-        let mut second_entry = gamestream_sys::LEntry {
-            length: 20,
-            ..gamestream_sys::LEntry::default()
-        };
-        let mut first_entry = gamestream_sys::LEntry {
-            next: &mut second_entry,
-            length: 10,
-            ..gamestream_sys::LEntry::default()
-        };
-        let mut decode_unit = gamestream_sys::DecodeUnit {
-            frame_number: 7,
-            buffer_list: &mut first_entry,
-            ..gamestream_sys::DecodeUnit::default()
-        };
         let mut opus = gamestream_sys::OpusMultistreamConfiguration {
             sample_rate: 48_000,
             channel_count: 2,
@@ -3249,7 +3334,6 @@ mod tests {
         let video_start = video.start.unwrap();
         let video_stop = video.stop.unwrap();
         let video_cleanup = video.cleanup.unwrap();
-        let video_submit = video.submit_decode_unit.unwrap();
         let audio_init = audio.init.unwrap();
         let audio_start = audio.start.unwrap();
         let audio_stop = audio.stop.unwrap();
@@ -3257,10 +3341,7 @@ mod tests {
         let decode_and_play_sample = audio.decode_and_play_sample.unwrap();
 
         let video_result = unsafe { video_setup(1, 1920, 1080, 60, std::ptr::null_mut(), 0) };
-        let submit_result = unsafe {
-            video_start();
-            video_submit(&mut decode_unit)
-        };
+        unsafe { video_start() };
         let audio_result = unsafe {
             audio_init(
                 gamestream_sys::AUDIO_CONFIGURATION_STEREO,
@@ -3279,7 +3360,6 @@ mod tests {
         let video_state = super::video_sink_state_snapshot();
 
         assert_eq!(gamestream_sys::DR_OK, video_result);
-        assert_eq!(gamestream_sys::DR_OK, submit_result);
         assert_eq!(
             Some(super::VideoSinkConfiguration {
                 video_format: 1,
@@ -3291,9 +3371,9 @@ mod tests {
             video_state.configuration
         );
         assert!(video_state.started);
-        assert_eq!(1, video_state.frames_received);
-        assert_eq!(30, video_state.bytes_received);
-        assert_eq!(7, video_state.last_frame_number);
+        assert_eq!(0, video_state.frames_received);
+        assert_eq!(0, video_state.bytes_received);
+        assert_eq!(0, video_state.last_frame_number);
         assert_eq!(0, audio_result);
         assert_eq!(
             Some(opus),

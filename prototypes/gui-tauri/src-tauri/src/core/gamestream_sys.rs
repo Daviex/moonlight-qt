@@ -26,9 +26,11 @@ pub const VIDEO_FORMAT_AV1_HIGH10_444: c_int = 0x8000;
 pub const DR_OK: c_int = 0;
 pub const DR_NEED_IDR: c_int = -1;
 pub const CAPABILITY_DIRECT_SUBMIT: c_int = 0x1;
+pub const CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC: c_int = 0x4;
 pub const CAPABILITY_SLOW_OPUS_DECODER: c_int = 0x8;
 pub const CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION: c_int = 0x10;
 pub const CAPABILITY_PULL_RENDERER: c_int = 0x20;
+pub const CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1: c_int = 0x40;
 
 pub const fn capability_slices_per_frame(slices: u8) -> c_int {
     (slices as c_int) << 24
@@ -485,6 +487,12 @@ extern "C" {
     ) -> c_int;
     pub fn LiStopConnection();
     pub fn LiInterruptConnection();
+    pub fn LiWaitForNextVideoFrame(
+        frame_handle: *mut *mut c_void,
+        decode_unit: *mut *mut DecodeUnit,
+    ) -> bool;
+    pub fn LiWakeWaitForVideoFrame();
+    pub fn LiCompleteVideoFrame(frame_handle: *mut c_void, dr_status: c_int);
     pub fn LiGetStageName(stage: c_int) -> *const c_char;
     pub fn LiGetLaunchUrlQueryParameters() -> *const c_char;
     pub fn LiSendMouseMoveEvent(delta_x: c_short, delta_y: c_short) -> c_int;
@@ -615,7 +623,8 @@ mod tests {
         ConnectionListenerCallbacks, DecodeUnit, DecoderRendererCallbacks,
         OpusMultistreamConfiguration, AUDIO_CONFIGURATION_51_SURROUND,
         AUDIO_CONFIGURATION_71_SURROUND, AUDIO_CONFIGURATION_STEREO, CAPABILITY_DIRECT_SUBMIT,
-        CAPABILITY_PULL_RENDERER, CAPABILITY_SLOW_OPUS_DECODER,
+        CAPABILITY_PULL_RENDERER, CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1,
+        CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC, CAPABILITY_SLOW_OPUS_DECODER,
         CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION, CONN_STATUS_OKAY, DR_NEED_IDR, DR_OK,
         ML_ERROR_NO_VIDEO_TRAFFIC, STAGE_MAX, STAGE_NONE, STREAM_CFG_AUTO,
     };
@@ -663,9 +672,11 @@ mod tests {
         assert_eq!(0, DR_OK);
         assert_eq!(-1, DR_NEED_IDR);
         assert_eq!(0x1, CAPABILITY_DIRECT_SUBMIT);
+        assert_eq!(0x4, CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC);
         assert_eq!(0x8, CAPABILITY_SLOW_OPUS_DECODER);
         assert_eq!(0x10, CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION);
         assert_eq!(0x20, CAPABILITY_PULL_RENDERER);
+        assert_eq!(0x40, CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1);
         assert_eq!(0x04000000, capability_slices_per_frame(4));
         assert_eq!(0, STAGE_NONE);
         assert_eq!(12, STAGE_MAX);
