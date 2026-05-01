@@ -49,6 +49,25 @@ pub struct StreamConfiguration {
     pub supported_video_formats: c_int,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct StreamCallbacks {
+    pub connection: gamestream_sys::ConnectionListenerCallbacks,
+    pub video: gamestream_sys::DecoderRendererCallbacks,
+    pub audio: gamestream_sys::AudioRendererCallbacks,
+}
+
+impl StreamCallbacks {
+    pub fn as_raw_parts(
+        &mut self,
+    ) -> (
+        *mut gamestream_sys::ConnectionListenerCallbacks,
+        *mut gamestream_sys::DecoderRendererCallbacks,
+        *mut gamestream_sys::AudioRendererCallbacks,
+    ) {
+        (&mut self.connection, &mut self.video, &mut self.audio)
+    }
+}
+
 impl StreamConfiguration {
     pub fn to_raw(&self) -> gamestream_sys::StreamConfiguration {
         gamestream_sys::StreamConfiguration {
@@ -142,5 +161,15 @@ mod tests {
             gamestream_sys::STREAM_CFG_LOCAL,
             StreamingRemotely::Local.as_raw()
         );
+    }
+
+    #[test]
+    fn stream_callbacks_expose_mutable_raw_parts() {
+        let mut callbacks = super::StreamCallbacks::default();
+        let (connection, video, audio) = callbacks.as_raw_parts();
+
+        assert!(!connection.is_null());
+        assert!(!video.is_null());
+        assert!(!audio.is_null());
     }
 }
