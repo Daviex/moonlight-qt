@@ -25,8 +25,14 @@ pub const VIDEO_FORMAT_AV1_HIGH10_444: c_int = 0x8000;
 
 pub const DR_OK: c_int = 0;
 pub const DR_NEED_IDR: c_int = -1;
+pub const CAPABILITY_DIRECT_SUBMIT: c_int = 0x1;
 pub const CAPABILITY_SLOW_OPUS_DECODER: c_int = 0x8;
 pub const CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION: c_int = 0x10;
+pub const CAPABILITY_PULL_RENDERER: c_int = 0x20;
+
+pub const fn capability_slices_per_frame(slices: u8) -> c_int {
+    (slices as c_int) << 24
+}
 
 #[cfg(moonlight_common_c_linked)]
 pub const AV_PIX_FMT_RGBA: c_int = 26;
@@ -38,6 +44,16 @@ pub const SWS_BILINEAR: c_int = 1 << 1;
 pub const AVERROR_EAGAIN: c_int = -11;
 #[cfg(moonlight_common_c_linked)]
 pub const AVERROR_EOF: c_int = -541_478_725;
+#[cfg(moonlight_common_c_linked)]
+pub const AV_CODEC_FLAG_OUTPUT_CORRUPT: c_int = 1 << 3;
+#[cfg(moonlight_common_c_linked)]
+pub const AV_CODEC_FLAG_LOW_DELAY: c_int = 1 << 19;
+#[cfg(moonlight_common_c_linked)]
+pub const AV_CODEC_FLAG2_SHOW_ALL: c_int = 1 << 22;
+#[cfg(moonlight_common_c_linked)]
+pub const AV_EF_EXPLODE: c_int = 0x0008;
+#[cfg(moonlight_common_c_linked)]
+pub const FF_THREAD_SLICE: c_int = 2;
 
 pub const STAGE_NONE: c_int = 0;
 pub const STAGE_PLATFORM_INIT: c_int = 1;
@@ -595,9 +611,11 @@ extern "C" {
 #[cfg(test)]
 mod tests {
     use super::{
-        make_audio_configuration, AudioRendererCallbacks, ConnectionListenerCallbacks, DecodeUnit,
-        DecoderRendererCallbacks, OpusMultistreamConfiguration, AUDIO_CONFIGURATION_51_SURROUND,
-        AUDIO_CONFIGURATION_71_SURROUND, AUDIO_CONFIGURATION_STEREO, CAPABILITY_SLOW_OPUS_DECODER,
+        capability_slices_per_frame, make_audio_configuration, AudioRendererCallbacks,
+        ConnectionListenerCallbacks, DecodeUnit, DecoderRendererCallbacks,
+        OpusMultistreamConfiguration, AUDIO_CONFIGURATION_51_SURROUND,
+        AUDIO_CONFIGURATION_71_SURROUND, AUDIO_CONFIGURATION_STEREO, CAPABILITY_DIRECT_SUBMIT,
+        CAPABILITY_PULL_RENDERER, CAPABILITY_SLOW_OPUS_DECODER,
         CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION, CONN_STATUS_OKAY, DR_NEED_IDR, DR_OK,
         ML_ERROR_NO_VIDEO_TRAFFIC, STAGE_MAX, STAGE_NONE, STREAM_CFG_AUTO,
     };
@@ -644,8 +662,11 @@ mod tests {
     fn gamestream_status_constants_match_limelight_header_values() {
         assert_eq!(0, DR_OK);
         assert_eq!(-1, DR_NEED_IDR);
+        assert_eq!(0x1, CAPABILITY_DIRECT_SUBMIT);
         assert_eq!(0x8, CAPABILITY_SLOW_OPUS_DECODER);
         assert_eq!(0x10, CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION);
+        assert_eq!(0x20, CAPABILITY_PULL_RENDERER);
+        assert_eq!(0x04000000, capability_slices_per_frame(4));
         assert_eq!(0, STAGE_NONE);
         assert_eq!(12, STAGE_MAX);
         assert_eq!(0, CONN_STATUS_OKAY);

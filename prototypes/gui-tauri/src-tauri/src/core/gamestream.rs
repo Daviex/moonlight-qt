@@ -637,8 +637,15 @@ fn headless_video_callbacks() -> gamestream_sys::DecoderRendererCallbacks {
         stop: Some(headless_video_stop),
         cleanup: Some(headless_video_cleanup),
         submit_decode_unit: Some(headless_video_submit_decode_unit),
-        capabilities: 0,
+        capabilities: native_software_video_capabilities(),
     }
+}
+
+fn native_software_video_capabilities() -> c_int {
+    let slices = std::thread::available_parallelism()
+        .map(|parallelism| parallelism.get().min(4) as u8)
+        .unwrap_or(1);
+    gamestream_sys::capability_slices_per_frame(slices)
 }
 
 fn headless_audio_callbacks() -> gamestream_sys::AudioRendererCallbacks {
@@ -1004,6 +1011,7 @@ fn native_video_renderer_loop(
             requested_stop = true;
             break;
         }
+        let mut pending_controller_axis_updates = Vec::new();
         for event in event_pump.poll_iter() {
             if handle_sdl3_video_event(
                 event,
@@ -1012,10 +1020,16 @@ fn native_video_renderer_loop(
                 texture_height,
                 &mut canvas,
                 &mut controllers,
+                &mut pending_controller_axis_updates,
             ) {
                 break 'running;
             }
         }
+        flush_sdl3_controller_axis_updates(
+            &mut controllers,
+            &input_sender,
+            pending_controller_axis_updates,
+        );
         match frame_receiver.recv_timeout(NATIVE_VIDEO_INPUT_POLL_TIMEOUT) {
             Ok(frame) => {
                 validate_rgba_frame(&frame)?;
@@ -1237,14 +1251,13 @@ impl Sdl3ControllerManager {
         gamepad_id: u32,
         axis: sdl3::gamepad::Axis,
         value: i16,
-        input: &StreamInputSender,
-    ) {
+    ) -> Option<u32> {
         self.axis_events = self.axis_events.saturating_add(1);
         let Some(controller) = self.controllers.get_mut(&gamepad_id) else {
             self.record_unknown_event(format!(
                 "axis event for unopened id={gamepad_id}; axis={axis:?}; value={value}"
             ));
-            return;
+            return None;
         };
         match axis {
             sdl3::gamepad::Axis::LeftX => controller.state.left_stick_x = value,
@@ -1262,13 +1275,20 @@ impl Sdl3ControllerManager {
                 controller.state.right_trigger = sdl3_trigger_to_u8(value)
             }
         }
+        self.maybe_log_events();
+        Some(gamepad_id)
+    }
+
+    fn send_controller_state(&mut self, gamepad_id: u32, input: &StreamInputSender, reason: &str) {
+        let Some(controller) = self.controllers.get(&gamepad_id) else {
+            return;
+        };
         if let Err(error) = input.send_controller(controller.state) {
             logger::log(format!(
-                "SDL3 gamepad diagnostics: axis state send failed; id={gamepad_id}; controller={}; axis={axis:?}; value={value}; error={error}",
+                "SDL3 gamepad diagnostics: {reason} state send failed; id={gamepad_id}; controller={}; error={error}",
                 controller.controller_number
             ));
         }
-        self.maybe_log_events();
     }
 
     fn handle_button(
@@ -1296,17 +1316,13 @@ impl Sdl3ControllerManager {
         } else {
             controller.state.button_flags &= !flag;
         }
-        if let Err(error) = input.send_controller(controller.state) {
-            logger::log(format!(
-                "SDL3 gamepad diagnostics: button state send failed; id={gamepad_id}; controller={}; button={button:?}; pressed={pressed}; flags={:#x}; error={error}",
-                controller.controller_number,
-                controller.state.button_flags,
-            ));
-        }
+        let controller_number = controller.controller_number;
+        let button_flags = controller.state.button_flags;
+        self.send_controller_state(gamepad_id, input, "button");
         logger::log(format!(
             "SDL3 gamepad diagnostics: button event; id={gamepad_id}; controller={}; button={button:?}; pressed={pressed}; flags={:#x}",
-            controller.controller_number,
-            controller.state.button_flags,
+            controller_number,
+            button_flags,
         ));
         self.maybe_log_events();
     }
@@ -1494,6 +1510,7 @@ fn handle_sdl3_video_event(
     reference_height: usize,
     canvas: &mut sdl3::render::WindowCanvas,
     controllers: &mut Option<Sdl3ControllerManager>,
+    pending_controller_axis_updates: &mut Vec<u32>,
 ) -> bool {
     match event {
         sdl3::event::Event::Quit { .. }
@@ -1571,7 +1588,11 @@ fn handle_sdl3_video_event(
             which, axis, value, ..
         } => {
             if let Some(controllers) = controllers.as_mut() {
-                controllers.handle_axis(which, axis, value, input);
+                if let Some(gamepad_id) = controllers.handle_axis(which, axis, value) {
+                    if !pending_controller_axis_updates.contains(&gamepad_id) {
+                        pending_controller_axis_updates.push(gamepad_id);
+                    }
+                }
             }
         }
         sdl3::event::Event::ControllerButtonDown { which, button, .. } => {
@@ -1630,6 +1651,19 @@ fn send_sdl3_mouse_button(
         sdl3::mouse::MouseButton::Unknown => return,
     };
     let _ = input.send_mouse_button(action, button);
+}
+
+fn flush_sdl3_controller_axis_updates(
+    controllers: &mut Option<Sdl3ControllerManager>,
+    input: &StreamInputSender,
+    gamepad_ids: Vec<u32>,
+) {
+    let Some(controllers) = controllers.as_mut() else {
+        return;
+    };
+    for gamepad_id in gamepad_ids {
+        controllers.send_controller_state(gamepad_id, input, "batched axis");
+    }
 }
 
 fn sdl3_key_modifiers(keymod: sdl3::keyboard::Mod) -> KeyModifiers {
@@ -1808,17 +1842,67 @@ fn validate_rgba_frame(frame: &RgbaVideoFrame) -> Result<(), String> {
 #[cfg(moonlight_common_c_linked)]
 fn configure_ffmpeg_decoder_threading(codec_context: *mut gamestream_sys::AVCodecContext) {
     static THREADS_OPTION: &[u8] = b"threads\0";
-    // SAFETY: codec_context is a newly allocated FFmpeg AVCodecContext and the option name is NUL-terminated.
+    static THREAD_TYPE_OPTION: &[u8] = b"thread_type\0";
+    static FLAGS_OPTION: &[u8] = b"flags\0";
+    static FLAGS2_OPTION: &[u8] = b"flags2\0";
+    static ERR_DETECT_OPTION: &[u8] = b"err_detect\0";
+
+    if set_ffmpeg_decoder_int_option(codec_context, THREADS_OPTION, 0, "thread count") {
+        logger::log("FFmpeg decoder threading configured with automatic thread count");
+    }
+    if set_ffmpeg_decoder_int_option(
+        codec_context,
+        THREAD_TYPE_OPTION,
+        gamestream_sys::FF_THREAD_SLICE.into(),
+        "slice threading",
+    ) {
+        logger::log("FFmpeg decoder slice threading requested");
+    }
+    if set_ffmpeg_decoder_int_option(
+        codec_context,
+        FLAGS_OPTION,
+        (gamestream_sys::AV_CODEC_FLAG_LOW_DELAY | gamestream_sys::AV_CODEC_FLAG_OUTPUT_CORRUPT)
+            .into(),
+        "low-delay flags",
+    ) {
+        logger::log("FFmpeg decoder low-delay flags requested");
+    }
+    if set_ffmpeg_decoder_int_option(
+        codec_context,
+        FLAGS2_OPTION,
+        gamestream_sys::AV_CODEC_FLAG2_SHOW_ALL.into(),
+        "show-all flag",
+    ) {
+        logger::log("FFmpeg decoder show-all flag requested");
+    }
+    if set_ffmpeg_decoder_int_option(
+        codec_context,
+        ERR_DETECT_OPTION,
+        gamestream_sys::AV_EF_EXPLODE.into(),
+        "error detection",
+    ) {
+        logger::log("FFmpeg decoder error detection configured");
+    }
+}
+
+#[cfg(moonlight_common_c_linked)]
+fn set_ffmpeg_decoder_int_option(
+    codec_context: *mut gamestream_sys::AVCodecContext,
+    option: &[u8],
+    value: i64,
+    description: &str,
+) -> bool {
+    // SAFETY: codec_context is a newly allocated FFmpeg AVCodecContext and option is NUL-terminated.
     let result = unsafe {
-        gamestream_sys::av_opt_set_int(codec_context.cast(), THREADS_OPTION.as_ptr().cast(), 0, 0)
+        gamestream_sys::av_opt_set_int(codec_context.cast(), option.as_ptr().cast(), value, 0)
     };
     if result < 0 {
         logger::log(format!(
-            "FFmpeg decoder threading option was rejected; code={result}"
+            "FFmpeg decoder {description} option was rejected; code={result}"
         ));
-    } else {
-        logger::log("FFmpeg decoder threading configured with automatic thread count");
+        return false;
     }
+    true
 }
 
 #[cfg(moonlight_common_c_linked)]
