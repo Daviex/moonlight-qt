@@ -180,7 +180,7 @@ mod tests {
             raw.audio_configuration
         );
         assert_eq!(
-            gamestream_sys::VIDEO_FORMAT_H265 | gamestream_sys::VIDEO_FORMAT_H265_MAIN10,
+            gamestream_sys::VIDEO_FORMAT_H265,
             raw.supported_video_formats
         );
     }

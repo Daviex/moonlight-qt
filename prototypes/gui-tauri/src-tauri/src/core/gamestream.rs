@@ -32,6 +32,9 @@ const DEFAULT_VIDEO_PACKET_SIZE: u32 = 1392;
 const NATIVE_VIDEO_INPUT_POLL_TIMEOUT: Duration = Duration::from_millis(1);
 const NATIVE_VIDEO_DIAGNOSTIC_INTERVAL: Duration = Duration::from_secs(2);
 const SDL3_CONTROLLER_DIAGNOSTIC_INTERVAL: Duration = Duration::from_secs(2);
+const SDL_SOFTWARE_RENDERER_VIDEO_FORMATS: c_int = gamestream_sys::VIDEO_FORMAT_H264
+    | gamestream_sys::VIDEO_FORMAT_H265
+    | gamestream_sys::VIDEO_FORMAT_AV1_MAIN8;
 
 static STREAM_EVENT_CONTEXT: OnceLock<Mutex<Option<StreamEventContext>>> = OnceLock::new();
 static AUDIO_SINK_STATE: OnceLock<Mutex<AudioSinkState>> = OnceLock::new();
@@ -3290,14 +3293,33 @@ impl From<&crate::core::types::StreamingSettings> for StreamConfiguration {
             packet_size,
             streaming_remotely,
             audio_configuration: AudioConfiguration::from_raw(settings.audio_config),
-            supported_video_formats: if settings.video_codec_config == 0 {
-                gamestream_sys::VIDEO_FORMAT_H264
-            } else {
-                settings.video_codec_config
-            },
+            supported_video_formats: sdl_software_renderer_video_formats(
+                settings.video_codec_config,
+                settings.enable_hdr,
+            ),
             remote_input_crypto: RemoteInputCrypto::default(),
         }
     }
+}
+
+fn sdl_software_renderer_video_formats(requested_formats: c_int, hdr_requested: bool) -> c_int {
+    let requested_formats = if requested_formats == 0 {
+        gamestream_sys::VIDEO_FORMAT_H264
+    } else {
+        requested_formats
+    };
+    let filtered_formats = requested_formats & SDL_SOFTWARE_RENDERER_VIDEO_FORMATS;
+    let supported_formats = if filtered_formats == 0 {
+        gamestream_sys::VIDEO_FORMAT_H264
+    } else {
+        filtered_formats
+    };
+    if supported_formats != requested_formats || hdr_requested {
+        logger::log(format!(
+            "SDL software renderer filtered requested video formats; requested=0x{requested_formats:x}; supported=0x{supported_formats:x}; hdr_requested={hdr_requested}; reason=no 10-bit/HDR/YUV444 presenter yet"
+        ));
+    }
+    supported_formats
 }
 
 impl RawSessionConfiguration {
@@ -3516,6 +3538,30 @@ mod tests {
         };
 
         assert_eq!(c_int::MAX, config.to_raw().width);
+    }
+
+    #[test]
+    fn sdl_software_renderer_filters_unsupported_video_formats() {
+        let requested = gamestream_sys::VIDEO_FORMAT_H265
+            | gamestream_sys::VIDEO_FORMAT_H265_MAIN10
+            | gamestream_sys::VIDEO_FORMAT_HEVC_REXT8_444
+            | gamestream_sys::VIDEO_FORMAT_AV1_HIGH10_444;
+
+        assert_eq!(
+            gamestream_sys::VIDEO_FORMAT_H265,
+            super::sdl_software_renderer_video_formats(requested, true)
+        );
+    }
+
+    #[test]
+    fn sdl_software_renderer_falls_back_to_h264_when_only_hdr_is_requested() {
+        assert_eq!(
+            gamestream_sys::VIDEO_FORMAT_H264,
+            super::sdl_software_renderer_video_formats(
+                gamestream_sys::VIDEO_FORMAT_H265_MAIN10,
+                true
+            )
+        );
     }
 
     #[test]
