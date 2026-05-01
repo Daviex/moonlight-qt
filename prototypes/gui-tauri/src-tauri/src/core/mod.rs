@@ -1,5 +1,6 @@
 pub mod apps;
 pub mod backend;
+pub mod discovery;
 pub mod error;
 pub mod events;
 pub mod factory;
@@ -8,6 +9,8 @@ pub mod gamestream_sys;
 pub mod host_http;
 pub mod host_store;
 pub mod hosts;
+pub mod identity;
+pub mod pairing;
 pub mod settings;
 pub mod system;
 pub mod types;
