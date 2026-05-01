@@ -149,6 +149,17 @@ if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
 copy "%TAURI_EXE%" "%PACKAGE_DIR%\MoonlightTauri.exe" >nul
 if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
 
+if defined MOONLIGHT_COMMON_C_LIB_DIR if not "%MOONLIGHT_COMMON_C_STATIC%"=="1" (
+    if exist "%MOONLIGHT_COMMON_C_LIB_DIR%\moonlight-common-c.dll" (
+        copy "%MOONLIGHT_COMMON_C_LIB_DIR%\moonlight-common-c.dll" "%PACKAGE_DIR%\" >nul
+        if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
+    ) else (
+        echo Warning: MOONLIGHT_COMMON_C_LIB_DIR is set but moonlight-common-c.dll was not found:
+        echo %MOONLIGHT_COMMON_C_LIB_DIR%
+        echo The staged Rust backend may fail to start linked streams until the DLL is copied beside MoonlightTauri.exe.
+    )
+)
+
 (
     echo @echo off
     echo start "" "%%~dp0MoonlightTauri.exe"
