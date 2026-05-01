@@ -6,6 +6,7 @@ use super::gamestream::{
 };
 use super::host_http::{ServerInfo, StartAppSession};
 use super::host_store::StoredHost;
+use super::stream_renderer::StreamRendererPlan;
 use super::stream_window::StreamWindowDescriptor;
 use super::types::{AppEntry, StreamingSettings};
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,7 @@ pub struct StreamLaunchPlan {
     pub server_certificate_pem: String,
     pub stream_config: StreamConfiguration,
     pub window: StreamWindowDescriptor,
+    pub renderer: StreamRendererPlan,
 }
 
 #[derive(Debug)]
@@ -71,6 +73,7 @@ impl StreamLaunchPlan {
             stream_config: StreamConfiguration::from(settings)
                 .with_remote_input_crypto(RemoteInputCrypto::generate()),
             window: StreamWindowDescriptor::new(&host.name, settings)?,
+            renderer: StreamRendererPlan::new(settings)?,
         })
     }
 
@@ -165,6 +168,7 @@ mod tests {
         assert_eq!("gaming-pc", plan.host_id);
         assert_eq!(2560, plan.window.width);
         assert_eq!(1440, plan.window.height);
+        assert!(plan.renderer.vsync);
         assert_eq!(2560, raw.width);
         assert_eq!(1440, raw.height);
         assert_eq!(120, raw.fps);
