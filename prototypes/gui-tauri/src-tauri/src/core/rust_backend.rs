@@ -24,6 +24,7 @@ use super::types::{
     AppEntry, BackendInfo, CommandStatus, DisplayInfo, HostDetails, HostEntry, HostStatus,
     NetworkTestResult, PairingChallenge, StreamingSettings, SystemInfo,
 };
+use crate::logger;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs;
@@ -1337,6 +1338,10 @@ fn start_stream_runner_thread(
     thread::spawn(move || {
         let host_id = prepared_stream.host_id.clone();
         let app_id = prepared_stream.app_id.clone();
+        logger::log(format!(
+            "Rust GameStream runner thread starting; host_id={host_id}; app_id={app_id}; address={}",
+            prepared_stream.server.address
+        ));
         let mut callbacks = event_sender
             .clone()
             .map(|sender| {
@@ -1348,17 +1353,27 @@ fn start_stream_runner_thread(
             })
             .unwrap_or_else(StreamCallbacks::connection_lifecycle);
 
-        if let Err(error) = GameStreamRunner.start(&mut prepared_stream.raw, &mut callbacks) {
-            if let Some(sender) = event_sender {
-                let _ = sender.send(BridgeEvent {
-                    kind: BridgeEventKind::Status,
-                    message: format!("Rust GameStream runner failed: {error}"),
-                    host_id: Some(host_id),
-                    app_id: Some(app_id),
-                    controller_action: None,
-                    update_version: None,
-                    update_url: None,
-                });
+        match GameStreamRunner.start(&mut prepared_stream.raw, &mut callbacks) {
+            Ok(()) => {
+                logger::log(format!(
+                    "Rust GameStream runner returned successfully; host_id={host_id}; app_id={app_id}"
+                ));
+            }
+            Err(error) => {
+                logger::log(format!(
+                    "Rust GameStream runner failed; host_id={host_id}; app_id={app_id}; error={error}"
+                ));
+                if let Some(sender) = event_sender {
+                    let _ = sender.send(BridgeEvent {
+                        kind: BridgeEventKind::Status,
+                        message: format!("Rust GameStream runner failed: {error}"),
+                        host_id: Some(host_id),
+                        app_id: Some(app_id),
+                        controller_action: None,
+                        update_version: None,
+                        update_url: None,
+                    });
+                }
             }
         }
     })

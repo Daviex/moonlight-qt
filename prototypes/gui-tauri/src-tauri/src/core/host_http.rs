@@ -14,6 +14,9 @@ use std::time::Duration;
 const DEFAULT_HTTPS_PORT: u16 = 47984;
 const DEFAULT_HTTP_PORT: u16 = 47989;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
+const LAUNCH_TIMEOUT: Duration = Duration::from_secs(120);
+const RESUME_TIMEOUT: Duration = Duration::from_secs(30);
+const QUIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServerInfo {
@@ -262,6 +265,10 @@ pub trait HostHttpTransport {
 
     fn get_bytes(&self, url: &str) -> Result<Vec<u8>, CoreError>;
 
+    fn get_text_with_timeout(&self, url: &str, _timeout: Duration) -> Result<String, CoreError> {
+        self.get_text(url)
+    }
+
     fn get_text_with_client_identity(
         &self,
         url: &str,
@@ -269,6 +276,17 @@ pub trait HostHttpTransport {
         _private_key_pem: &str,
     ) -> Result<String, CoreError> {
         self.get_text(url)
+    }
+
+    fn get_text_with_client_identity_timeout(
+        &self,
+        url: &str,
+        certificate_pem: &str,
+        private_key_pem: &str,
+        timeout: Duration,
+    ) -> Result<String, CoreError> {
+        let _ = timeout;
+        self.get_text_with_client_identity(url, certificate_pem, private_key_pem)
     }
 
     fn get_bytes_with_client_identity(
@@ -323,19 +341,29 @@ impl ReqwestHostHttpTransport {
         &self,
         client: &reqwest::blocking::Client,
         url: &str,
+        timeout: Duration,
     ) -> Result<String, CoreError> {
-        let response = client.get(url).send().map_err(|error| {
-            CoreError::Backend(format!("Host request failed for {url}: {error}"))
+        let response = client.get(url).timeout(timeout).send().map_err(|error| {
+            CoreError::Backend(format!(
+                "Host request failed for {}: {}",
+                sanitized_url(url),
+                sanitized_error_chain(&error)
+            ))
         })?;
         let status = response.status();
         if !status.is_success() {
             return Err(CoreError::Backend(format!(
-                "Host request failed for {url}: HTTP {status}"
+                "Host request failed for {}: HTTP {status}",
+                sanitized_url(url)
             )));
         }
 
         response.text().map_err(|error| {
-            CoreError::Backend(format!("Unable to read host response from {url}: {error}"))
+            CoreError::Backend(format!(
+                "Unable to read host response from {}: {}",
+                sanitized_url(url),
+                sanitized_error_chain(&error)
+            ))
         })
     }
 
@@ -345,12 +373,17 @@ impl ReqwestHostHttpTransport {
         url: &str,
     ) -> Result<Vec<u8>, CoreError> {
         let response = client.get(url).send().map_err(|error| {
-            CoreError::Backend(format!("Host request failed for {url}: {error}"))
+            CoreError::Backend(format!(
+                "Host request failed for {}: {}",
+                sanitized_url(url),
+                sanitized_error_chain(&error)
+            ))
         })?;
         let status = response.status();
         if !status.is_success() {
             return Err(CoreError::Backend(format!(
-                "Host request failed for {url}: HTTP {status}"
+                "Host request failed for {}: HTTP {status}",
+                sanitized_url(url)
             )));
         }
 
@@ -358,14 +391,22 @@ impl ReqwestHostHttpTransport {
             .bytes()
             .map(|bytes| bytes.to_vec())
             .map_err(|error| {
-                CoreError::Backend(format!("Unable to read host response from {url}: {error}"))
+                CoreError::Backend(format!(
+                    "Unable to read host response from {}: {}",
+                    sanitized_url(url),
+                    sanitized_error_chain(&error)
+                ))
             })
     }
 }
 
 impl HostHttpTransport for ReqwestHostHttpTransport {
     fn get_text(&self, url: &str) -> Result<String, CoreError> {
-        self.get_text_with_client(&self.client, url)
+        self.get_text_with_client(&self.client, url, DEFAULT_TIMEOUT)
+    }
+
+    fn get_text_with_timeout(&self, url: &str, timeout: Duration) -> Result<String, CoreError> {
+        self.get_text_with_client(&self.client, url, timeout)
     }
 
     fn get_bytes(&self, url: &str) -> Result<Vec<u8>, CoreError> {
@@ -379,7 +420,18 @@ impl HostHttpTransport for ReqwestHostHttpTransport {
         private_key_pem: &str,
     ) -> Result<String, CoreError> {
         let client = self.client_with_identity(certificate_pem, private_key_pem)?;
-        self.get_text_with_client(&client, url)
+        self.get_text_with_client(&client, url, DEFAULT_TIMEOUT)
+    }
+
+    fn get_text_with_client_identity_timeout(
+        &self,
+        url: &str,
+        certificate_pem: &str,
+        private_key_pem: &str,
+        timeout: Duration,
+    ) -> Result<String, CoreError> {
+        let client = self.client_with_identity(certificate_pem, private_key_pem)?;
+        self.get_text_with_client(&client, url, timeout)
     }
 
     fn get_bytes_with_client_identity(
@@ -585,9 +637,10 @@ where
         request: &StartAppRequest,
         stream: &gamestream::StreamConfiguration,
     ) -> Result<StartAppSession, CoreError> {
-        let body = self.get_text(
+        let body = self.get_text_with_timeout(
             "launch",
             &self.endpoint.launch_url(&request.launch_query(stream)),
+            LAUNCH_TIMEOUT,
         )?;
         parse_start_app_response(&body).map_err(|error| {
             logger::log(format!(
@@ -603,9 +656,10 @@ where
         request: &StartAppRequest,
         stream: &gamestream::StreamConfiguration,
     ) -> Result<StartAppSession, CoreError> {
-        let body = self.get_text(
+        let body = self.get_text_with_timeout(
             "resume",
             &self.endpoint.resume_url(&request.launch_query(stream)),
+            RESUME_TIMEOUT,
         )?;
         parse_start_app_response(&body).map_err(|error| {
             logger::log(format!(
@@ -617,7 +671,8 @@ where
     }
 
     pub fn quit_app(&self) -> Result<(), CoreError> {
-        let body = self.get_text("cancel", &self.endpoint.cancel_url())?;
+        let body =
+            self.get_text_with_timeout("cancel", &self.endpoint.cancel_url(), QUIT_TIMEOUT)?;
         verify_response_status(&body).map_err(|error| {
             logger::log(format!(
                 "host request cancel response rejected; error={error}; response={}",
@@ -651,7 +706,49 @@ where
                 "host request {action} complete; response={}",
                 sanitized_response_preview(body)
             )),
-            Err(error) => logger::log(format!("host request {action} failed; error={error}")),
+            Err(error) => logger::log(format!(
+                "host request {action} failed; error={}",
+                sanitized_url(&error.to_string())
+            )),
+        }
+        result
+    }
+
+    fn get_text_with_timeout(
+        &self,
+        action: &str,
+        url: &str,
+        timeout: Duration,
+    ) -> Result<String, CoreError> {
+        let url = self.url_for_request(url);
+        logger::log(format!(
+            "host request {action} begin; auth={}; timeout_ms={}; url={}",
+            self.auth_label(),
+            timeout.as_millis(),
+            sanitized_url(&url)
+        ));
+        let result = match &self.auth {
+            HostRequestAuth::None => self.client.transport.get_text_with_timeout(&url, timeout),
+            HostRequestAuth::ClientIdentity {
+                unique_id: _,
+                certificate_pem,
+                private_key_pem,
+            } => self.client.transport.get_text_with_client_identity_timeout(
+                &url,
+                certificate_pem,
+                private_key_pem,
+                timeout,
+            ),
+        };
+        match &result {
+            Ok(body) => logger::log(format!(
+                "host request {action} complete; response={}",
+                sanitized_response_preview(body)
+            )),
+            Err(error) => logger::log(format!(
+                "host request {action} failed; error={}",
+                sanitized_url(&error.to_string())
+            )),
         }
         result
     }
@@ -680,7 +777,10 @@ where
                 "host request {action} complete; bytes={}",
                 bytes.len()
             )),
-            Err(error) => logger::log(format!("host request {action} failed; error={error}")),
+            Err(error) => logger::log(format!(
+                "host request {action} failed; error={}",
+                sanitized_url(&error.to_string())
+            )),
         }
         result
     }
@@ -750,6 +850,17 @@ fn sanitized_response_preview(response: &str) -> String {
     let compact = response.split_whitespace().collect::<Vec<_>>().join(" ");
     let preview: String = compact.chars().take(512).collect();
     sanitized_url(&preview)
+}
+
+fn sanitized_error_chain(error: &reqwest::Error) -> String {
+    let mut message = error.to_string();
+    let mut source = std::error::Error::source(error);
+    while let Some(error) = source {
+        message.push_str(": ");
+        message.push_str(&error.to_string());
+        source = error.source();
+    }
+    sanitized_url(&message)
 }
 
 pub type BlockingHostHttpClient = HostHttpClient<ReqwestHostHttpTransport>;

@@ -6,6 +6,7 @@ use super::gamestream_sys;
 use super::stream_input::{
     ButtonAction, KeyAction, KeyModifiers, MouseButton as StreamMouseButton, StreamInputSender,
 };
+use crate::logger;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -432,8 +433,15 @@ fn set_stream_event_context(context: StreamEventContext) {
 
 fn emit_stream_event(kind: BridgeEventKind, message: String) {
     let Some(context) = stream_event_context() else {
+        logger::log(format!(
+            "stream event without context; kind={kind:?}; message={message}"
+        ));
         return;
     };
+    logger::log(format!(
+        "stream event; kind={kind:?}; host_id={}; app_id={}; message={message}",
+        context.host_id, context.app_id
+    ));
     let _ = context.sender.send(BridgeEvent {
         kind,
         message,
@@ -623,6 +631,9 @@ fn start_native_video_renderer(width: c_int, height: c_int) {
     stop_native_video_renderer();
     let width = width.max(1) as usize;
     let height = height.max(1) as usize;
+    logger::log(format!(
+        "starting native video renderer; width={width}; height={height}"
+    ));
     let (frame_sender, frame_receiver) = mpsc::sync_channel::<RgbaVideoFrame>(1);
     let (stop_sender, stop_receiver) = mpsc::channel();
     let thread = std::thread::spawn(move || {
@@ -645,6 +656,9 @@ fn start_native_video_renderer(width: c_int, height: c_int) {
 
 fn stop_native_video_renderer() {
     if let Ok(mut slot) = VIDEO_RENDERER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+        if slot.is_some() {
+            logger::log("stopping native video renderer");
+        }
         *slot = None;
     }
 }
@@ -671,6 +685,9 @@ fn native_video_renderer_loop(
     frame_receiver: mpsc::Receiver<RgbaVideoFrame>,
     stop_receiver: mpsc::Receiver<()>,
 ) -> Result<(), String> {
+    logger::log(format!(
+        "native video renderer creating window; width={width}; height={height}"
+    ));
     let mut window = minifb::Window::new(
         "Moonlight Stream",
         width,
@@ -678,6 +695,7 @@ fn native_video_renderer_loop(
         minifb::WindowOptions::default(),
     )
     .map_err(|error| error.to_string())?;
+    logger::log("native video renderer window created");
     let mut last_buffer = vec![0; width * height];
     let mut last_width = width;
     let mut last_height = height;
