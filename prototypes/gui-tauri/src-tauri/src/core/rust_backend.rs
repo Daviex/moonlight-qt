@@ -1,7 +1,7 @@
 use super::backend::MoonlightCore;
 use super::discovery::{discover_nvstream_hosts, merge_discovered_hosts};
 use super::host_http::{
-    BlockingHostHttpClient, HostEndpoint, ReqwestHostHttpTransport, ServerInfo,
+    BlockingHostHttpClient, HostEndpoint, ReqwestHostHttpTransport, ServerInfo, StartAppRequest,
 };
 use super::host_store::{HostStore, StoredHost};
 use super::identity::ClientIdentity;
@@ -14,7 +14,7 @@ use super::settings::{default_bitrate_kbps, validate_streaming_settings};
 #[cfg(test)]
 use super::storage::default_app_entries;
 use super::storage::{JsonStateStore, StoredState};
-use super::stream_launch::StreamLaunchPlan;
+use super::stream_launch::{PreparedStreamSession, StreamLaunchPlan};
 use super::types::{
     AppEntry, BackendInfo, CommandStatus, DisplayInfo, HostDetails, HostEntry, HostStatus,
     NetworkTestResult, PairingChallenge, StreamingSettings, SystemInfo,
@@ -32,6 +32,7 @@ pub struct RustBackend {
     client_identity: Option<ClientIdentity>,
     state_store: Option<JsonStateStore>,
     host_http: Option<BlockingHostHttpClient>,
+    active_stream_plan: Option<StreamLaunchPlan>,
 }
 
 impl RustBackend {
@@ -58,6 +59,7 @@ impl RustBackend {
             client_identity: state.client_identity,
             state_store,
             host_http: BlockingHostHttpClient::connect().ok(),
+            active_stream_plan: None,
         }
     }
 
@@ -170,6 +172,47 @@ impl RustBackend {
             .collect();
         self.apps = apps;
         self.persist()
+    }
+
+    fn prepare_live_stream(
+        &self,
+        plan: &StreamLaunchPlan,
+    ) -> Result<Option<PreparedStreamSession>, String> {
+        if self.state_store.is_none() {
+            return Ok(None);
+        }
+
+        let Some(client) = &self.host_http else {
+            return Err("Host HTTP client is unavailable.".into());
+        };
+        let endpoint =
+            HostEndpoint::from_address(&plan.host_address).map_err(|error| error.to_string())?;
+        let server_info = client
+            .fetch_server_info(&endpoint)
+            .map_err(|error| error.to_string())?;
+        let app_id = plan
+            .app_id
+            .parse::<u32>()
+            .map_err(|_| format!("App ID '{}' is not numeric.", plan.app_id))?;
+        let request = StartAppRequest {
+            app_id,
+            is_gfe: server_info.state.contains("MJOLNIR"),
+            sops: if server_info.state.contains("MJOLNIR") {
+                false
+            } else {
+                self.settings.game_optimizations
+            },
+            local_audio: self.settings.play_audio_on_host,
+            gamepad_mask: 0,
+            persist_game_controllers_on_disconnect: !self.settings.multi_controller,
+        };
+        let start_session = client
+            .launch_app(&endpoint, &request, &plan.stream_config)
+            .map_err(|error| error.to_string())?;
+
+        plan.prepare_session(&server_info, &start_session)
+            .map(Some)
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -466,6 +509,7 @@ impl MoonlightCore for RustBackend {
         let app = self.app_mut(app_id)?.clone();
         let plan = StreamLaunchPlan::new(&stored_host, &app, &self.settings)
             .map_err(|error| error.to_string())?;
+        let _prepared_stream = self.prepare_live_stream(&plan)?;
 
         self.session
             .launch(plan.host_id.clone(), plan.app_id.clone())
@@ -474,10 +518,12 @@ impl MoonlightCore for RustBackend {
             .mark_active()
             .map_err(|error| error.to_string())?;
 
+        let app_name = plan.app_name.clone();
         self.app_mut(app_id)?.running = true;
+        self.active_stream_plan = Some(plan);
 
         Ok(CommandStatus {
-            message: format!("Launch requested for {}.", plan.app_name),
+            message: format!("Launch requested for {app_name}."),
         })
     }
 
@@ -493,10 +539,20 @@ impl MoonlightCore for RustBackend {
     }
 
     fn quit_running_app(&mut self, host_id: &str) -> Result<CommandStatus, String> {
-        self.host_entry(host_id)?;
+        let host = self.host_entry(host_id)?;
+        if self.state_store.is_some() {
+            if let Some(client) = &self.host_http {
+                let endpoint =
+                    HostEndpoint::from_address(&host.address).map_err(|error| error.to_string())?;
+                client
+                    .quit_app(&endpoint)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
         for app in &mut self.apps {
             app.running = false;
         }
+        self.active_stream_plan = None;
         self.session.finish();
 
         Ok(CommandStatus {
@@ -657,10 +713,12 @@ mod tests {
         let mut backend = RustBackend::new();
 
         backend.launch_app("gaming-pc", "steam").unwrap();
+        assert!(backend.active_stream_plan.is_some());
         let resume = backend.resume_session("gaming-pc").unwrap();
         backend.quit_running_app("gaming-pc").unwrap();
 
         assert_eq!("Resume requested for Steam Big Picture.", resume.message);
+        assert!(backend.active_stream_plan.is_none());
         assert!(backend.resume_session("gaming-pc").is_err());
     }
 

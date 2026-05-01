@@ -14,6 +14,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct ServerInfo {
     pub app_version: String,
     pub gfe_version: String,
+    pub state: String,
     pub unique_id: String,
     pub current_game_id: i32,
     pub pair_status: String,
@@ -310,6 +311,7 @@ pub fn parse_server_info(xml: &str) -> Result<ServerInfo, CoreError> {
         app_version: optional_tag(xml, "appversion"),
         gfe_version: optional_tag(xml, "GfeVersion"),
         unique_id: optional_tag(xml, "uniqueid"),
+        state: optional_tag(xml, "state"),
         current_game_id: optional_tag(xml, "currentgame").parse::<i32>().unwrap_or(0),
         pair_status: optional_tag(xml, "PairStatus"),
         server_codec_mode_support: optional_tag(xml, "ServerCodecModeSupport")
@@ -524,6 +526,7 @@ mod tests {
             <root>
                 <appversion>Sunshine v0.23.1</appversion>
                 <GfeVersion>3.23</GfeVersion>
+                <state>MJOLNIR_SERVER</state>
                 <uniqueid>abc123</uniqueid>
                 <currentgame>12345</currentgame>
                 <PairStatus>1</PairStatus>
@@ -534,6 +537,7 @@ mod tests {
         .unwrap();
 
         assert_eq!("Sunshine v0.23.1", info.app_version);
+        assert_eq!("MJOLNIR_SERVER", info.state);
         assert_eq!("abc123", info.unique_id);
         assert_eq!(12345, info.current_game_id);
         assert_eq!(65535, info.server_codec_mode_support);

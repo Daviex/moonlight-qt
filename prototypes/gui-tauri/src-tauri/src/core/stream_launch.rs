@@ -175,6 +175,7 @@ mod tests {
         let server_info = ServerInfo {
             app_version: "Sunshine".into(),
             gfe_version: "3.0".into(),
+            state: String::new(),
             unique_id: "uuid".into(),
             current_game_id: 0,
             pair_status: "1".into(),
