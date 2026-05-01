@@ -1,7 +1,11 @@
 #![allow(dead_code)]
 
+use super::error::CoreError;
 use super::gamestream_sys;
+use std::ffi::CString;
 use std::os::raw::c_int;
+
+const DEFAULT_VIDEO_PACKET_SIZE: u32 = 1392;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AudioConfiguration {
@@ -64,6 +68,25 @@ pub struct StreamCallbacks {
     pub audio: gamestream_sys::AudioRendererCallbacks,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServerConnectionConfiguration {
+    pub address: String,
+    pub app_version: String,
+    pub gfe_version: Option<String>,
+    pub rtsp_session_url: Option<String>,
+    pub codec_mode_support: c_int,
+}
+
+#[derive(Debug)]
+pub struct RawSessionConfiguration {
+    server_info: gamestream_sys::ServerInformation,
+    stream_config: gamestream_sys::StreamConfiguration,
+    _address: CString,
+    _app_version: CString,
+    _gfe_version: Option<CString>,
+    _rtsp_session_url: Option<CString>,
+}
+
 impl StreamCallbacks {
     pub fn as_raw_parts(
         &mut self,
@@ -94,13 +117,24 @@ impl StreamConfiguration {
 
 impl From<&crate::core::types::StreamingSettings> for StreamConfiguration {
     fn from(settings: &crate::core::types::StreamingSettings) -> Self {
+        let packet_size = if settings.packet_size == 0 {
+            DEFAULT_VIDEO_PACKET_SIZE
+        } else {
+            settings.packet_size
+        };
+        let streaming_remotely = if settings.packet_size == 0 {
+            StreamingRemotely::Auto
+        } else {
+            StreamingRemotely::Local
+        };
+
         Self {
             width: settings.width,
             height: settings.height,
             fps: settings.fps,
             bitrate_kbps: settings.bitrate_kbps,
-            packet_size: settings.packet_size,
-            streaming_remotely: StreamingRemotely::Auto,
+            packet_size,
+            streaming_remotely,
             audio_configuration: AudioConfiguration::from_raw(settings.audio_config),
             supported_video_formats: if settings.video_codec_config == 0 {
                 gamestream_sys::VIDEO_FORMAT_H264
@@ -109,6 +143,67 @@ impl From<&crate::core::types::StreamingSettings> for StreamConfiguration {
             },
         }
     }
+}
+
+impl RawSessionConfiguration {
+    pub fn new(
+        server: &ServerConnectionConfiguration,
+        stream: &StreamConfiguration,
+    ) -> Result<Self, CoreError> {
+        let address = c_string_field("server address", &server.address)?;
+        let app_version = c_string_field("server app version", &server.app_version)?;
+        let gfe_version = optional_c_string_field("server GFE version", &server.gfe_version)?;
+        let rtsp_session_url =
+            optional_c_string_field("RTSP session URL", &server.rtsp_session_url)?;
+
+        let server_info = gamestream_sys::ServerInformation {
+            address: address.as_ptr(),
+            server_info_app_version: app_version.as_ptr(),
+            server_info_gfe_version: gfe_version
+                .as_ref()
+                .map(|value| value.as_ptr())
+                .unwrap_or(std::ptr::null()),
+            rtsp_session_url: rtsp_session_url
+                .as_ref()
+                .map(|value| value.as_ptr())
+                .unwrap_or(std::ptr::null()),
+            server_codec_mode_support: server.codec_mode_support,
+        };
+
+        Ok(Self {
+            server_info,
+            stream_config: stream.to_raw(),
+            _address: address,
+            _app_version: app_version,
+            _gfe_version: gfe_version,
+            _rtsp_session_url: rtsp_session_url,
+        })
+    }
+
+    pub fn server_info(&self) -> &gamestream_sys::ServerInformation {
+        &self.server_info
+    }
+
+    pub fn stream_config(&self) -> &gamestream_sys::StreamConfiguration {
+        &self.stream_config
+    }
+}
+
+fn c_string_field(field_name: &str, value: &str) -> Result<CString, CoreError> {
+    CString::new(value).map_err(|_| {
+        CoreError::Validation(format!("{field_name} cannot contain embedded NUL bytes."))
+    })
+}
+
+fn optional_c_string_field(
+    field_name: &str,
+    value: &Option<String>,
+) -> Result<Option<CString>, CoreError> {
+    value
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .map(|value| c_string_field(field_name, value))
+        .transpose()
 }
 
 impl Default for StreamConfiguration {
@@ -132,8 +227,13 @@ fn saturated_c_int(value: u32) -> c_int {
 
 #[cfg(test)]
 mod tests {
-    use super::{AudioConfiguration, StreamConfiguration, StreamingRemotely};
+    use super::{
+        AudioConfiguration, RawSessionConfiguration, ServerConnectionConfiguration,
+        StreamConfiguration, StreamingRemotely,
+    };
     use crate::core::gamestream_sys;
+    use crate::core::settings::default_streaming_settings;
+    use std::ffi::CStr;
     use std::os::raw::c_int;
 
     #[test]
@@ -176,6 +276,61 @@ mod tests {
         };
 
         assert_eq!(c_int::MAX, config.to_raw().width);
+    }
+
+    #[test]
+    fn streaming_settings_conversion_uses_native_packet_size_defaults() {
+        let mut settings = default_streaming_settings();
+        settings.packet_size = 0;
+
+        let raw = StreamConfiguration::from(&settings).to_raw();
+
+        assert_eq!(1392, raw.packet_size);
+        assert_eq!(gamestream_sys::STREAM_CFG_AUTO, raw.streaming_remotely);
+
+        settings.packet_size = 1024;
+        let raw = StreamConfiguration::from(&settings).to_raw();
+
+        assert_eq!(1024, raw.packet_size);
+        assert_eq!(gamestream_sys::STREAM_CFG_LOCAL, raw.streaming_remotely);
+    }
+
+    #[test]
+    fn raw_session_configuration_owns_c_string_inputs() {
+        let server = ServerConnectionConfiguration {
+            address: "192.168.1.20".into(),
+            app_version: "99.1.1.1".into(),
+            gfe_version: Some("Sunshine".into()),
+            rtsp_session_url: Some("rtsp://session".into()),
+            codec_mode_support: 0x101,
+        };
+        let stream = StreamConfiguration::default();
+
+        let raw = RawSessionConfiguration::new(&server, &stream).unwrap();
+
+        let address = unsafe { CStr::from_ptr(raw.server_info().address) };
+        let gfe_version = unsafe { CStr::from_ptr(raw.server_info().server_info_gfe_version) };
+        assert_eq!("192.168.1.20", address.to_str().unwrap());
+        assert_eq!("Sunshine", gfe_version.to_str().unwrap());
+        assert_eq!(0x101, raw.server_info().server_codec_mode_support);
+        assert_eq!(1920, raw.stream_config().width);
+    }
+
+    #[test]
+    fn raw_session_configuration_rejects_embedded_nul_bytes() {
+        let server = ServerConnectionConfiguration {
+            address: "192.168.1.20\0bad".into(),
+            app_version: "99.1.1.1".into(),
+            gfe_version: None,
+            rtsp_session_url: None,
+            codec_mode_support: 1,
+        };
+
+        let error = RawSessionConfiguration::new(&server, &StreamConfiguration::default())
+            .unwrap_err()
+            .to_string();
+
+        assert_eq!("server address cannot contain embedded NUL bytes.", error);
     }
 
     #[test]
