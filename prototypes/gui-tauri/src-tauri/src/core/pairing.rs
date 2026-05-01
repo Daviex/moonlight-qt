@@ -417,6 +417,13 @@ fn root_attribute(xml: &str, name: &str) -> Option<String> {
 
 pub trait PairingTransport {
     fn get_text(&self, url: &str) -> Result<String, CoreError>;
+
+    fn get_text_with_client_identity(
+        &self,
+        url: &str,
+        certificate_pem: &str,
+        private_key_pem: &str,
+    ) -> Result<String, CoreError>;
 }
 
 impl<T> PairingTransport for T
@@ -425,6 +432,20 @@ where
 {
     fn get_text(&self, url: &str) -> Result<String, CoreError> {
         HostHttpTransport::get_text(self, url)
+    }
+
+    fn get_text_with_client_identity(
+        &self,
+        url: &str,
+        certificate_pem: &str,
+        private_key_pem: &str,
+    ) -> Result<String, CoreError> {
+        HostHttpTransport::get_text_with_client_identity(
+            self,
+            url,
+            certificate_pem,
+            private_key_pem,
+        )
     }
 }
 
@@ -594,12 +615,14 @@ where
             )));
         }
 
-        let challenge_xml = self
-            .transport
-            .get_text(&endpoint.https_pair_url(&pairing_query(
+        let challenge_xml = self.transport.get_text_with_client_identity(
+            &endpoint.https_pair_url(&pairing_query(
                 identity,
                 "devicename=roth&updateState=1&phrase=pairchallenge",
-            )))?;
+            )),
+            &identity.certificate_pem,
+            &identity.private_key_pem,
+        )?;
         let pair_challenge = parse_pairing_response(&challenge_xml);
         if !pair_challenge.paired {
             self.try_unpair(endpoint);
@@ -816,6 +839,25 @@ mod tests {
                 return Ok("<root></root>".into());
             }
             Err(CoreError::Backend(format!("Unexpected URL: {url}")))
+        }
+
+        fn get_text_with_client_identity(
+            &self,
+            url: &str,
+            certificate_pem: &str,
+            private_key_pem: &str,
+        ) -> Result<String, CoreError> {
+            if !certificate_pem.contains("BEGIN CERTIFICATE") {
+                return Err(CoreError::Validation(
+                    "Test client certificate was not supplied.".into(),
+                ));
+            }
+            if !private_key_pem.contains("PRIVATE KEY") {
+                return Err(CoreError::Validation(
+                    "Test client private key was not supplied.".into(),
+                ));
+            }
+            self.get_text(url)
         }
     }
 

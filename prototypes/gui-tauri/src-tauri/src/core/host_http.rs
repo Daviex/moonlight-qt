@@ -206,6 +206,15 @@ fn hdr_query_parameters(supported_video_formats: i32) -> &'static str {
 
 pub trait HostHttpTransport {
     fn get_text(&self, url: &str) -> Result<String, CoreError>;
+
+    fn get_text_with_client_identity(
+        &self,
+        url: &str,
+        _certificate_pem: &str,
+        _private_key_pem: &str,
+    ) -> Result<String, CoreError> {
+        self.get_text(url)
+    }
 }
 
 pub struct ReqwestHostHttpTransport {
@@ -223,11 +232,35 @@ impl ReqwestHostHttpTransport {
             })?;
         Ok(Self { client })
     }
-}
 
-impl HostHttpTransport for ReqwestHostHttpTransport {
-    fn get_text(&self, url: &str) -> Result<String, CoreError> {
-        let response = self.client.get(url).send().map_err(|error| {
+    fn client_with_identity(
+        &self,
+        certificate_pem: &str,
+        private_key_pem: &str,
+    ) -> Result<reqwest::blocking::Client, CoreError> {
+        let identity_pem = format!("{certificate_pem}\n{private_key_pem}");
+        let identity = reqwest::Identity::from_pem(identity_pem.as_bytes()).map_err(|error| {
+            CoreError::Validation(format!("Client identity is not valid PEM: {error}"))
+        })?;
+
+        reqwest::blocking::Client::builder()
+            .timeout(DEFAULT_TIMEOUT)
+            .danger_accept_invalid_certs(true)
+            .identity(identity)
+            .build()
+            .map_err(|error| {
+                CoreError::Backend(format!(
+                    "Unable to initialize authenticated host HTTP client: {error}"
+                ))
+            })
+    }
+
+    fn get_text_with_client(
+        &self,
+        client: &reqwest::blocking::Client,
+        url: &str,
+    ) -> Result<String, CoreError> {
+        let response = client.get(url).send().map_err(|error| {
             CoreError::Backend(format!("Host request failed for {url}: {error}"))
         })?;
         let status = response.status();
@@ -240,6 +273,22 @@ impl HostHttpTransport for ReqwestHostHttpTransport {
         response.text().map_err(|error| {
             CoreError::Backend(format!("Unable to read host response from {url}: {error}"))
         })
+    }
+}
+
+impl HostHttpTransport for ReqwestHostHttpTransport {
+    fn get_text(&self, url: &str) -> Result<String, CoreError> {
+        self.get_text_with_client(&self.client, url)
+    }
+
+    fn get_text_with_client_identity(
+        &self,
+        url: &str,
+        certificate_pem: &str,
+        private_key_pem: &str,
+    ) -> Result<String, CoreError> {
+        let client = self.client_with_identity(certificate_pem, private_key_pem)?;
+        self.get_text_with_client(&client, url)
     }
 }
 
