@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import {
   AppEntry,
   BackendInfo,
@@ -47,6 +48,7 @@ import { canPairHost } from './ui/hosts';
 import { applyStoredDebugUi, readStoredDebugUi } from './ui/debug';
 
 const appWindow = getCurrentWindow();
+const streamWindowLabel = 'moonlight-stream';
 
 function writeDebugLog(message: string) {
   void bridge.debugLog(message).catch(() => undefined);
@@ -627,6 +629,58 @@ export default function App() {
       await showTauriShell();
     }
   }, [showTauriShell]);
+
+  useEffect(() => {
+    const active = streamState.phase === 'launching' || streamState.phase === 'active';
+    let cancelled = false;
+
+    const syncStreamWindow = async () => {
+      const existing = await WebviewWindow.getByLabel(streamWindowLabel);
+      if (!active) {
+        if (existing && (streamState.phase === 'finished' || streamState.phase === 'error')) {
+          await existing.close();
+        }
+        return;
+      }
+
+      const descriptor = await bridge.activeStreamWindow();
+      if (!descriptor || cancelled) {
+        return;
+      }
+
+      if (existing) {
+        await existing.setTitle(descriptor.title);
+        await existing.setFocus();
+        if (descriptor.mode !== 'windowed') {
+          await existing.setFullscreen(true);
+        }
+        return;
+      }
+
+      const streamWindow = new WebviewWindow(streamWindowLabel, {
+        url: 'index.html?streamWindow=1',
+        title: descriptor.title,
+        width: descriptor.width,
+        height: descriptor.height,
+        center: true,
+        focus: true,
+        resizable: descriptor.resizable,
+        fullscreen: descriptor.mode !== 'windowed',
+        decorations: descriptor.mode === 'windowed',
+      });
+      streamWindow.once('tauri://error', (event) => {
+        writeDebugLog(`stream window creation failed: ${String(event.payload)}`);
+      });
+    };
+
+    void syncStreamWindow().catch((error) => {
+      writeDebugLog(`stream window sync failed: ${String(error)}`);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [streamState.phase, streamState.message]);
 
   const toggleHidden = useCallback(async (app: AppEntry) => {
     if (!selectedHostId) {

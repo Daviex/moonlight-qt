@@ -1,3 +1,4 @@
+use super::stream_window::StreamWindowDescriptor;
 use super::types::{
     AppEntry, BackendInfo, CommandStatus, HostDetails, HostEntry, NetworkTestResult,
     PairingChallenge, StreamingSettings, SystemInfo,
@@ -45,6 +46,10 @@ pub trait MoonlightCore: Send {
     ) -> Result<u32, String>;
     fn system_info(&mut self) -> Result<SystemInfo, String>;
     fn open_url(&mut self, url: &str) -> Result<CommandStatus, String>;
+
+    fn active_stream_window(&mut self) -> Result<Option<StreamWindowDescriptor>, String> {
+        Ok(None)
+    }
 
     fn stream_mouse_move(&mut self, _delta_x: i16, _delta_y: i16) -> Result<CommandStatus, String> {
         Err("Stream input is not available for this backend.".into())

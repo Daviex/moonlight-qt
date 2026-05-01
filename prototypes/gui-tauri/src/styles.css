@@ -543,6 +543,32 @@ nav button.nav-active {
   color: var(--color-muted);
 }
 
+.stream-window-root {
+  display: grid;
+  gap: 1rem;
+  min-height: 100vh;
+  padding: 1rem;
+  background: var(--color-background);
+}
+
+.stream-window-status {
+  display: grid;
+  gap: 0.35rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 1rem;
+}
+
+.stream-window-status h1,
+.stream-window-status p {
+  margin: 0;
+}
+
+.stream-window-status small {
+  color: var(--color-muted);
+}
+
 .stream-status,
 .stream-messages {
   display: flex;

@@ -2,21 +2,25 @@
 
 use super::error::CoreError;
 use super::types::StreamingSettings;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum StreamWindowMode {
     Fullscreen,
     BorderlessFullscreen,
     Windowed,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum InputCapturePolicy {
     FirstPointerEnter,
     AfterRendererCreated,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StreamWindowDescriptor {
     pub title: String,
     pub width: u32,

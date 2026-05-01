@@ -780,6 +780,15 @@ impl MoonlightCore for RustBackend {
         })
     }
 
+    fn active_stream_window(
+        &mut self,
+    ) -> Result<Option<super::stream_window::StreamWindowDescriptor>, String> {
+        Ok(self
+            .active_stream_plan
+            .as_ref()
+            .map(|plan| plan.window.clone()))
+    }
+
     fn stream_mouse_move(&mut self, delta_x: i16, delta_y: i16) -> Result<CommandStatus, String> {
         self.ensure_stream_input_active()?;
         StreamInputSender

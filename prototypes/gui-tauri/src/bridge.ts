@@ -100,6 +100,19 @@ export interface StreamControllerInput {
   rightStickY: number;
 }
 
+export type StreamWindowMode = 'fullscreen' | 'borderlessFullscreen' | 'windowed';
+export type InputCapturePolicy = 'firstPointerEnter' | 'afterRendererCreated';
+
+export interface StreamWindowDescriptor {
+  title: string;
+  width: number;
+  height: number;
+  mode: StreamWindowMode;
+  resizable: boolean;
+  highDpi: boolean;
+  inputCapturePolicy: InputCapturePolicy;
+}
+
 export interface DisplayInfo {
   nativeWidth: number;
   nativeHeight: number;
@@ -206,6 +219,7 @@ export const bridge = {
     invoke<number>('default_bitrate', { width, height, fps, yuv444 }),
   systemInfo: () => invoke<SystemInfo>('system_info'),
   openUrl: (url: string) => invoke<CommandStatus>('open_url', { url }),
+  activeStreamWindow: () => invoke<StreamWindowDescriptor | null>('active_stream_window'),
   emitControllerAction: (action: ControllerAction) =>
     invoke<CommandStatus>('emit_controller_action', { action }),
   streamMouseMove: (deltaX: number, deltaY: number) =>

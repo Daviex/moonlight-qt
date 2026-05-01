@@ -8,7 +8,7 @@ mod mock_backend;
 use backend::{
     AppEntry, BackendInfo, BridgeEvent, BridgeEventKind, CommandStatus, ControllerAction,
     HostDetails, HostEntry, MoonlightBackend, NetworkTestResult, PairingChallenge,
-    StreamingSettings, SystemInfo,
+    StreamWindowDescriptor, StreamingSettings, SystemInfo,
 };
 use core::factory::create_backend;
 use std::sync::Mutex;
@@ -687,6 +687,28 @@ fn open_url(url: String, backend: tauri::State<'_, BackendState>) -> Result<Comm
 }
 
 #[tauri::command]
+fn active_stream_window(
+    backend: tauri::State<'_, BackendState>,
+) -> Result<Option<StreamWindowDescriptor>, String> {
+    logger::log("command active_stream_window begin");
+    let result = backend
+        .lock()
+        .map_err(|error| error.to_string())?
+        .active_stream_window();
+    match &result {
+        Ok(Some(window)) => logger::log(format!(
+            "command active_stream_window complete; title={}; {}x{} mode={:?}",
+            window.title, window.width, window.height, window.mode
+        )),
+        Ok(None) => logger::log("command active_stream_window complete; none"),
+        Err(error) => logger::log(format!(
+            "command active_stream_window failed; error={error}"
+        )),
+    }
+    result
+}
+
+#[tauri::command]
 fn save_settings(
     settings: StreamingSettings,
     backend: tauri::State<'_, BackendState>,
@@ -758,6 +780,7 @@ fn main() {
             default_bitrate,
             system_info,
             open_url,
+            active_stream_window,
             save_settings,
             emit_controller_action,
             stream_mouse_move,
