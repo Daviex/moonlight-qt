@@ -27,7 +27,7 @@ use super::types::{
 };
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 pub struct RustBackend {
@@ -42,6 +42,7 @@ pub struct RustBackend {
     active_stream_plan: Option<StreamLaunchPlan>,
     event_sender: Option<Sender<BridgeEvent>>,
     stream_callbacks: Option<StreamCallbacks>,
+    stream_thread: Option<JoinHandle<()>>,
 }
 
 impl RustBackend {
@@ -96,6 +97,7 @@ impl RustBackend {
             active_stream_plan: None,
             event_sender,
             stream_callbacks: None,
+            stream_thread: None,
         }
     }
 
@@ -588,6 +590,10 @@ impl MoonlightCore for RustBackend {
     }
 
     fn launch_app(&mut self, host_id: &str, app_id: &str) -> Result<CommandStatus, String> {
+        if self.active_stream_plan.is_some() {
+            return Err("A Rust stream session is already active.".into());
+        }
+
         let host = self.host_entry(host_id)?;
         if !host.paired {
             return Err(format!(
@@ -601,22 +607,11 @@ impl MoonlightCore for RustBackend {
         let plan = StreamLaunchPlan::new(&stored_host, &app, &self.settings)
             .map_err(|error| error.to_string())?;
         let prepared_stream = self.prepare_live_stream(&plan)?;
-        let callbacks = if let Some(mut prepared_stream) = prepared_stream {
-            let mut callbacks = self
-                .event_sender
-                .clone()
-                .map(|sender| {
-                    StreamCallbacks::connection_lifecycle_with_events(
-                        sender,
-                        plan.host_id.clone(),
-                        plan.app_id.clone(),
-                    )
-                })
-                .unwrap_or_else(StreamCallbacks::connection_lifecycle);
-            GameStreamRunner
-                .start(&mut prepared_stream.raw, &mut callbacks)
-                .map_err(|error| error.to_string())?;
-            Some(callbacks)
+        let stream_thread = if let Some(prepared_stream) = prepared_stream {
+            Some(start_stream_runner_thread(
+                prepared_stream,
+                self.event_sender.clone(),
+            ))
         } else {
             None
         };
@@ -631,7 +626,8 @@ impl MoonlightCore for RustBackend {
         let app_name = plan.app_name.clone();
         self.app_mut(app_id)?.running = true;
         self.active_stream_plan = Some(plan);
-        self.stream_callbacks = callbacks;
+        self.stream_callbacks = None;
+        self.stream_thread = stream_thread;
 
         Ok(CommandStatus {
             message: format!("Launch requested for {app_name}."),
@@ -666,6 +662,7 @@ impl MoonlightCore for RustBackend {
         GameStreamRunner.stop();
         self.active_stream_plan = None;
         self.stream_callbacks = None;
+        self.stream_thread = None;
         self.session.finish();
 
         Ok(CommandStatus {
@@ -939,6 +936,40 @@ fn parse_mouse_button(button: &str) -> Result<MouseButton, String> {
         "x2" => Ok(MouseButton::X2),
         _ => Err(format!("Unsupported mouse button '{button}'.")),
     }
+}
+
+fn start_stream_runner_thread(
+    mut prepared_stream: PreparedStreamSession,
+    event_sender: Option<Sender<BridgeEvent>>,
+) -> JoinHandle<()> {
+    thread::spawn(move || {
+        let host_id = prepared_stream.host_id.clone();
+        let app_id = prepared_stream.app_id.clone();
+        let mut callbacks = event_sender
+            .clone()
+            .map(|sender| {
+                StreamCallbacks::connection_lifecycle_with_events(
+                    sender,
+                    host_id.clone(),
+                    app_id.clone(),
+                )
+            })
+            .unwrap_or_else(StreamCallbacks::connection_lifecycle);
+
+        if let Err(error) = GameStreamRunner.start(&mut prepared_stream.raw, &mut callbacks) {
+            if let Some(sender) = event_sender {
+                let _ = sender.send(BridgeEvent {
+                    kind: BridgeEventKind::Status,
+                    message: format!("Rust GameStream runner failed: {error}"),
+                    host_id: Some(host_id),
+                    app_id: Some(app_id),
+                    controller_action: None,
+                    update_version: None,
+                    update_url: None,
+                });
+            }
+        }
+    })
 }
 
 #[cfg(test)]

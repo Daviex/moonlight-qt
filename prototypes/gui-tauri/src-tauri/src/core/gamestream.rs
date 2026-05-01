@@ -127,6 +127,11 @@ pub struct RawSessionConfiguration {
     _rtsp_session_url: Option<CString>,
 }
 
+// SAFETY: Raw pointers in ServerInformation and StreamConfiguration point into CString
+// buffers and fixed arrays owned by this struct. Moving the struct to the stream
+// runner thread does not invalidate those heap allocations or inline arrays.
+unsafe impl Send for RawSessionConfiguration {}
+
 impl StreamCallbacks {
     pub fn connection_lifecycle() -> Self {
         Self::connection_lifecycle_for_output(StreamOutputMode::Headless)
