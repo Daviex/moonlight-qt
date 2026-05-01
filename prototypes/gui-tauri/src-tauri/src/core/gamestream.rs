@@ -706,13 +706,8 @@ fn native_video_renderer_loop(
         .map_err(|error| error.to_string())?;
     let mut canvas = window.into_canvas();
     let texture_creator = canvas.texture_creator();
-    let mut texture = texture_creator
-        .create_texture_streaming(
-            sdl3::pixels::PixelFormat::RGBA8888,
-            width as u32,
-            height as u32,
-        )
-        .map_err(|error| error.to_string())?;
+    disable_sdl3_renderer_vsync(&canvas);
+    let mut texture = create_sdl3_rgba_texture(&texture_creator, width, height)?;
     let mut texture_width = width;
     let mut texture_height = height;
     sdl.mouse().show_cursor(false);
@@ -745,13 +740,8 @@ fn native_video_renderer_loop(
                 let frame_width = frame.width as usize;
                 let frame_height = frame.height as usize;
                 if frame_width != texture_width || frame_height != texture_height {
-                    texture = texture_creator
-                        .create_texture_streaming(
-                            sdl3::pixels::PixelFormat::RGBA8888,
-                            frame_width as u32,
-                            frame_height as u32,
-                        )
-                        .map_err(|error| error.to_string())?;
+                    texture =
+                        create_sdl3_rgba_texture(&texture_creator, frame_width, frame_height)?;
                     texture_width = frame_width;
                     texture_height = frame_height;
                 }
@@ -779,6 +769,30 @@ fn native_video_renderer_loop(
     }
 
     Ok(())
+}
+
+fn create_sdl3_rgba_texture<'a>(
+    texture_creator: &'a sdl3::render::TextureCreator<sdl3::video::WindowContext>,
+    width: usize,
+    height: usize,
+) -> Result<sdl3::render::Texture<'a>, String> {
+    texture_creator
+        .create_texture_streaming(
+            sdl3::pixels::PixelFormat::RGBA32,
+            width as u32,
+            height as u32,
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn disable_sdl3_renderer_vsync(canvas: &sdl3::render::WindowCanvas) {
+    // The stream already arrives paced by GameStream; an extra renderer vsync wait makes input feel delayed.
+    let _ = unsafe {
+        sdl3::sys::render::SDL_SetRenderVSync(
+            canvas.raw(),
+            sdl3::sys::render::SDL_RENDERER_VSYNC_DISABLED,
+        )
+    };
 }
 
 fn load_sdl3_game_controller_mappings(gamepad: &sdl3::GamepadSubsystem) {
