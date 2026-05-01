@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::os::raw::{c_char, c_int, c_schar, c_short, c_uchar, c_uint, c_ushort, c_void};
+use std::os::raw::{c_char, c_float, c_int, c_schar, c_short, c_uchar, c_uint, c_ushort, c_void};
 
 pub const STREAM_CFG_LOCAL: c_int = 0;
 pub const STREAM_CFG_REMOTE: c_int = 1;
@@ -232,6 +232,12 @@ pub struct OpusMultistreamConfiguration {
     pub mapping: [c_uchar; 8],
 }
 
+#[cfg(moonlight_common_c_linked)]
+#[repr(C)]
+pub struct OpusMSDecoder {
+    _private: [u8; 0],
+}
+
 impl Default for OpusMultistreamConfiguration {
     fn default() -> Self {
         Self {
@@ -461,6 +467,27 @@ extern "C" {
     pub fn LiSendHighResScrollEvent(scroll_amount: c_short) -> c_int;
     pub fn LiSendHScrollEvent(scroll_clicks: c_schar) -> c_int;
     pub fn LiSendHighResHScrollEvent(scroll_amount: c_short) -> c_int;
+}
+
+#[cfg(moonlight_common_c_linked)]
+extern "C" {
+    pub fn opus_multistream_decoder_create(
+        fs: c_int,
+        channels: c_int,
+        streams: c_int,
+        coupled_streams: c_int,
+        mapping: *const c_uchar,
+        error: *mut c_int,
+    ) -> *mut OpusMSDecoder;
+    pub fn opus_multistream_decode_float(
+        st: *mut OpusMSDecoder,
+        data: *const c_uchar,
+        len: c_int,
+        pcm: *mut c_float,
+        frame_size: c_int,
+        decode_fec: c_int,
+    ) -> c_int;
+    pub fn opus_multistream_decoder_destroy(st: *mut OpusMSDecoder);
 }
 
 #[cfg(test)]

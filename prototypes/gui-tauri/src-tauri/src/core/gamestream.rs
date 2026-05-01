@@ -15,6 +15,8 @@ const DEFAULT_VIDEO_PACKET_SIZE: u32 = 1392;
 
 static STREAM_EVENT_CONTEXT: OnceLock<Mutex<Option<StreamEventContext>>> = OnceLock::new();
 static AUDIO_SINK_STATE: OnceLock<Mutex<AudioSinkState>> = OnceLock::new();
+#[cfg(moonlight_common_c_linked)]
+static AUDIO_DECODER_STATE: OnceLock<Mutex<Option<OpusAudioDecoder>>> = OnceLock::new();
 static VIDEO_SINK_STATE: OnceLock<Mutex<VideoSinkState>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -200,13 +202,37 @@ struct AudioSinkConfiguration {
     opus_config: gamestream_sys::OpusMultistreamConfiguration,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 struct AudioSinkState {
     configuration: Option<AudioSinkConfiguration>,
     started: bool,
     samples_received: u64,
     bytes_received: u64,
+    decoded_samples: u64,
     last_packet: Vec<u8>,
+    last_pcm_frame: Vec<f32>,
+}
+
+#[cfg(moonlight_common_c_linked)]
+#[derive(Debug)]
+struct OpusAudioDecoder {
+    decoder: *mut gamestream_sys::OpusMSDecoder,
+    channel_count: usize,
+    samples_per_frame: c_int,
+}
+
+#[cfg(moonlight_common_c_linked)]
+unsafe impl Send for OpusAudioDecoder {}
+
+#[cfg(moonlight_common_c_linked)]
+impl Drop for OpusAudioDecoder {
+    fn drop(&mut self) {
+        if !self.decoder.is_null() {
+            // SAFETY: decoder is created by opus_multistream_decoder_create and owned here.
+            unsafe { gamestream_sys::opus_multistream_decoder_destroy(self.decoder) };
+            self.decoder = std::ptr::null_mut();
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -505,6 +531,14 @@ unsafe extern "C" fn headless_audio_init(
 
     // SAFETY: Limelight supplies a valid OPUS_MULTISTREAM_CONFIGURATION pointer for init.
     let opus_config = unsafe { *opus_config };
+    #[cfg(moonlight_common_c_linked)]
+    if let Err(error) = initialize_opus_audio_decoder(&opus_config) {
+        emit_stream_event(
+            BridgeEventKind::Status,
+            format!("Rust audio decoder failed to configure: {error}."),
+        );
+        return -1;
+    }
     store_audio_sink_state(|state| {
         *state = AudioSinkState {
             configuration: Some(AudioSinkConfiguration {
@@ -517,7 +551,7 @@ unsafe extern "C" fn headless_audio_init(
     emit_stream_event(
         BridgeEventKind::Status,
         format!(
-            "Headless audio sink configured for audio {audio_configuration} with {} channels.",
+            "Rust audio sink configured for audio {audio_configuration} with {} channels.",
             opus_config.channel_count
         ),
     );
@@ -545,6 +579,8 @@ unsafe extern "C" fn headless_audio_stop() {
 }
 
 unsafe extern "C" fn headless_audio_cleanup() {
+    #[cfg(moonlight_common_c_linked)]
+    clear_opus_audio_decoder();
     store_audio_sink_state(|state| {
         *state = AudioSinkState::default();
     });
@@ -564,18 +600,114 @@ unsafe extern "C" fn headless_audio_decode_and_play_sample(
 
     let mut first_sample = false;
     let packet = unsafe { copy_audio_packet(sample_data, sample_length) };
+    #[cfg(moonlight_common_c_linked)]
+    let decoded = decode_opus_audio_packet(&packet).unwrap_or_else(|error| {
+        emit_stream_event(
+            BridgeEventKind::Status,
+            format!("Rust audio decoder failed to decode packet: {error}."),
+        );
+        Vec::new()
+    });
+    #[cfg(not(moonlight_common_c_linked))]
+    let decoded = Vec::new();
     store_audio_sink_state(|state| {
         first_sample = state.samples_received == 0;
         state.samples_received = state.samples_received.saturating_add(1);
         state.bytes_received = state.bytes_received.saturating_add(sample_length as u64);
+        state.decoded_samples = state.decoded_samples.saturating_add(
+            (decoded.len()
+                / state
+                    .configuration
+                    .map(|c| c.opus_config.channel_count.max(1) as usize)
+                    .unwrap_or(1)) as u64,
+        );
         state.last_packet = packet;
+        state.last_pcm_frame = decoded;
     });
     if first_sample {
         emit_stream_event(
             BridgeEventKind::Status,
-            format!("Headless audio sink received its first packet ({sample_length} bytes)."),
+            format!("Rust audio sink decoded its first packet ({sample_length} bytes)."),
         );
     }
+}
+
+#[cfg(moonlight_common_c_linked)]
+fn initialize_opus_audio_decoder(
+    opus_config: &gamestream_sys::OpusMultistreamConfiguration,
+) -> Result<(), String> {
+    let mut error = 0;
+    // SAFETY: Opus reads the fixed mapping array during construction only.
+    let decoder = unsafe {
+        gamestream_sys::opus_multistream_decoder_create(
+            opus_config.sample_rate,
+            opus_config.channel_count,
+            opus_config.streams,
+            opus_config.coupled_streams,
+            opus_config.mapping.as_ptr(),
+            &mut error,
+        )
+    };
+    if decoder.is_null() {
+        return Err(format!(
+            "opus_multistream_decoder_create failed with {error}"
+        ));
+    }
+
+    let channel_count = usize::try_from(opus_config.channel_count)
+        .map_err(|_| format!("invalid channel count {}", opus_config.channel_count))?;
+    let decoder = OpusAudioDecoder {
+        decoder,
+        channel_count,
+        samples_per_frame: opus_config.samples_per_frame,
+    };
+    let mut slot = AUDIO_DECODER_STATE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_err(|error| error.to_string())?;
+    *slot = Some(decoder);
+    Ok(())
+}
+
+#[cfg(moonlight_common_c_linked)]
+fn clear_opus_audio_decoder() {
+    if let Ok(mut slot) = AUDIO_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+        *slot = None;
+    }
+}
+
+#[cfg(moonlight_common_c_linked)]
+fn decode_opus_audio_packet(packet: &[u8]) -> Result<Vec<f32>, String> {
+    let mut slot = AUDIO_DECODER_STATE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_err(|error| error.to_string())?;
+    let decoder = slot
+        .as_mut()
+        .ok_or_else(|| "decoder is not initialized".to_string())?;
+    let samples_per_frame = usize::try_from(decoder.samples_per_frame)
+        .map_err(|_| format!("invalid samples per frame {}", decoder.samples_per_frame))?;
+    let mut pcm = vec![0.0_f32; samples_per_frame.saturating_mul(decoder.channel_count)];
+    // SAFETY: decoder is owned by AUDIO_DECODER_STATE, packet and pcm are valid for the call.
+    let samples = unsafe {
+        gamestream_sys::opus_multistream_decode_float(
+            decoder.decoder,
+            packet.as_ptr(),
+            c_int::try_from(packet.len()).unwrap_or(c_int::MAX),
+            pcm.as_mut_ptr(),
+            decoder.samples_per_frame,
+            0,
+        )
+    };
+    if samples < 0 {
+        return Err(format!(
+            "opus_multistream_decode_float failed with {samples}"
+        ));
+    }
+
+    let sample_count = usize::try_from(samples).unwrap_or_default();
+    pcm.truncate(sample_count.saturating_mul(decoder.channel_count));
+    Ok(pcm)
 }
 
 unsafe fn copy_audio_packet(sample_data: *const c_char, sample_length: c_int) -> Vec<u8> {

@@ -265,4 +265,8 @@ for %%D in ("%COMMON_RUNTIME_DIR%\libcrypto-3-*.dll" "%COMMON_RUNTIME_DIR%\libss
         if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
     )
 )
+if exist "%COMMON_RUNTIME_DIR%\opus.dll" (
+    copy "%COMMON_RUNTIME_DIR%\opus.dll" "%PACKAGE_DIR%\" >nul
+    if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
+)
 exit /b 0
