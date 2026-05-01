@@ -280,6 +280,27 @@ impl RustBackend {
             Err("No active Rust stream session is ready for input.".into())
         }
     }
+
+    fn reap_finished_stream_thread(&mut self) {
+        let finished = self
+            .stream_thread
+            .as_ref()
+            .map(JoinHandle::is_finished)
+            .unwrap_or(false);
+        if !finished {
+            return;
+        }
+
+        if let Some(handle) = self.stream_thread.take() {
+            let _ = handle.join();
+        }
+        self.active_stream_plan = None;
+        self.stream_callbacks = None;
+        for app in &mut self.apps {
+            app.running = false;
+        }
+        self.session.finish();
+    }
 }
 
 #[cfg(test)]
@@ -333,6 +354,7 @@ impl MoonlightCore for RustBackend {
     }
 
     fn list_hosts(&mut self) -> Result<Vec<HostEntry>, String> {
+        self.reap_finished_stream_thread();
         self.reload_persisted_state()?;
         if self.settings.enable_mdns {
             match discover_nvstream_hosts(Duration::from_millis(250)) {
@@ -780,6 +802,7 @@ impl MoonlightCore for RustBackend {
     fn active_stream_window(
         &mut self,
     ) -> Result<Option<super::stream_window::StreamWindowDescriptor>, String> {
+        self.reap_finished_stream_thread();
         Ok(self
             .active_stream_plan
             .as_ref()
@@ -789,6 +812,7 @@ impl MoonlightCore for RustBackend {
     fn active_stream_session(
         &mut self,
     ) -> Result<Option<super::stream_launch::ActiveStreamSession>, String> {
+        self.reap_finished_stream_thread();
         Ok(self
             .active_stream_plan
             .as_ref()
@@ -987,6 +1011,7 @@ mod tests {
     use crate::core::backend::MoonlightCore;
     use crate::core::storage::JsonStateStore;
     use std::path::PathBuf;
+    use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn unique_state_dir(name: &str) -> PathBuf {
@@ -1034,6 +1059,27 @@ mod tests {
         assert_eq!("Resume requested for Steam Big Picture.", resume.message);
         assert!(backend.active_stream_plan.is_none());
         assert!(backend.resume_session("gaming-pc").is_err());
+    }
+
+    #[test]
+    fn active_stream_queries_reap_finished_runner_thread() {
+        let mut backend = RustBackend::new();
+        backend.launch_app("gaming-pc", "steam").unwrap();
+        backend.stream_thread = Some(thread::spawn(|| {}));
+        while !backend
+            .stream_thread
+            .as_ref()
+            .map(std::thread::JoinHandle::is_finished)
+            .unwrap_or(false)
+        {
+            thread::yield_now();
+        }
+
+        let active = backend.active_stream_session().unwrap();
+
+        assert!(active.is_none());
+        assert!(backend.active_stream_plan.is_none());
+        assert!(backend.apps.iter().all(|app| !app.running));
     }
 
     #[cfg(not(moonlight_common_c_linked))]
