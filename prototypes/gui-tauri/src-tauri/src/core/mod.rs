@@ -11,6 +11,7 @@ pub mod host_store;
 pub mod hosts;
 pub mod identity;
 pub mod pairing;
+pub mod session;
 pub mod settings;
 pub mod system;
 pub mod types;
