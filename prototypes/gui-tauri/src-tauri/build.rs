@@ -51,5 +51,8 @@ fn configure_windows_media_link() {
         .join("lib")
         .join(arch);
     println!("cargo:rustc-link-search=native={}", media_lib_dir.display());
+    println!("cargo:rustc-link-lib=dylib=avcodec");
+    println!("cargo:rustc-link-lib=dylib=avutil");
     println!("cargo:rustc-link-lib=dylib=opus");
+    println!("cargo:rustc-link-lib=dylib=swscale");
 }

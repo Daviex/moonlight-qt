@@ -26,6 +26,15 @@ pub const DR_NEED_IDR: c_int = -1;
 pub const CAPABILITY_SLOW_OPUS_DECODER: c_int = 0x8;
 pub const CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION: c_int = 0x10;
 
+#[cfg(moonlight_common_c_linked)]
+pub const AV_PIX_FMT_RGBA: c_int = 26;
+#[cfg(moonlight_common_c_linked)]
+pub const SWS_BILINEAR: c_int = 1 << 1;
+#[cfg(moonlight_common_c_linked)]
+pub const AVERROR_EAGAIN: c_int = -11;
+#[cfg(moonlight_common_c_linked)]
+pub const AVERROR_EOF: c_int = -541_478_725;
+
 pub const STAGE_NONE: c_int = 0;
 pub const STAGE_PLATFORM_INIT: c_int = 1;
 pub const STAGE_NAME_RESOLUTION: c_int = 2;
@@ -236,6 +245,42 @@ pub struct OpusMultistreamConfiguration {
 #[repr(C)]
 pub struct OpusMSDecoder {
     _private: [u8; 0],
+}
+
+#[cfg(moonlight_common_c_linked)]
+#[repr(C)]
+pub struct AVCodec {
+    _private: [u8; 0],
+}
+
+#[cfg(moonlight_common_c_linked)]
+#[repr(C)]
+pub struct AVCodecContext {
+    _private: [u8; 0],
+}
+
+#[cfg(moonlight_common_c_linked)]
+#[repr(C)]
+pub struct AVPacket {
+    _private: [u8; 0],
+}
+
+#[cfg(moonlight_common_c_linked)]
+#[repr(C)]
+pub struct SwsContext {
+    _private: [u8; 0],
+}
+
+#[cfg(moonlight_common_c_linked)]
+#[repr(C)]
+pub struct AVFrame {
+    pub data: [*mut c_uchar; 8],
+    pub linesize: [c_int; 8],
+    pub extended_data: *mut *mut c_uchar,
+    pub width: c_int,
+    pub height: c_int,
+    pub nb_samples: c_int,
+    pub format: c_int,
 }
 
 impl Default for OpusMultistreamConfiguration {
@@ -488,6 +533,52 @@ extern "C" {
         decode_fec: c_int,
     ) -> c_int;
     pub fn opus_multistream_decoder_destroy(st: *mut OpusMSDecoder);
+
+    pub fn avcodec_find_decoder_by_name(name: *const c_char) -> *const AVCodec;
+    pub fn avcodec_alloc_context3(codec: *const AVCodec) -> *mut AVCodecContext;
+    pub fn avcodec_free_context(avctx: *mut *mut AVCodecContext);
+    pub fn avcodec_open2(
+        avctx: *mut AVCodecContext,
+        codec: *const AVCodec,
+        options: *mut *mut c_void,
+    ) -> c_int;
+    pub fn avcodec_send_packet(avctx: *mut AVCodecContext, avpkt: *const AVPacket) -> c_int;
+    pub fn avcodec_receive_frame(avctx: *mut AVCodecContext, frame: *mut AVFrame) -> c_int;
+
+    pub fn av_packet_alloc() -> *mut AVPacket;
+    pub fn av_packet_free(pkt: *mut *mut AVPacket);
+    pub fn av_packet_from_data(pkt: *mut AVPacket, data: *mut c_uchar, size: c_int) -> c_int;
+    pub fn av_packet_unref(pkt: *mut AVPacket);
+
+    pub fn av_frame_alloc() -> *mut AVFrame;
+    pub fn av_frame_free(frame: *mut *mut AVFrame);
+    pub fn av_frame_unref(frame: *mut AVFrame);
+
+    pub fn av_malloc(size: usize) -> *mut c_void;
+    pub fn av_free(ptr: *mut c_void);
+
+    pub fn sws_getContext(
+        srcW: c_int,
+        srcH: c_int,
+        srcFormat: c_int,
+        dstW: c_int,
+        dstH: c_int,
+        dstFormat: c_int,
+        flags: c_int,
+        srcFilter: *mut c_void,
+        dstFilter: *mut c_void,
+        param: *const f64,
+    ) -> *mut SwsContext;
+    pub fn sws_scale(
+        c: *mut SwsContext,
+        srcSlice: *const *const c_uchar,
+        srcStride: *const c_int,
+        srcSliceY: c_int,
+        srcSliceH: c_int,
+        dst: *const *mut c_uchar,
+        dstStride: *const c_int,
+    ) -> c_int;
+    pub fn sws_freeContext(swsContext: *mut SwsContext);
 }
 
 #[cfg(test)]

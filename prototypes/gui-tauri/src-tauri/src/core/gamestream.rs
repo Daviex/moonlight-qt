@@ -9,8 +9,8 @@ use std::collections::VecDeque;
 #[cfg(moonlight_common_c_linked)]
 use std::ffi::CStr;
 use std::ffi::CString;
-use std::os::raw::{c_char, c_int, c_void};
-use std::sync::mpsc::{self, Sender};
+use std::os::raw::{c_char, c_int, c_uchar, c_void};
+use std::sync::mpsc::{self, Sender, SyncSender};
 use std::sync::{Arc, Mutex, OnceLock};
 
 const DEFAULT_VIDEO_PACKET_SIZE: u32 = 1392;
@@ -21,6 +21,9 @@ static AUDIO_SINK_STATE: OnceLock<Mutex<AudioSinkState>> = OnceLock::new();
 static AUDIO_DECODER_STATE: OnceLock<Mutex<Option<OpusAudioDecoder>>> = OnceLock::new();
 static AUDIO_PLAYBACK_STATE: OnceLock<Mutex<Option<AudioPlayback>>> = OnceLock::new();
 static VIDEO_SINK_STATE: OnceLock<Mutex<VideoSinkState>> = OnceLock::new();
+#[cfg(moonlight_common_c_linked)]
+static VIDEO_DECODER_STATE: OnceLock<Mutex<Option<SoftwareVideoDecoder>>> = OnceLock::new();
+static VIDEO_RENDERER_STATE: OnceLock<Mutex<Option<NativeVideoRenderer>>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AudioConfiguration {
@@ -270,9 +273,70 @@ struct VideoSinkState {
     configuration: Option<VideoSinkConfiguration>,
     started: bool,
     frames_received: u64,
+    decoded_frames: u64,
     bytes_received: u64,
     last_frame_number: c_int,
     last_frame_payload: Vec<u8>,
+    last_rgba_frame: Option<RgbaVideoFrame>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RgbaVideoFrame {
+    width: c_int,
+    height: c_int,
+    frame_number: c_int,
+    pixels: Vec<u8>,
+}
+
+struct NativeVideoRenderer {
+    frame_sender: SyncSender<RgbaVideoFrame>,
+    stop_sender: Option<Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for NativeVideoRenderer {
+    fn drop(&mut self) {
+        if let Some(stop_sender) = self.stop_sender.take() {
+            let _ = stop_sender.send(());
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+#[cfg(moonlight_common_c_linked)]
+#[derive(Debug)]
+struct SoftwareVideoDecoder {
+    codec_context: *mut gamestream_sys::AVCodecContext,
+    frame: *mut gamestream_sys::AVFrame,
+    sws_context: *mut gamestream_sys::SwsContext,
+    codec_name: &'static [u8],
+    sws_source_width: c_int,
+    sws_source_height: c_int,
+    sws_source_format: c_int,
+}
+
+#[cfg(moonlight_common_c_linked)]
+unsafe impl Send for SoftwareVideoDecoder {}
+
+#[cfg(moonlight_common_c_linked)]
+impl Drop for SoftwareVideoDecoder {
+    fn drop(&mut self) {
+        if !self.sws_context.is_null() {
+            // SAFETY: sws_context is created by sws_getContext and owned by this decoder.
+            unsafe { gamestream_sys::sws_freeContext(self.sws_context) };
+            self.sws_context = std::ptr::null_mut();
+        }
+        if !self.frame.is_null() {
+            // SAFETY: frame is allocated by av_frame_alloc and owned by this decoder.
+            unsafe { gamestream_sys::av_frame_free(&mut self.frame) };
+        }
+        if !self.codec_context.is_null() {
+            // SAFETY: codec_context is allocated by avcodec_alloc_context3 and owned here.
+            unsafe { gamestream_sys::avcodec_free_context(&mut self.codec_context) };
+        }
+    }
 }
 
 impl StreamOutputMode {
@@ -416,6 +480,9 @@ unsafe extern "C" fn headless_video_setup(
     _context: *mut c_void,
     _dr_flags: c_int,
 ) -> c_int {
+    #[cfg(moonlight_common_c_linked)]
+    let decoder_result = SoftwareVideoDecoder::new(video_format);
+
     store_video_sink_state(|state| {
         *state = VideoSinkState {
             configuration: Some(VideoSinkConfiguration {
@@ -428,6 +495,27 @@ unsafe extern "C" fn headless_video_setup(
             ..VideoSinkState::default()
         };
     });
+    #[cfg(moonlight_common_c_linked)]
+    match decoder_result {
+        Ok(decoder) => {
+            let codec = decoder.codec_display_name();
+            if let Ok(mut slot) = VIDEO_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+                *slot = Some(decoder);
+            }
+            emit_stream_event(
+                BridgeEventKind::Status,
+                format!("Software video decoder configured for {codec}."),
+            );
+        }
+        Err(error) => {
+            emit_stream_event(
+                BridgeEventKind::Status,
+                format!("Software video decoder setup failed: {error}."),
+            );
+            return gamestream_sys::DR_NEED_IDR;
+        }
+    }
+    start_native_video_renderer(width, height);
     emit_stream_event(
         BridgeEventKind::Status,
         format!(
@@ -458,6 +546,11 @@ unsafe extern "C" fn headless_video_stop() {
 }
 
 unsafe extern "C" fn headless_video_cleanup() {
+    stop_native_video_renderer();
+    #[cfg(moonlight_common_c_linked)]
+    if let Ok(mut slot) = VIDEO_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+        *slot = None;
+    }
     store_video_sink_state(|state| {
         *state = VideoSinkState::default();
     });
@@ -478,13 +571,24 @@ unsafe extern "C" fn headless_video_submit_decode_unit(
     let decode_unit = unsafe { &*decode_unit };
     let bytes_received = decode_unit_bytes(decode_unit);
     let payload = unsafe { copy_decode_unit_payload(decode_unit) };
+    #[cfg(moonlight_common_c_linked)]
+    let decoded_frame = decode_video_payload(&payload, decode_unit.frame_number);
+    #[cfg(not(moonlight_common_c_linked))]
+    let decoded_frame: Option<RgbaVideoFrame> = None;
     let mut first_frame = false;
+    let mut first_decoded_frame = false;
     store_video_sink_state(|state| {
         first_frame = state.frames_received == 0;
         state.frames_received = state.frames_received.saturating_add(1);
         state.bytes_received = state.bytes_received.saturating_add(bytes_received);
         state.last_frame_number = decode_unit.frame_number;
         state.last_frame_payload = payload;
+        if let Some(frame) = decoded_frame {
+            first_decoded_frame = state.decoded_frames == 0;
+            state.decoded_frames = state.decoded_frames.saturating_add(1);
+            send_native_video_frame(frame.clone());
+            state.last_rgba_frame = Some(frame);
+        }
     });
     if first_frame {
         emit_stream_event(
@@ -495,7 +599,420 @@ unsafe extern "C" fn headless_video_submit_decode_unit(
             ),
         );
     }
+    if first_decoded_frame {
+        emit_stream_event(
+            BridgeEventKind::Status,
+            "First decoded video frame is ready for native presentation.".into(),
+        );
+    }
     gamestream_sys::DR_OK
+}
+
+fn start_native_video_renderer(width: c_int, height: c_int) {
+    stop_native_video_renderer();
+    let width = width.max(1) as usize;
+    let height = height.max(1) as usize;
+    let (frame_sender, frame_receiver) = mpsc::sync_channel::<RgbaVideoFrame>(1);
+    let (stop_sender, stop_receiver) = mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        if let Err(error) = native_video_renderer_loop(width, height, frame_receiver, stop_receiver)
+        {
+            emit_stream_event(
+                BridgeEventKind::Status,
+                format!("Native video renderer stopped: {error}."),
+            );
+        }
+    });
+    if let Ok(mut slot) = VIDEO_RENDERER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+        *slot = Some(NativeVideoRenderer {
+            frame_sender,
+            stop_sender: Some(stop_sender),
+            thread: Some(thread),
+        });
+    }
+}
+
+fn stop_native_video_renderer() {
+    if let Ok(mut slot) = VIDEO_RENDERER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+        *slot = None;
+    }
+}
+
+fn send_native_video_frame(frame: RgbaVideoFrame) {
+    if let Ok(slot) = VIDEO_RENDERER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+        if let Some(renderer) = slot.as_ref() {
+            match renderer.frame_sender.try_send(frame) {
+                Ok(()) | Err(mpsc::TrySendError::Full(_)) => {}
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    emit_stream_event(
+                        BridgeEventKind::Status,
+                        "Native video renderer is no longer accepting frames.".into(),
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn native_video_renderer_loop(
+    width: usize,
+    height: usize,
+    frame_receiver: mpsc::Receiver<RgbaVideoFrame>,
+    stop_receiver: mpsc::Receiver<()>,
+) -> Result<(), String> {
+    let mut window = minifb::Window::new(
+        "Moonlight Stream",
+        width,
+        height,
+        minifb::WindowOptions::default(),
+    )
+    .map_err(|error| error.to_string())?;
+    let mut last_buffer = vec![0; width * height];
+    let mut last_width = width;
+    let mut last_height = height;
+
+    while window.is_open() {
+        if stop_receiver.try_recv().is_ok() {
+            break;
+        }
+        match frame_receiver.recv_timeout(std::time::Duration::from_millis(16)) {
+            Ok(frame) => {
+                let converted = rgba_to_minifb_buffer(&frame)?;
+                last_width = frame.width as usize;
+                last_height = frame.height as usize;
+                last_buffer = converted;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        window
+            .update_with_buffer(&last_buffer, last_width, last_height)
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn rgba_to_minifb_buffer(frame: &RgbaVideoFrame) -> Result<Vec<u32>, String> {
+    if frame.width <= 0 || frame.height <= 0 {
+        return Err("decoded frame has invalid dimensions".into());
+    }
+    let pixel_count = frame.width as usize * frame.height as usize;
+    if frame.pixels.len() < pixel_count * 4 {
+        return Err("decoded frame buffer is shorter than expected".into());
+    }
+
+    let mut output = Vec::with_capacity(pixel_count);
+    for pixel in frame.pixels.chunks_exact(4).take(pixel_count) {
+        output.push(((pixel[0] as u32) << 16) | ((pixel[1] as u32) << 8) | pixel[2] as u32);
+    }
+    Ok(output)
+}
+
+#[cfg(moonlight_common_c_linked)]
+impl SoftwareVideoDecoder {
+    fn new(video_format: c_int) -> Result<Self, String> {
+        let codec_name = ffmpeg_codec_name(video_format)
+            .ok_or_else(|| format!("unsupported GameStream video format {video_format}"))?;
+        // SAFETY: codec_name is a static null-terminated C string.
+        let codec =
+            unsafe { gamestream_sys::avcodec_find_decoder_by_name(codec_name.as_ptr().cast()) };
+        if codec.is_null() {
+            return Err(format!(
+                "FFmpeg decoder {} was not found",
+                codec_name_without_nul(codec_name)
+            ));
+        }
+
+        // SAFETY: codec is a valid decoder returned by FFmpeg.
+        let codec_context = unsafe { gamestream_sys::avcodec_alloc_context3(codec) };
+        if codec_context.is_null() {
+            return Err("FFmpeg decoder context allocation failed".into());
+        }
+
+        // SAFETY: codec_context is newly allocated and options may be NULL.
+        let open_result =
+            unsafe { gamestream_sys::avcodec_open2(codec_context, codec, std::ptr::null_mut()) };
+        if open_result < 0 {
+            let mut context_to_free = codec_context;
+            // SAFETY: context_to_free is owned locally after allocation failure.
+            unsafe { gamestream_sys::avcodec_free_context(&mut context_to_free) };
+            return Err(format!(
+                "FFmpeg decoder open failed with code {open_result}"
+            ));
+        }
+
+        // SAFETY: returns an FFmpeg-owned frame object on success.
+        let frame = unsafe { gamestream_sys::av_frame_alloc() };
+        if frame.is_null() {
+            let mut context_to_free = codec_context;
+            // SAFETY: context_to_free is owned locally.
+            unsafe { gamestream_sys::avcodec_free_context(&mut context_to_free) };
+            return Err("FFmpeg frame allocation failed".into());
+        }
+
+        Ok(Self {
+            codec_context,
+            frame,
+            sws_context: std::ptr::null_mut(),
+            codec_name,
+            sws_source_width: 0,
+            sws_source_height: 0,
+            sws_source_format: c_int::MIN,
+        })
+    }
+
+    fn codec_display_name(&self) -> String {
+        codec_name_without_nul(self.codec_name)
+    }
+
+    fn decode(
+        &mut self,
+        payload: &[u8],
+        frame_number: c_int,
+    ) -> Result<Option<RgbaVideoFrame>, String> {
+        if payload.is_empty() {
+            return Ok(None);
+        }
+        let mut packet = FfmpegPacket::from_payload(payload)?;
+        // SAFETY: codec_context and packet are valid for the duration of the call.
+        let send_result =
+            unsafe { gamestream_sys::avcodec_send_packet(self.codec_context, packet.as_ptr()) };
+        packet.unref();
+        if send_result < 0
+            && send_result != gamestream_sys::AVERROR_EAGAIN
+            && send_result != gamestream_sys::AVERROR_EOF
+        {
+            return Err(format!(
+                "FFmpeg packet submit failed with code {send_result}"
+            ));
+        }
+
+        let mut last_frame = None;
+        loop {
+            // SAFETY: codec_context is open and frame is owned by this decoder.
+            let receive_result =
+                unsafe { gamestream_sys::avcodec_receive_frame(self.codec_context, self.frame) };
+            if receive_result == gamestream_sys::AVERROR_EAGAIN
+                || receive_result == gamestream_sys::AVERROR_EOF
+            {
+                break;
+            }
+            if receive_result < 0 {
+                return Err(format!(
+                    "FFmpeg frame receive failed with code {receive_result}"
+                ));
+            }
+            last_frame = Some(self.convert_current_frame(frame_number)?);
+            // SAFETY: frame is owned by this decoder and may be reused after unref.
+            unsafe { gamestream_sys::av_frame_unref(self.frame) };
+        }
+
+        Ok(last_frame)
+    }
+
+    fn convert_current_frame(&mut self, frame_number: c_int) -> Result<RgbaVideoFrame, String> {
+        // SAFETY: frame is currently filled by avcodec_receive_frame.
+        let frame = unsafe { &*self.frame };
+        let width = frame.width;
+        let height = frame.height;
+        let source_format = frame.format;
+        if width <= 0 || height <= 0 {
+            return Err("FFmpeg returned a decoded frame with invalid dimensions".into());
+        }
+        if self.sws_context.is_null()
+            || self.sws_source_width != width
+            || self.sws_source_height != height
+            || self.sws_source_format != source_format
+        {
+            if !self.sws_context.is_null() {
+                // SAFETY: sws_context is owned by this decoder.
+                unsafe { gamestream_sys::sws_freeContext(self.sws_context) };
+            }
+            // SAFETY: all scalar arguments are from a decoded frame; filters and params may be NULL.
+            self.sws_context = unsafe {
+                gamestream_sys::sws_getContext(
+                    width,
+                    height,
+                    source_format,
+                    width,
+                    height,
+                    gamestream_sys::AV_PIX_FMT_RGBA,
+                    gamestream_sys::SWS_BILINEAR,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                )
+            };
+            if self.sws_context.is_null() {
+                return Err("FFmpeg swscale context allocation failed".into());
+            }
+            self.sws_source_width = width;
+            self.sws_source_height = height;
+            self.sws_source_format = source_format;
+        }
+
+        let byte_len = width as usize * height as usize * 4;
+        let mut pixels = vec![0; byte_len];
+        let src_slices = frame.data.map(|ptr| ptr as *const c_uchar);
+        let dst_slices = [
+            pixels.as_mut_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        ];
+        let dst_stride = [width * 4, 0, 0, 0, 0, 0, 0, 0];
+        // SAFETY: src slices/strides reference the live AVFrame; dst points to a large enough RGBA buffer.
+        let scaled_rows = unsafe {
+            gamestream_sys::sws_scale(
+                self.sws_context,
+                src_slices.as_ptr(),
+                frame.linesize.as_ptr(),
+                0,
+                height,
+                dst_slices.as_ptr(),
+                dst_stride.as_ptr(),
+            )
+        };
+        if scaled_rows != height {
+            return Err(format!(
+                "FFmpeg swscale converted {scaled_rows} of {height} rows"
+            ));
+        }
+
+        Ok(RgbaVideoFrame {
+            width,
+            height,
+            frame_number,
+            pixels,
+        })
+    }
+}
+
+#[cfg(moonlight_common_c_linked)]
+struct FfmpegPacket {
+    packet: *mut gamestream_sys::AVPacket,
+}
+
+#[cfg(moonlight_common_c_linked)]
+impl FfmpegPacket {
+    fn from_payload(payload: &[u8]) -> Result<Self, String> {
+        // SAFETY: returns an owned packet or NULL on allocation failure.
+        let packet = unsafe { gamestream_sys::av_packet_alloc() };
+        if packet.is_null() {
+            return Err("FFmpeg packet allocation failed".into());
+        }
+
+        let padded_len = payload.len() + 64;
+        // SAFETY: av_malloc returns memory suitable for av_packet_from_data ownership.
+        let buffer = unsafe { gamestream_sys::av_malloc(padded_len) as *mut c_uchar };
+        if buffer.is_null() {
+            let mut packet_to_free = packet;
+            // SAFETY: packet_to_free is owned locally.
+            unsafe { gamestream_sys::av_packet_free(&mut packet_to_free) };
+            return Err("FFmpeg packet buffer allocation failed".into());
+        }
+
+        // SAFETY: buffer has padded_len bytes; payload.len() bytes are initialized from payload and padding is zeroed.
+        unsafe {
+            std::ptr::copy_nonoverlapping(payload.as_ptr(), buffer, payload.len());
+            std::ptr::write_bytes(buffer.add(payload.len()), 0, 64);
+        }
+
+        // SAFETY: packet and buffer are owned; packet takes ownership of buffer on success.
+        let packet_result =
+            unsafe { gamestream_sys::av_packet_from_data(packet, buffer, payload.len() as c_int) };
+        if packet_result < 0 {
+            let mut packet_to_free = packet;
+            // SAFETY: packet is still owned locally; buffer ownership was not transferred on error.
+            unsafe {
+                gamestream_sys::av_free(buffer.cast());
+                gamestream_sys::av_packet_free(&mut packet_to_free);
+            }
+            return Err(format!(
+                "FFmpeg packet data attach failed with code {packet_result}"
+            ));
+        }
+
+        Ok(Self { packet })
+    }
+
+    fn as_ptr(&self) -> *const gamestream_sys::AVPacket {
+        self.packet
+    }
+
+    fn unref(&mut self) {
+        if !self.packet.is_null() {
+            // SAFETY: packet is valid and owned by this wrapper.
+            unsafe { gamestream_sys::av_packet_unref(self.packet) };
+        }
+    }
+}
+
+#[cfg(moonlight_common_c_linked)]
+impl Drop for FfmpegPacket {
+    fn drop(&mut self) {
+        if !self.packet.is_null() {
+            // SAFETY: packet is allocated by av_packet_alloc and owned by this wrapper.
+            unsafe { gamestream_sys::av_packet_free(&mut self.packet) };
+        }
+    }
+}
+
+#[cfg(moonlight_common_c_linked)]
+fn decode_video_payload(payload: &[u8], frame_number: c_int) -> Option<RgbaVideoFrame> {
+    let mut slot = VIDEO_DECODER_STATE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()?;
+    let decoder = slot.as_mut()?;
+    match decoder.decode(payload, frame_number) {
+        Ok(frame) => frame,
+        Err(error) => {
+            emit_stream_event(
+                BridgeEventKind::Status,
+                format!("Software video decode failed: {error}."),
+            );
+            None
+        }
+    }
+}
+
+#[cfg(moonlight_common_c_linked)]
+fn ffmpeg_codec_name(video_format: c_int) -> Option<&'static [u8]> {
+    if video_format
+        & (gamestream_sys::VIDEO_FORMAT_AV1_MAIN8
+            | gamestream_sys::VIDEO_FORMAT_AV1_MAIN10
+            | gamestream_sys::VIDEO_FORMAT_AV1_HIGH8_444
+            | gamestream_sys::VIDEO_FORMAT_AV1_HIGH10_444)
+        != 0
+    {
+        Some(b"av1\0")
+    } else if video_format
+        & (gamestream_sys::VIDEO_FORMAT_H265
+            | gamestream_sys::VIDEO_FORMAT_H265_MAIN10
+            | gamestream_sys::VIDEO_FORMAT_HEVC_REXT8_444
+            | gamestream_sys::VIDEO_FORMAT_HEVC_REXT10_444)
+        != 0
+    {
+        Some(b"hevc\0")
+    } else if video_format
+        & (gamestream_sys::VIDEO_FORMAT_H264 | gamestream_sys::VIDEO_FORMAT_H264_HIGH8_444)
+        != 0
+    {
+        Some(b"h264\0")
+    } else {
+        None
+    }
+}
+
+#[cfg(moonlight_common_c_linked)]
+fn codec_name_without_nul(name: &'static [u8]) -> String {
+    String::from_utf8_lossy(name.strip_suffix(b"\0").unwrap_or(name)).into_owned()
 }
 
 fn decode_unit_bytes(decode_unit: &gamestream_sys::DecodeUnit) -> u64 {

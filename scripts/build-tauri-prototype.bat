@@ -269,4 +269,10 @@ if exist "%COMMON_RUNTIME_DIR%\opus.dll" (
     copy "%COMMON_RUNTIME_DIR%\opus.dll" "%PACKAGE_DIR%\" >nul
     if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
 )
+for %%D in ("%COMMON_RUNTIME_DIR%\avcodec-*.dll" "%COMMON_RUNTIME_DIR%\avutil-*.dll" "%COMMON_RUNTIME_DIR%\dav1d.dll" "%COMMON_RUNTIME_DIR%\swresample-*.dll" "%COMMON_RUNTIME_DIR%\swscale-*.dll") do (
+    if exist "%%~D" (
+        copy "%%~D" "%PACKAGE_DIR%\" >nul
+        if !ERRORLEVEL! NEQ 0 exit /b !ERRORLEVEL!
+    )
+)
 exit /b 0
