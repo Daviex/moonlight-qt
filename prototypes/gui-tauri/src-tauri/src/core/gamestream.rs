@@ -16,7 +16,6 @@ use std::ffi::CString;
 #[cfg(moonlight_common_c_linked)]
 use std::os::raw::c_uchar;
 use std::os::raw::{c_char, c_int, c_void};
-#[cfg(moonlight_common_c_linked)]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -404,10 +403,20 @@ struct VideoDecoderThread {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
-#[derive(Default)]
 struct LatestVideoFrameSlot {
     frame: Mutex<Option<DecodedVideoFrame>>,
     available: Condvar,
+    accepting_frames: AtomicBool,
+}
+
+impl Default for LatestVideoFrameSlot {
+    fn default() -> Self {
+        Self {
+            frame: Mutex::new(None),
+            available: Condvar::new(),
+            accepting_frames: AtomicBool::new(true),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1180,10 +1189,18 @@ fn send_native_video_frame(frame: DecodedVideoFrame) {
     let frame_number = frame.frame_number();
     if let Ok(slot) = VIDEO_RENDERER_STATE.get_or_init(|| Mutex::new(None)).lock() {
         if let Some(renderer) = slot.as_ref() {
+            if !renderer.frame_slot.accepting_frames.load(Ordering::Acquire) {
+                record_native_video_queue_diagnostics(frame_number, VideoQueueResult::Disconnected);
+                return;
+            }
             let Ok(mut pending_frame) = renderer.frame_slot.frame.lock() else {
                 record_native_video_queue_diagnostics(frame_number, VideoQueueResult::Disconnected);
                 return;
             };
+            if !renderer.frame_slot.accepting_frames.load(Ordering::Acquire) {
+                record_native_video_queue_diagnostics(frame_number, VideoQueueResult::Disconnected);
+                return;
+            }
             let result = if pending_frame.replace(frame).is_some() {
                 VideoQueueResult::ReplacedStale
             } else {
@@ -1432,6 +1449,8 @@ fn native_video_renderer_loop(
     sdl.mouse().set_relative_mouse_mode(canvas.window(), false);
     sdl.mouse().capture(false);
     sdl.mouse().show_cursor(true);
+    frame_slot.accepting_frames.store(false, Ordering::Release);
+    frame_slot.available.notify_all();
     if !requested_stop {
         emit_stream_event(
             BridgeEventKind::SessionChanged,
