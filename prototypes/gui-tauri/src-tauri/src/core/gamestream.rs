@@ -400,11 +400,22 @@ unsafe extern "C" fn headless_video_submit_decode_unit(
     // SAFETY: Limelight owns the decode unit for the duration of this callback.
     let decode_unit = unsafe { &*decode_unit };
     let bytes_received = decode_unit_bytes(decode_unit);
+    let mut first_frame = false;
     store_video_sink_state(|state| {
+        first_frame = state.frames_received == 0;
         state.frames_received = state.frames_received.saturating_add(1);
         state.bytes_received = state.bytes_received.saturating_add(bytes_received);
         state.last_frame_number = decode_unit.frame_number;
     });
+    if first_frame {
+        emit_stream_event(
+            BridgeEventKind::Status,
+            format!(
+                "Headless video sink received its first frame {} ({} bytes).",
+                decode_unit.frame_number, bytes_received
+            ),
+        );
+    }
     gamestream_sys::DR_OK
 }
 
@@ -497,10 +508,18 @@ unsafe extern "C" fn headless_audio_decode_and_play_sample(
         return;
     }
 
+    let mut first_sample = false;
     store_audio_sink_state(|state| {
+        first_sample = state.samples_received == 0;
         state.samples_received = state.samples_received.saturating_add(1);
         state.bytes_received = state.bytes_received.saturating_add(sample_length as u64);
     });
+    if first_sample {
+        emit_stream_event(
+            BridgeEventKind::Status,
+            format!("Headless audio sink received its first packet ({sample_length} bytes)."),
+        );
+    }
 }
 
 fn store_audio_sink_state(update: impl FnOnce(&mut AudioSinkState)) {
