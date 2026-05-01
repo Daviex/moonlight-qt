@@ -16,8 +16,8 @@ use std::ffi::CString;
 #[cfg(moonlight_common_c_linked)]
 use std::os::raw::c_uchar;
 use std::os::raw::{c_char, c_int, c_void};
-use std::sync::mpsc::{self, Sender, SyncSender};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 mod logger {
@@ -303,13 +303,20 @@ struct RgbaVideoFrame {
     width: c_int,
     height: c_int,
     frame_number: c_int,
+    decoded_at: Instant,
     pixels: Vec<u8>,
 }
 
 struct NativeVideoRenderer {
-    frame_sender: SyncSender<RgbaVideoFrame>,
+    frame_slot: Arc<LatestVideoFrameSlot>,
     stop_sender: Option<Sender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[derive(Default)]
+struct LatestVideoFrameSlot {
+    frame: Mutex<Option<RgbaVideoFrame>>,
+    available: Condvar,
 }
 
 struct NativeVideoQueueDiagnostics {
@@ -317,7 +324,7 @@ struct NativeVideoQueueDiagnostics {
     last_log_at: Instant,
     submitted_frames: u64,
     queued_frames: u64,
-    dropped_full_frames: u64,
+    replaced_stale_frames: u64,
     disconnected_frames: u64,
     last_frame_number: c_int,
 }
@@ -331,6 +338,8 @@ struct NativeVideoDecodeDiagnostics {
     total_decode_us: u128,
     max_decode_us: u128,
     last_frame_number: c_int,
+    missing_decode_units: u64,
+    max_decode_unit_gap: c_int,
 }
 
 struct NativeVideoRenderDiagnostics {
@@ -342,6 +351,11 @@ struct NativeVideoRenderDiagnostics {
     total_render_us: u128,
     max_update_us: u128,
     max_render_us: u128,
+    total_frame_age_us: u128,
+    max_frame_age_us: u128,
+    skipped_frame_numbers: u64,
+    stale_queue_frames: u64,
+    max_frame_gap: c_int,
     last_frame_number: c_int,
 }
 
@@ -377,7 +391,7 @@ impl Default for NativeVideoQueueDiagnostics {
             last_log_at: now,
             submitted_frames: 0,
             queued_frames: 0,
-            dropped_full_frames: 0,
+            replaced_stale_frames: 0,
             disconnected_frames: 0,
             last_frame_number: 0,
         }
@@ -396,6 +410,8 @@ impl Default for NativeVideoDecodeDiagnostics {
             total_decode_us: 0,
             max_decode_us: 0,
             last_frame_number: 0,
+            missing_decode_units: 0,
+            max_decode_unit_gap: 0,
         }
     }
 }
@@ -412,17 +428,37 @@ impl NativeVideoRenderDiagnostics {
             total_render_us: 0,
             max_update_us: 0,
             max_render_us: 0,
+            total_frame_age_us: 0,
+            max_frame_age_us: 0,
+            skipped_frame_numbers: 0,
+            stale_queue_frames: 0,
+            max_frame_gap: 0,
             last_frame_number: 0,
         }
     }
 
-    fn record_frame(&mut self, frame_number: c_int, update_us: u128, render_us: u128) {
+    fn record_frame(
+        &mut self,
+        frame_number: c_int,
+        update_us: u128,
+        render_us: u128,
+        frame_age_us: u128,
+        stale_queue_frames: u64,
+    ) {
+        if self.last_frame_number > 0 && frame_number > self.last_frame_number + 1 {
+            let gap = frame_number - self.last_frame_number - 1;
+            self.skipped_frame_numbers = self.skipped_frame_numbers.saturating_add(gap as u64);
+            self.max_frame_gap = self.max_frame_gap.max(gap);
+        }
         self.displayed_frames = self.displayed_frames.saturating_add(1);
         self.last_frame_number = frame_number;
         self.total_update_us = self.total_update_us.saturating_add(update_us);
         self.total_render_us = self.total_render_us.saturating_add(render_us);
         self.max_update_us = self.max_update_us.max(update_us);
         self.max_render_us = self.max_render_us.max(render_us);
+        self.total_frame_age_us = self.total_frame_age_us.saturating_add(frame_age_us);
+        self.max_frame_age_us = self.max_frame_age_us.max(frame_age_us);
+        self.stale_queue_frames = self.stale_queue_frames.saturating_add(stale_queue_frames);
     }
 
     fn maybe_log(
@@ -445,12 +481,17 @@ impl NativeVideoRenderDiagnostics {
         } else {
             self.total_render_us / self.displayed_frames as u128
         };
+        let average_frame_age_us = if self.displayed_frames == 0 {
+            0
+        } else {
+            self.total_frame_age_us / self.displayed_frames as u128
+        };
         let output_size = canvas
             .output_size()
             .map(|(width, height)| format!("{width}x{height}"))
             .unwrap_or_else(|error| format!("unavailable:{error}"));
         logger::log(format!(
-            "SDL3 video diagnostics: displayed={}; fps={:.1}; texture={}x{}; output={}; texture_recreates={}; last_frame={}; avg_update_us={}; max_update_us={}; avg_render_us={}; max_render_us={}",
+            "SDL3 video diagnostics: displayed={}; fps={:.1}; texture={}x{}; output={}; texture_recreates={}; last_frame={}; skipped_frame_numbers={}; stale_queue_frames={}; max_frame_gap={}; avg_frame_age_us={}; max_frame_age_us={}; avg_update_us={}; max_update_us={}; avg_render_us={}; max_render_us={}",
             self.displayed_frames,
             self.displayed_frames as f64 / elapsed,
             texture_width,
@@ -458,6 +499,11 @@ impl NativeVideoRenderDiagnostics {
             output_size,
             self.recreated_textures,
             self.last_frame_number,
+            self.skipped_frame_numbers,
+            self.stale_queue_frames,
+            self.max_frame_gap,
+            average_frame_age_us,
+            self.max_frame_age_us,
             average_update_us,
             self.max_update_us,
             average_render_us,
@@ -823,10 +869,12 @@ fn start_native_video_renderer(width: c_int, height: c_int) {
     logger::log(format!(
         "starting native video renderer; width={width}; height={height}"
     ));
-    let (frame_sender, frame_receiver) = mpsc::sync_channel::<RgbaVideoFrame>(1);
+    let frame_slot = Arc::new(LatestVideoFrameSlot::default());
     let (stop_sender, stop_receiver) = mpsc::channel();
+    let thread_frame_slot = Arc::clone(&frame_slot);
     let thread = std::thread::spawn(move || {
-        if let Err(error) = native_video_renderer_loop(width, height, frame_receiver, stop_receiver)
+        if let Err(error) =
+            native_video_renderer_loop(width, height, thread_frame_slot, stop_receiver)
         {
             emit_stream_event(
                 BridgeEventKind::Status,
@@ -836,7 +884,7 @@ fn start_native_video_renderer(width: c_int, height: c_int) {
     });
     if let Ok(mut slot) = VIDEO_RENDERER_STATE.get_or_init(|| Mutex::new(None)).lock() {
         *slot = Some(NativeVideoRenderer {
-            frame_sender,
+            frame_slot,
             stop_sender: Some(stop_sender),
             thread: Some(thread),
         });
@@ -854,35 +902,26 @@ fn stop_native_video_renderer() {
 
 fn send_native_video_frame(frame: RgbaVideoFrame) {
     let frame_number = frame.frame_number;
-    if let Ok(mut slot) = VIDEO_RENDERER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+    if let Ok(slot) = VIDEO_RENDERER_STATE.get_or_init(|| Mutex::new(None)).lock() {
         if let Some(renderer) = slot.as_ref() {
-            match renderer.frame_sender.try_send(frame) {
-                Ok(()) => {
-                    record_native_video_queue_diagnostics(frame_number, VideoQueueResult::Queued)
-                }
-                Err(mpsc::TrySendError::Full(_)) => record_native_video_queue_diagnostics(
-                    frame_number,
-                    VideoQueueResult::DroppedFull,
-                ),
-                Err(mpsc::TrySendError::Disconnected(_)) => {
-                    record_native_video_queue_diagnostics(
-                        frame_number,
-                        VideoQueueResult::Disconnected,
-                    );
-                    emit_stream_event(
-                        BridgeEventKind::Status,
-                        "Native video renderer is no longer accepting frames.".into(),
-                    );
-                    *slot = None;
-                }
-            }
+            let Ok(mut pending_frame) = renderer.frame_slot.frame.lock() else {
+                record_native_video_queue_diagnostics(frame_number, VideoQueueResult::Disconnected);
+                return;
+            };
+            let result = if pending_frame.replace(frame).is_some() {
+                VideoQueueResult::ReplacedStale
+            } else {
+                VideoQueueResult::Queued
+            };
+            renderer.frame_slot.available.notify_one();
+            record_native_video_queue_diagnostics(frame_number, result);
         }
     }
 }
 
 enum VideoQueueResult {
     Queued,
-    DroppedFull,
+    ReplacedStale,
     Disconnected,
 }
 
@@ -899,8 +938,8 @@ fn record_native_video_queue_diagnostics(frame_number: c_int, result: VideoQueue
         VideoQueueResult::Queued => {
             diagnostics.queued_frames = diagnostics.queued_frames.saturating_add(1);
         }
-        VideoQueueResult::DroppedFull => {
-            diagnostics.dropped_full_frames = diagnostics.dropped_full_frames.saturating_add(1);
+        VideoQueueResult::ReplacedStale => {
+            diagnostics.replaced_stale_frames = diagnostics.replaced_stale_frames.saturating_add(1);
         }
         VideoQueueResult::Disconnected => {
             diagnostics.disconnected_frames = diagnostics.disconnected_frames.saturating_add(1);
@@ -909,12 +948,12 @@ fn record_native_video_queue_diagnostics(frame_number: c_int, result: VideoQueue
     if diagnostics.last_log_at.elapsed() >= NATIVE_VIDEO_DIAGNOSTIC_INTERVAL {
         let elapsed = diagnostics.started_at.elapsed().as_secs_f64().max(0.001);
         logger::log(format!(
-            "SDL3 video queue diagnostics: submitted={}; queued={}; dropped_full={}; disconnected={}; queue_drop_pct={:.1}; input_fps={:.1}; last_frame={}",
+            "SDL3 video queue diagnostics: submitted={}; queued={}; replaced_stale={}; disconnected={}; replace_pct={:.1}; input_fps={:.1}; last_frame={}",
             diagnostics.submitted_frames,
             diagnostics.queued_frames,
-            diagnostics.dropped_full_frames,
+            diagnostics.replaced_stale_frames,
             diagnostics.disconnected_frames,
-            diagnostics.dropped_full_frames as f64 * 100.0 / diagnostics.submitted_frames.max(1) as f64,
+            diagnostics.replaced_stale_frames as f64 * 100.0 / diagnostics.submitted_frames.max(1) as f64,
             diagnostics.submitted_frames as f64 / elapsed,
             diagnostics.last_frame_number,
         ));
@@ -938,6 +977,12 @@ fn record_native_video_decode_diagnostics(
     diagnostics.bytes_received = diagnostics.bytes_received.saturating_add(bytes_received);
     diagnostics.total_decode_us = diagnostics.total_decode_us.saturating_add(decode_us);
     diagnostics.max_decode_us = diagnostics.max_decode_us.max(decode_us);
+    if diagnostics.last_frame_number > 0 && frame_number > diagnostics.last_frame_number + 1 {
+        let gap = frame_number - diagnostics.last_frame_number - 1;
+        diagnostics.missing_decode_units =
+            diagnostics.missing_decode_units.saturating_add(gap as u64);
+        diagnostics.max_decode_unit_gap = diagnostics.max_decode_unit_gap.max(gap);
+    }
     diagnostics.last_frame_number = frame_number;
     if decoded {
         diagnostics.decoded_frames = diagnostics.decoded_frames.saturating_add(1);
@@ -950,12 +995,14 @@ fn record_native_video_decode_diagnostics(
             diagnostics.total_decode_us / diagnostics.decode_units as u128
         };
         logger::log(format!(
-            "FFmpeg software decode diagnostics: units={}; decoded={}; decode_ratio_pct={:.1}; unit_fps={:.1}; decoded_fps={:.1}; avg_decode_us={}; max_decode_us={}; mb_received={:.1}; last_frame={}",
+            "FFmpeg software decode diagnostics: units={}; decoded={}; decode_ratio_pct={:.1}; unit_fps={:.1}; decoded_fps={:.1}; missing_units={}; max_unit_gap={}; avg_decode_us={}; max_decode_us={}; mb_received={:.1}; last_frame={}",
             diagnostics.decode_units,
             diagnostics.decoded_frames,
             diagnostics.decoded_frames as f64 * 100.0 / diagnostics.decode_units.max(1) as f64,
             diagnostics.decode_units as f64 / elapsed,
             diagnostics.decoded_frames as f64 / elapsed,
+            diagnostics.missing_decode_units,
+            diagnostics.max_decode_unit_gap,
             average_decode_us,
             diagnostics.max_decode_us,
             diagnostics.bytes_received as f64 / (1024.0 * 1024.0),
@@ -968,7 +1015,7 @@ fn record_native_video_decode_diagnostics(
 fn native_video_renderer_loop(
     width: usize,
     height: usize,
-    frame_receiver: mpsc::Receiver<RgbaVideoFrame>,
+    frame_slot: Arc<LatestVideoFrameSlot>,
     stop_receiver: mpsc::Receiver<()>,
 ) -> Result<(), String> {
     logger::log(format!(
@@ -1030,8 +1077,8 @@ fn native_video_renderer_loop(
             &input_sender,
             pending_controller_axis_updates,
         );
-        match frame_receiver.recv_timeout(NATIVE_VIDEO_INPUT_POLL_TIMEOUT) {
-            Ok(frame) => {
+        match receive_latest_video_frame(&frame_slot) {
+            Some(frame) => {
                 validate_rgba_frame(&frame)?;
                 let frame_width = frame.width as usize;
                 let frame_height = frame.height as usize;
@@ -1055,11 +1102,11 @@ fn native_video_renderer_loop(
                 let render_start = Instant::now();
                 render_sdl3_video_frame(&mut canvas, &texture, texture_width, texture_height)?;
                 let render_us = render_start.elapsed().as_micros();
-                diagnostics.record_frame(frame.frame_number, update_us, render_us);
+                let frame_age_us = frame.decoded_at.elapsed().as_micros();
+                diagnostics.record_frame(frame.frame_number, update_us, render_us, frame_age_us, 0);
                 diagnostics.maybe_log(texture_width, texture_height, &canvas);
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            None => {}
         }
     }
 
@@ -1078,6 +1125,22 @@ fn native_video_renderer_loop(
     }
 
     Ok(())
+}
+
+fn receive_latest_video_frame(frame_slot: &LatestVideoFrameSlot) -> Option<RgbaVideoFrame> {
+    let Ok(mut pending_frame) = frame_slot.frame.lock() else {
+        return None;
+    };
+    if pending_frame.is_none() {
+        let Ok((next_pending_frame, _)) = frame_slot
+            .available
+            .wait_timeout(pending_frame, NATIVE_VIDEO_INPUT_POLL_TIMEOUT)
+        else {
+            return None;
+        };
+        pending_frame = next_pending_frame;
+    }
+    pending_frame.take()
 }
 
 fn create_sdl3_rgba_texture<'a>(
@@ -2085,6 +2148,7 @@ impl SoftwareVideoDecoder {
             width,
             height,
             frame_number,
+            decoded_at: Instant::now(),
             pixels,
         })
     }
