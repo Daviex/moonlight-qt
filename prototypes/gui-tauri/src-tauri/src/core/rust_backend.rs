@@ -1,11 +1,18 @@
 use super::backend::MoonlightCore;
 use super::host_store::{HostStore, StoredHost};
+use super::identity::ClientIdentity;
 use super::session::SessionMachine;
-use super::settings::{default_streaming_settings, validate_streaming_settings};
+#[cfg(test)]
+use super::settings::default_streaming_settings;
+use super::settings::validate_streaming_settings;
+#[cfg(test)]
+use super::storage::default_app_entries;
+use super::storage::{JsonStateStore, StoredState};
 use super::types::{
     AppEntry, BackendInfo, CommandStatus, DisplayInfo, HostDetails, HostEntry, NetworkTestResult,
     PairingChallenge, StreamingSettings, SystemInfo,
 };
+use std::path::PathBuf;
 
 pub struct RustBackend {
     hosts: HostStore,
@@ -13,71 +20,52 @@ pub struct RustBackend {
     settings: StreamingSettings,
     session: SessionMachine,
     next_host_number: u32,
+    client_identity: Option<ClientIdentity>,
+    state_store: Option<JsonStateStore>,
 }
 
 impl RustBackend {
+    #[cfg(test)]
     pub fn new() -> Self {
-        let mut hosts = HostStore::new();
-        hosts.add_or_update(StoredHost {
-            id: "gaming-pc".into(),
-            name: "Gaming PC".into(),
-            manual_address: "192.168.1.20".into(),
-            uuid: "rust-gaming-pc".into(),
-            paired: true,
-            mac_address: "00:11:22:33:44:55".into(),
-        });
-        hosts.add_or_update(StoredHost {
-            id: "living-room".into(),
-            name: "Living Room PC".into(),
-            manual_address: "192.168.1.30".into(),
-            uuid: "rust-living-room".into(),
-            paired: true,
-            mac_address: "00:11:22:33:44:66".into(),
-        });
-        hosts.add_or_update(StoredHost {
-            id: "new-host".into(),
-            name: "New Host".into(),
-            manual_address: "192.168.1.40".into(),
-            uuid: "rust-new-host".into(),
-            paired: false,
-            mac_address: String::new(),
-        });
+        Self::from_state(sample_state(), None)
+    }
 
+    pub fn from_storage_dir(app_data_dir: impl Into<PathBuf>) -> Result<Self, String> {
+        let state_store = JsonStateStore::in_app_data_dir(app_data_dir);
+        let state = state_store.load().map_err(|error| error.to_string())?;
+        Ok(Self::from_state(state, Some(state_store)))
+    }
+
+    fn from_state(state: StoredState, state_store: Option<JsonStateStore>) -> Self {
         Self {
-            hosts,
-            apps: vec![
-                AppEntry {
-                    id: "steam".into(),
-                    name: "Steam Big Picture".into(),
-                    box_art_url: String::new(),
-                    hidden: false,
-                    direct_launch: true,
-                    running: false,
-                    app_collector_game: false,
-                },
-                AppEntry {
-                    id: "desktop".into(),
-                    name: "Desktop".into(),
-                    box_art_url: String::new(),
-                    hidden: false,
-                    direct_launch: false,
-                    running: false,
-                    app_collector_game: false,
-                },
-                AppEntry {
-                    id: "game".into(),
-                    name: "Example Game".into(),
-                    box_art_url: String::new(),
-                    hidden: false,
-                    direct_launch: false,
-                    running: false,
-                    app_collector_game: true,
-                },
-            ],
-            settings: default_streaming_settings(),
+            hosts: state.hosts,
+            apps: state.apps,
+            settings: state.settings,
             session: SessionMachine::default(),
-            next_host_number: 1,
+            next_host_number: state.next_host_number,
+            client_identity: state.client_identity,
+            state_store,
         }
+    }
+
+    fn state_snapshot(&self) -> StoredState {
+        StoredState {
+            hosts: self.hosts.clone(),
+            apps: self.apps.clone(),
+            settings: self.settings.clone(),
+            client_identity: self.client_identity.clone(),
+            next_host_number: self.next_host_number,
+            ..StoredState::default()
+        }
+    }
+
+    fn persist(&self) -> Result<(), String> {
+        if let Some(state_store) = &self.state_store {
+            state_store
+                .save(&self.state_snapshot())
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 
     fn stored_host(&self, host_id: &str) -> Result<StoredHost, String> {
@@ -109,6 +97,43 @@ impl RustBackend {
     }
 }
 
+#[cfg(test)]
+fn sample_state() -> StoredState {
+    let mut hosts = HostStore::new();
+    hosts.add_or_update(StoredHost {
+        id: "gaming-pc".into(),
+        name: "Gaming PC".into(),
+        manual_address: "192.168.1.20".into(),
+        uuid: "rust-gaming-pc".into(),
+        paired: true,
+        mac_address: "00:11:22:33:44:55".into(),
+    });
+    hosts.add_or_update(StoredHost {
+        id: "living-room".into(),
+        name: "Living Room PC".into(),
+        manual_address: "192.168.1.30".into(),
+        uuid: "rust-living-room".into(),
+        paired: true,
+        mac_address: "00:11:22:33:44:66".into(),
+    });
+    hosts.add_or_update(StoredHost {
+        id: "new-host".into(),
+        name: "New Host".into(),
+        manual_address: "192.168.1.40".into(),
+        uuid: "rust-new-host".into(),
+        paired: false,
+        mac_address: String::new(),
+    });
+
+    StoredState {
+        hosts,
+        apps: default_app_entries(),
+        settings: default_streaming_settings(),
+        next_host_number: 1,
+        ..StoredState::default()
+    }
+}
+
 impl MoonlightCore for RustBackend {
     fn backend_info(&self) -> BackendInfo {
         BackendInfo {
@@ -136,6 +161,7 @@ impl MoonlightCore for RustBackend {
             paired: false,
             mac_address: String::new(),
         });
+        self.persist()?;
 
         Ok((
             CommandStatus {
@@ -149,6 +175,7 @@ impl MoonlightCore for RustBackend {
         let mut host = self.stored_host(host_id)?;
         host.paired = true;
         self.update_host(host.clone());
+        self.persist()?;
 
         Ok(PairingChallenge {
             pin: "1234".into(),
@@ -171,6 +198,7 @@ impl MoonlightCore for RustBackend {
         let mut host = self.stored_host(host_id)?;
         host.name = name.clone();
         self.update_host(host);
+        self.persist()?;
 
         Ok(CommandStatus {
             message: format!("Renamed host to {name}."),
@@ -181,6 +209,7 @@ impl MoonlightCore for RustBackend {
         self.hosts
             .remove(host_id)
             .map_err(|error| error.to_string())?;
+        self.persist()?;
         Ok(CommandStatus {
             message: "Host deleted.".into(),
         })
@@ -305,12 +334,14 @@ impl MoonlightCore for RustBackend {
         self.host_entry(host_id)?;
         let app = self.app_mut(app_id)?;
         app.hidden = hidden;
+        let app_name = app.name.clone();
+        self.persist()?;
 
         Ok(CommandStatus {
             message: if hidden {
-                format!("{} is now hidden.", app.name)
+                format!("{app_name} is now hidden.")
             } else {
-                format!("{} is now visible.", app.name)
+                format!("{app_name} is now visible.")
             },
         })
     }
@@ -328,10 +359,12 @@ impl MoonlightCore for RustBackend {
 
         let app = self.app_mut(app_id)?;
         app.direct_launch = direct_launch;
+        let app_name = app.name.clone();
+        self.persist()?;
 
         Ok(CommandStatus {
             message: if direct_launch {
-                format!("{} is now the direct-launch app.", app.name)
+                format!("{app_name} is now the direct-launch app.")
             } else {
                 "Direct launch disabled.".into()
             },
@@ -345,6 +378,7 @@ impl MoonlightCore for RustBackend {
     fn save_settings(&mut self, settings: StreamingSettings) -> Result<CommandStatus, String> {
         validate_streaming_settings(&settings).map_err(|error| error.to_string())?;
         self.settings = settings;
+        self.persist()?;
 
         Ok(CommandStatus {
             message: "Settings saved.".into(),
@@ -411,6 +445,18 @@ impl MoonlightCore for RustBackend {
 mod tests {
     use super::RustBackend;
     use crate::core::backend::MoonlightCore;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_state_dir(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir()
+            .join("moonlight-tauri-rust-backend-tests")
+            .join(format!("{name}-{nonce}"))
+    }
 
     #[test]
     fn rust_backend_reports_in_process_mode() {
@@ -456,5 +502,37 @@ mod tests {
         let error = backend.save_settings(settings).unwrap_err();
 
         assert_eq!("Width must be between 256 and 8192.", error);
+    }
+
+    #[test]
+    fn rust_backend_persists_manual_hosts_between_instances() {
+        let state_dir = unique_state_dir("manual-hosts");
+        let host_id = {
+            let mut backend = RustBackend::from_storage_dir(&state_dir).unwrap();
+            let (_, host_id) = backend.add_host("192.168.1.51".into()).unwrap();
+            backend.pair_host(&host_id).unwrap();
+            host_id
+        };
+
+        let mut reloaded = RustBackend::from_storage_dir(&state_dir).unwrap();
+        let hosts = reloaded.list_hosts().unwrap();
+
+        assert!(hosts.iter().any(|host| host.id == host_id && host.paired));
+    }
+
+    #[test]
+    fn rust_backend_persists_settings_between_instances() {
+        let state_dir = unique_state_dir("settings");
+        {
+            let mut backend = RustBackend::from_storage_dir(&state_dir).unwrap();
+            let mut settings = backend.load_settings().unwrap();
+            settings.width = 2560;
+            backend.save_settings(settings).unwrap();
+        }
+
+        let mut reloaded = RustBackend::from_storage_dir(&state_dir).unwrap();
+        let settings = reloaded.load_settings().unwrap();
+
+        assert_eq!(2560, settings.width);
     }
 }

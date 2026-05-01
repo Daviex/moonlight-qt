@@ -4,6 +4,7 @@ use super::rust_backend::RustBackend;
 use crate::ipc_backend::IpcBackend;
 use crate::logger;
 use crate::mock_backend::MockBackend;
+use tauri::Manager;
 
 const BACKEND_MODE_ENV: &str = "MOONLIGHT_TAURI_BACKEND";
 
@@ -17,7 +18,7 @@ enum BackendSelection {
 pub fn create_backend(app_handle: tauri::AppHandle) -> Box<dyn MoonlightCore> {
     match select_backend(std::env::var(BACKEND_MODE_ENV).ok().as_deref(), None) {
         BackendSelection::ForcedIpc => create_forced_ipc_backend(app_handle),
-        BackendSelection::Rust => create_rust_backend(),
+        BackendSelection::Rust => create_rust_backend(app_handle),
         BackendSelection::Mock => create_mock_backend(),
     }
 }
@@ -50,9 +51,16 @@ fn create_mock_backend() -> Box<dyn MoonlightCore> {
     Box::new(MockBackend::new())
 }
 
-fn create_rust_backend() -> Box<dyn MoonlightCore> {
+fn create_rust_backend(app_handle: tauri::AppHandle) -> Box<dyn MoonlightCore> {
     logger::log("creating in-process Rust backend");
-    Box::new(RustBackend::new())
+    let app_data_dir = match app_handle.path().app_data_dir() {
+        Ok(path) => path,
+        Err(error) => panic!("failed to resolve Tauri app data directory: {error}"),
+    };
+    match RustBackend::from_storage_dir(app_data_dir) {
+        Ok(backend) => Box::new(backend),
+        Err(error) => panic!("failed to initialize Rust backend state: {error}"),
+    }
 }
 
 fn select_backend(mode: Option<&str>, staged_helper_path: Option<String>) -> BackendSelection {
