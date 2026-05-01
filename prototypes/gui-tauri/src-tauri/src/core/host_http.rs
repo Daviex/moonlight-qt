@@ -2,6 +2,10 @@
 
 use super::error::CoreError;
 use super::types::AppEntry;
+use std::time::Duration;
+
+const DEFAULT_HTTPS_PORT: u16 = 47984;
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServerInfo {
@@ -20,6 +24,116 @@ pub struct HostApp {
     pub hidden: bool,
     pub direct_launch: bool,
     pub app_collector_game: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HostEndpoint {
+    address: String,
+    https_port: u16,
+}
+
+impl HostEndpoint {
+    pub fn new(address: impl Into<String>, https_port: u16) -> Result<Self, CoreError> {
+        let address = address.into();
+        if address.trim().is_empty() {
+            return Err(CoreError::Validation("Host address is required.".into()));
+        }
+
+        Ok(Self {
+            address: address.trim().to_string(),
+            https_port: if https_port == 0 {
+                DEFAULT_HTTPS_PORT
+            } else {
+                https_port
+            },
+        })
+    }
+
+    pub fn from_address(address: impl Into<String>) -> Result<Self, CoreError> {
+        Self::new(address, DEFAULT_HTTPS_PORT)
+    }
+
+    pub fn server_info_url(&self) -> String {
+        self.endpoint_url("serverinfo")
+    }
+
+    pub fn app_list_url(&self) -> String {
+        self.endpoint_url("applist")
+    }
+
+    fn endpoint_url(&self, endpoint: &str) -> String {
+        format!("https://{}:{}/{}", self.address, self.https_port, endpoint)
+    }
+}
+
+pub trait HostHttpTransport {
+    fn get_text(&self, url: &str) -> Result<String, CoreError>;
+}
+
+pub struct ReqwestHostHttpTransport {
+    client: reqwest::blocking::Client,
+}
+
+impl ReqwestHostHttpTransport {
+    pub fn new() -> Result<Self, CoreError> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(DEFAULT_TIMEOUT)
+            .danger_accept_invalid_certs(true)
+            .build()
+            .map_err(|error| {
+                CoreError::Backend(format!("Unable to initialize host HTTP client: {error}"))
+            })?;
+        Ok(Self { client })
+    }
+}
+
+impl HostHttpTransport for ReqwestHostHttpTransport {
+    fn get_text(&self, url: &str) -> Result<String, CoreError> {
+        let response = self.client.get(url).send().map_err(|error| {
+            CoreError::Backend(format!("Host request failed for {url}: {error}"))
+        })?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(CoreError::Backend(format!(
+                "Host request failed for {url}: HTTP {status}"
+            )));
+        }
+
+        response.text().map_err(|error| {
+            CoreError::Backend(format!("Unable to read host response from {url}: {error}"))
+        })
+    }
+}
+
+pub struct HostHttpClient<T> {
+    transport: T,
+}
+
+impl<T> HostHttpClient<T>
+where
+    T: HostHttpTransport,
+{
+    pub fn new(transport: T) -> Self {
+        Self { transport }
+    }
+
+    pub fn fetch_server_info(&self, endpoint: &HostEndpoint) -> Result<ServerInfo, CoreError> {
+        let body = self.transport.get_text(&endpoint.server_info_url())?;
+        parse_server_info(&body)
+    }
+
+    pub fn fetch_app_list(&self, endpoint: &HostEndpoint) -> Result<Vec<HostApp>, CoreError> {
+        let body = self.transport.get_text(&endpoint.app_list_url())?;
+        parse_app_list(&body)
+    }
+}
+
+pub type BlockingHostHttpClient = HostHttpClient<ReqwestHostHttpTransport>;
+
+impl BlockingHostHttpClient {
+    pub fn connect() -> Result<Self, CoreError> {
+        Ok(Self::new(ReqwestHostHttpTransport::new()?))
+    }
 }
 
 impl HostApp {
@@ -121,7 +235,69 @@ fn repeated_tag_blocks<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_app_list, parse_server_info, HostApp};
+    use super::{
+        parse_app_list, parse_server_info, HostApp, HostEndpoint, HostHttpClient, HostHttpTransport,
+    };
+    use crate::core::error::CoreError;
+    use std::cell::RefCell;
+
+    #[derive(Default)]
+    struct FakeTransport {
+        requests: RefCell<Vec<String>>,
+    }
+
+    impl HostHttpTransport for FakeTransport {
+        fn get_text(&self, url: &str) -> Result<String, CoreError> {
+            self.requests.borrow_mut().push(url.to_string());
+            if url.ends_with("/serverinfo") {
+                return Ok("<root><appversion>Sunshine</appversion></root>".into());
+            }
+            Ok("<root><App><ID>1</ID><AppTitle>Desktop</AppTitle></App></root>".into())
+        }
+    }
+
+    #[test]
+    fn host_endpoint_builds_default_https_urls() {
+        let endpoint = HostEndpoint::from_address("192.168.1.20").unwrap();
+
+        assert_eq!(
+            "https://192.168.1.20:47984/serverinfo",
+            endpoint.server_info_url()
+        );
+        assert_eq!(
+            "https://192.168.1.20:47984/applist",
+            endpoint.app_list_url()
+        );
+    }
+
+    #[test]
+    fn host_endpoint_rejects_empty_addresses() {
+        let error = HostEndpoint::from_address(" ").unwrap_err();
+
+        assert_eq!("Host address is required.", error.to_string());
+    }
+
+    #[test]
+    fn client_fetches_and_parses_server_info() {
+        let transport = FakeTransport::default();
+        let client = HostHttpClient::new(transport);
+        let endpoint = HostEndpoint::from_address("sunshine.local").unwrap();
+
+        let info = client.fetch_server_info(&endpoint).unwrap();
+
+        assert_eq!("Sunshine", info.app_version);
+    }
+
+    #[test]
+    fn client_fetches_and_parses_app_list() {
+        let transport = FakeTransport::default();
+        let client = HostHttpClient::new(transport);
+        let endpoint = HostEndpoint::from_address("sunshine.local").unwrap();
+
+        let apps = client.fetch_app_list(&endpoint).unwrap();
+
+        assert_eq!("Desktop", apps[0].name);
+    }
 
     #[test]
     fn parses_server_info_fixture() {

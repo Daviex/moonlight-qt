@@ -1,4 +1,5 @@
 use super::backend::MoonlightCore;
+use super::host_http::{BlockingHostHttpClient, HostEndpoint, ServerInfo};
 use super::host_store::{HostStore, StoredHost};
 use super::identity::ClientIdentity;
 use super::session::SessionMachine;
@@ -9,8 +10,8 @@ use super::settings::validate_streaming_settings;
 use super::storage::default_app_entries;
 use super::storage::{JsonStateStore, StoredState};
 use super::types::{
-    AppEntry, BackendInfo, CommandStatus, DisplayInfo, HostDetails, HostEntry, NetworkTestResult,
-    PairingChallenge, StreamingSettings, SystemInfo,
+    AppEntry, BackendInfo, CommandStatus, DisplayInfo, HostDetails, HostEntry, HostStatus,
+    NetworkTestResult, PairingChallenge, StreamingSettings, SystemInfo,
 };
 use std::path::PathBuf;
 
@@ -22,6 +23,7 @@ pub struct RustBackend {
     next_host_number: u32,
     client_identity: Option<ClientIdentity>,
     state_store: Option<JsonStateStore>,
+    host_http: Option<BlockingHostHttpClient>,
 }
 
 impl RustBackend {
@@ -45,6 +47,7 @@ impl RustBackend {
             next_host_number: state.next_host_number,
             client_identity: state.client_identity,
             state_store,
+            host_http: BlockingHostHttpClient::connect().ok(),
         }
     }
 
@@ -94,6 +97,35 @@ impl RustBackend {
             .iter_mut()
             .find(|app| app.id == app_id)
             .ok_or_else(|| format!("App '{app_id}' was not found."))
+    }
+
+    fn fetch_server_info(&self, address: &str) -> Result<ServerInfo, String> {
+        let Some(client) = &self.host_http else {
+            return Err("Host HTTP client is unavailable.".into());
+        };
+        let endpoint = HostEndpoint::from_address(address).map_err(|error| error.to_string())?;
+        client
+            .fetch_server_info(&endpoint)
+            .map_err(|error| error.to_string())
+    }
+
+    fn refresh_apps_from_host(
+        &mut self,
+        address: &str,
+        running_game_id: i32,
+    ) -> Result<(), String> {
+        let Some(client) = &self.host_http else {
+            return Err("Host HTTP client is unavailable.".into());
+        };
+        let endpoint = HostEndpoint::from_address(address).map_err(|error| error.to_string())?;
+        let apps = client
+            .fetch_app_list(&endpoint)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|app| app.into_entry(running_game_id, String::new()))
+            .collect();
+        self.apps = apps;
+        self.persist()
     }
 }
 
@@ -218,13 +250,42 @@ impl MoonlightCore for RustBackend {
     fn host_details(&mut self, host_id: &str) -> Result<HostDetails, String> {
         let host = self.stored_host(host_id)?;
         let entry = host.clone().into_entry();
+        let live_info = self.fetch_server_info(&host.manual_address).ok();
+        let running_game_id = live_info
+            .as_ref()
+            .map(|info| info.current_game_id)
+            .unwrap_or_else(|| {
+                self.apps
+                    .iter()
+                    .find(|app| app.running)
+                    .and_then(|app| app.id.parse::<i32>().ok())
+                    .unwrap_or(0)
+            });
+        let app_version = live_info
+            .as_ref()
+            .map(|info| info.app_version.clone())
+            .unwrap_or_else(|| "Rust in-process backend".into());
+        let gfe_version = live_info
+            .as_ref()
+            .map(|info| info.gfe_version.clone())
+            .unwrap_or_default();
+        let server_version = app_version.clone();
+        let pair_state = live_info
+            .as_ref()
+            .map(|info| info.pair_status.clone())
+            .filter(|pair_status| !pair_status.is_empty())
+            .unwrap_or_else(|| if host.paired { "Paired" } else { "Unpaired" }.into());
 
         Ok(HostDetails {
             name: host.name.clone(),
             address: host.manual_address.clone(),
-            status: entry.status,
+            status: if live_info.is_some() {
+                HostStatus::Online
+            } else {
+                entry.status
+            },
             paired: host.paired,
-            running: self.apps.iter().any(|app| app.running),
+            running: running_game_id != 0 || self.apps.iter().any(|app| app.running),
             wakeable: !host.mac_address.is_empty(),
             server_supported: true,
             uuid: host.uuid,
@@ -233,17 +294,12 @@ impl MoonlightCore for RustBackend {
             ipv6_address: String::new(),
             manual_address: host.manual_address.clone(),
             mac_address: host.mac_address,
-            pair_state: if host.paired { "Paired" } else { "Unpaired" }.into(),
-            running_game_id: self
-                .apps
-                .iter()
-                .find(|app| app.running)
-                .and_then(|app| app.id.parse::<i32>().ok())
-                .unwrap_or(0),
+            pair_state,
+            running_game_id,
             https_port: 47984,
-            app_version: "Rust in-process backend".into(),
-            gfe_version: String::new(),
-            server_version: "Rust in-process backend".into(),
+            app_version,
+            gfe_version,
+            server_version,
             gpu_model: "Unknown".into(),
             details: format!(
                 "Name: {}\nActive Address: {}",
@@ -266,6 +322,14 @@ impl MoonlightCore for RustBackend {
         if !host.paired {
             return Ok(Vec::new());
         }
+
+        let stored_host = self.stored_host(host_id)?;
+        let running_game_id = self
+            .fetch_server_info(&stored_host.manual_address)
+            .map(|info| info.current_game_id)
+            .unwrap_or(0);
+        // Keep the persisted app list when the host is offline or not reachable yet.
+        let _ = self.refresh_apps_from_host(&stored_host.manual_address, running_game_id);
 
         Ok(self
             .apps
