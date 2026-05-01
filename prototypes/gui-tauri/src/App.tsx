@@ -799,6 +799,18 @@ export default function App() {
   }, [showDebugInfo]);
 
   useEffect(() => {
+    if (dialog.kind !== 'pairing') {
+      return;
+    }
+
+    const pairedHost = hosts.find((host) => host.id === dialog.host.id && host.paired);
+    if (pairedHost) {
+      setDialog({ kind: 'none' });
+      setStatus(`Pairing completed for ${pairedHost.name}.`);
+    }
+  }, [dialog, hosts]);
+
+  useEffect(() => {
     if (dialog.kind !== 'none') {
       return undefined;
     }

@@ -1,6 +1,7 @@
 use super::backend::MoonlightCore;
 use super::discovery::{discover_nvstream_hosts, merge_discovered_hosts};
 use super::error::CoreError;
+use super::events::{BridgeEvent, BridgeEventKind};
 use super::gamestream::GameStreamRunner;
 use super::host_http::{
     BlockingHostHttpClient, HostEndpoint, ReqwestHostHttpTransport, ServerInfo, StartAppRequest,
@@ -22,6 +23,7 @@ use super::types::{
     NetworkTestResult, PairingChallenge, StreamingSettings, SystemInfo,
 };
 use std::path::PathBuf;
+use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::Duration;
 
@@ -35,6 +37,7 @@ pub struct RustBackend {
     state_store: Option<JsonStateStore>,
     host_http: Option<BlockingHostHttpClient>,
     active_stream_plan: Option<StreamLaunchPlan>,
+    event_sender: Option<Sender<BridgeEvent>>,
 }
 
 impl RustBackend {
@@ -43,15 +46,40 @@ impl RustBackend {
         Self::from_state(sample_state(), None)
     }
 
+    #[cfg(test)]
     pub fn from_storage_dir(app_data_dir: impl Into<PathBuf>) -> Result<Self, String> {
+        Self::from_storage_dir_with_event_sender_optional(app_data_dir, None)
+    }
+
+    pub fn from_storage_dir_with_event_sender(
+        app_data_dir: impl Into<PathBuf>,
+        event_sender: Sender<BridgeEvent>,
+    ) -> Result<Self, String> {
+        Self::from_storage_dir_with_event_sender_optional(app_data_dir, Some(event_sender))
+    }
+
+    fn from_storage_dir_with_event_sender_optional(
+        app_data_dir: impl Into<PathBuf>,
+        event_sender: Option<Sender<BridgeEvent>>,
+    ) -> Result<Self, String> {
         let state_store = JsonStateStore::in_app_data_dir(app_data_dir);
         let state = state_store.load().map_err(|error| error.to_string())?;
-        let mut backend = Self::from_state(state, Some(state_store));
+        let mut backend =
+            Self::from_state_with_event_sender(state, Some(state_store), event_sender);
         backend.ensure_client_identity()?;
         Ok(backend)
     }
 
+    #[cfg(test)]
     fn from_state(state: StoredState, state_store: Option<JsonStateStore>) -> Self {
+        Self::from_state_with_event_sender(state, state_store, None)
+    }
+
+    fn from_state_with_event_sender(
+        state: StoredState,
+        state_store: Option<JsonStateStore>,
+        event_sender: Option<Sender<BridgeEvent>>,
+    ) -> Self {
         Self {
             hosts: state.hosts,
             apps: state.apps,
@@ -62,6 +90,7 @@ impl RustBackend {
             state_store,
             host_http: BlockingHostHttpClient::connect().ok(),
             active_stream_plan: None,
+            event_sender,
         }
     }
 
@@ -82,6 +111,19 @@ impl RustBackend {
                 .save(&self.state_snapshot())
                 .map_err(|error| error.to_string())?;
         }
+        Ok(())
+    }
+
+    fn reload_persisted_state(&mut self) -> Result<(), String> {
+        let Some(state_store) = &self.state_store else {
+            return Ok(());
+        };
+        let state = state_store.load().map_err(|error| error.to_string())?;
+        self.hosts = state.hosts;
+        self.apps = state.apps;
+        self.settings = state.settings;
+        self.client_identity = state.client_identity;
+        self.next_host_number = state.next_host_number;
         Ok(())
     }
 
@@ -276,6 +318,7 @@ impl MoonlightCore for RustBackend {
     }
 
     fn list_hosts(&mut self) -> Result<Vec<HostEntry>, String> {
+        self.reload_persisted_state()?;
         if self.settings.enable_mdns {
             match discover_nvstream_hosts(Duration::from_millis(250)) {
                 Ok(records) => {
@@ -332,7 +375,9 @@ impl MoonlightCore for RustBackend {
                 .clone()
                 .ok_or_else(|| "Client identity is unavailable.".to_string())?;
             let host_id = host.id.clone();
+            let host_name = host.name.clone();
             let pin = pin.clone();
+            let event_sender = self.event_sender.clone();
 
             thread::spawn(move || {
                 let result = BlockingHostHttpClient::connect()
@@ -345,15 +390,41 @@ impl MoonlightCore for RustBackend {
                             .and_then(|client| client.pair(&endpoint, &request, &identity))?;
                         Self::complete_pairing_in_store(
                             state_store,
-                            host_id,
+                            host_id.clone(),
                             server_info.unique_id,
                             completed.server_certificate_pem,
                         )
                         .map_err(CoreError::Backend)
                     })
                     .map_err(|error| error.to_string());
-                if let Err(error) = result {
-                    eprintln!("Rust backend pairing failed: {error}");
+                match result {
+                    Ok(()) => {
+                        if let Some(event_sender) = event_sender {
+                            let _ = event_sender.send(BridgeEvent {
+                                kind: BridgeEventKind::HostChanged,
+                                message: format!("Pairing completed for {host_name}."),
+                                host_id: Some(host_id),
+                                app_id: None,
+                                controller_action: None,
+                                update_version: None,
+                                update_url: None,
+                            });
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("Rust backend pairing failed: {error}");
+                        if let Some(event_sender) = event_sender {
+                            let _ = event_sender.send(BridgeEvent {
+                                kind: BridgeEventKind::Status,
+                                message: format!("Pairing failed for {host_name}: {error}"),
+                                host_id: Some(host_id),
+                                app_id: None,
+                                controller_action: None,
+                                update_version: None,
+                                update_url: None,
+                            });
+                        }
+                    }
                 }
             });
         }
@@ -833,5 +904,29 @@ mod tests {
         assert!(host.paired);
         assert_eq!("server-uuid", host.uuid);
         assert!(host.server_certificate_pem.contains("paired"));
+    }
+
+    #[test]
+    fn list_hosts_reloads_background_pairing_completion() {
+        let state_dir = unique_state_dir("reload-completed-pairing");
+        let state_store = crate::core::storage::JsonStateStore::in_app_data_dir(&state_dir);
+        let (mut backend, host_id) = {
+            let mut backend = RustBackend::from_storage_dir(&state_dir).unwrap();
+            let (_, host_id) = backend.add_host("192.168.1.52".into()).unwrap();
+            (backend, host_id)
+        };
+
+        RustBackend::complete_pairing_in_store(
+            state_store,
+            host_id.clone(),
+            "server-uuid".into(),
+            "-----BEGIN CERTIFICATE-----\npaired\n-----END CERTIFICATE-----".into(),
+        )
+        .unwrap();
+
+        let hosts = backend.list_hosts().unwrap();
+        let host = hosts.iter().find(|host| host.id == host_id).unwrap();
+
+        assert!(host.paired);
     }
 }

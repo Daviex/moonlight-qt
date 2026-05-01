@@ -1,12 +1,15 @@
 use super::backend::MoonlightCore;
+use super::events::BridgeEvent;
 use super::rust_backend::RustBackend;
 #[cfg(feature = "legacy-ipc")]
 use crate::ipc_backend::IpcBackend;
 use crate::logger;
 use crate::mock_backend::MockBackend;
-use tauri::Manager;
+use std::sync::mpsc;
+use tauri::{Emitter, Manager};
 
 const BACKEND_MODE_ENV: &str = "MOONLIGHT_TAURI_BACKEND";
+const BRIDGE_EVENT: &str = "moonlight-bridge-event";
 
 #[derive(Debug, Eq, PartialEq)]
 enum BackendSelection {
@@ -57,10 +60,29 @@ fn create_rust_backend(app_handle: tauri::AppHandle) -> Box<dyn MoonlightCore> {
         Ok(path) => path,
         Err(error) => panic!("failed to resolve Tauri app data directory: {error}"),
     };
-    match RustBackend::from_storage_dir(app_data_dir) {
+    let (event_sender, event_receiver) = mpsc::channel::<BridgeEvent>();
+    thread_rust_events_to_tauri(app_handle, event_receiver);
+    match RustBackend::from_storage_dir_with_event_sender(app_data_dir, event_sender) {
         Ok(backend) => Box::new(backend),
         Err(error) => panic!("failed to initialize Rust backend state: {error}"),
     }
+}
+
+fn thread_rust_events_to_tauri(
+    app_handle: tauri::AppHandle,
+    event_receiver: mpsc::Receiver<BridgeEvent>,
+) {
+    std::thread::spawn(move || {
+        for event in event_receiver {
+            logger::log(format!(
+                "rust backend event; kind={:?}; message={}",
+                event.kind, event.message
+            ));
+            if let Err(error) = app_handle.emit(BRIDGE_EVENT, event) {
+                logger::log(format!("failed to emit rust backend event; error={error}"));
+            }
+        }
+    });
 }
 
 fn select_backend(mode: Option<&str>, staged_helper_path: Option<String>) -> BackendSelection {
