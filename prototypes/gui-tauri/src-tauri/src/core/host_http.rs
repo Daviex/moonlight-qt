@@ -5,6 +5,7 @@ use super::types::AppEntry;
 use std::time::Duration;
 
 const DEFAULT_HTTPS_PORT: u16 = 47984;
+const DEFAULT_HTTP_PORT: u16 = 47989;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -29,6 +30,7 @@ pub struct HostApp {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HostEndpoint {
     address: String,
+    http_port: u16,
     https_port: u16,
 }
 
@@ -41,6 +43,7 @@ impl HostEndpoint {
 
         Ok(Self {
             address: address.trim().to_string(),
+            http_port: DEFAULT_HTTP_PORT,
             https_port: if https_port == 0 {
                 DEFAULT_HTTPS_PORT
             } else {
@@ -61,8 +64,28 @@ impl HostEndpoint {
         self.endpoint_url("applist")
     }
 
+    pub fn http_pair_url(&self, query: &str) -> String {
+        self.url_with_query("http", self.http_port, "pair", query)
+    }
+
+    pub fn https_pair_url(&self, query: &str) -> String {
+        self.url_with_query("https", self.https_port, "pair", query)
+    }
+
+    pub fn http_unpair_url(&self) -> String {
+        format!("http://{}:{}/unpair", self.address, self.http_port)
+    }
+
     fn endpoint_url(&self, endpoint: &str) -> String {
         format!("https://{}:{}/{}", self.address, self.https_port, endpoint)
+    }
+
+    fn url_with_query(&self, scheme: &str, port: u16, endpoint: &str, query: &str) -> String {
+        if query.is_empty() {
+            return format!("{scheme}://{}:{port}/{endpoint}", self.address);
+        }
+
+        format!("{scheme}://{}:{port}/{endpoint}?{query}", self.address)
     }
 }
 
@@ -267,6 +290,10 @@ mod tests {
         assert_eq!(
             "https://192.168.1.20:47984/applist",
             endpoint.app_list_url()
+        );
+        assert_eq!(
+            "http://192.168.1.20:47989/unpair",
+            endpoint.http_unpair_url()
         );
     }
 
