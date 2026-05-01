@@ -6,6 +6,7 @@ use super::gamestream::{
 };
 use super::host_http::{ServerInfo, StartAppSession};
 use super::host_store::StoredHost;
+use super::stream_window::StreamWindowDescriptor;
 use super::types::{AppEntry, StreamingSettings};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -16,6 +17,7 @@ pub struct StreamLaunchPlan {
     pub app_name: String,
     pub server_certificate_pem: String,
     pub stream_config: StreamConfiguration,
+    pub window: StreamWindowDescriptor,
 }
 
 #[derive(Debug)]
@@ -58,6 +60,7 @@ impl StreamLaunchPlan {
             server_certificate_pem: host.server_certificate_pem.clone(),
             stream_config: StreamConfiguration::from(settings)
                 .with_remote_input_crypto(RemoteInputCrypto::generate()),
+            window: StreamWindowDescriptor::new(&host.name, settings)?,
         })
     }
 
@@ -141,6 +144,8 @@ mod tests {
         let raw = plan.stream_config.to_raw();
 
         assert_eq!("gaming-pc", plan.host_id);
+        assert_eq!(2560, plan.window.width);
+        assert_eq!(1440, plan.window.height);
         assert_eq!(2560, raw.width);
         assert_eq!(1440, raw.height);
         assert_eq!(120, raw.fps);

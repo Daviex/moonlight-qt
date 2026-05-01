@@ -18,5 +18,6 @@ pub mod settings;
 pub mod storage;
 pub mod stream_input;
 pub mod stream_launch;
+pub mod stream_window;
 pub mod system;
 pub mod types;
