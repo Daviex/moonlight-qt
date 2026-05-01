@@ -17,6 +17,9 @@ use super::settings::{default_bitrate_kbps, validate_streaming_settings};
 #[cfg(test)]
 use super::storage::default_app_entries;
 use super::storage::{JsonStateStore, StoredState};
+use super::stream_input::{
+    ButtonAction, ControllerState, KeyAction, KeyModifiers, MouseButton, StreamInputSender,
+};
 use super::stream_launch::{PreparedStreamSession, StreamLaunchPlan};
 use super::types::{
     AppEntry, BackendInfo, CommandStatus, DisplayInfo, HostDetails, HostEntry, HostStatus,
@@ -266,6 +269,14 @@ impl RustBackend {
         plan.prepare_session(&server_info, &start_session)
             .map(Some)
             .map_err(|error| error.to_string())
+    }
+
+    fn ensure_stream_input_active(&self) -> Result<(), String> {
+        if self.active_stream_plan.is_some() {
+            Ok(())
+        } else {
+            Err("No active Rust stream session is ready for input.".into())
+        }
     }
 }
 
@@ -767,6 +778,157 @@ impl MoonlightCore for RustBackend {
         Ok(CommandStatus {
             message: format!("Open URL requested: {url}"),
         })
+    }
+
+    fn stream_mouse_move(&mut self, delta_x: i16, delta_y: i16) -> Result<CommandStatus, String> {
+        self.ensure_stream_input_active()?;
+        StreamInputSender
+            .send_mouse_move(delta_x, delta_y)
+            .map_err(|error| error.to_string())?;
+        Ok(CommandStatus {
+            message: "Mouse movement sent to stream.".into(),
+        })
+    }
+
+    fn stream_mouse_position(
+        &mut self,
+        x: i16,
+        y: i16,
+        reference_width: i16,
+        reference_height: i16,
+    ) -> Result<CommandStatus, String> {
+        self.ensure_stream_input_active()?;
+        StreamInputSender
+            .send_mouse_position(x, y, reference_width, reference_height)
+            .map_err(|error| error.to_string())?;
+        Ok(CommandStatus {
+            message: "Mouse position sent to stream.".into(),
+        })
+    }
+
+    fn stream_mouse_button(
+        &mut self,
+        button: String,
+        pressed: bool,
+    ) -> Result<CommandStatus, String> {
+        self.ensure_stream_input_active()?;
+        StreamInputSender
+            .send_mouse_button(
+                if pressed {
+                    ButtonAction::Press
+                } else {
+                    ButtonAction::Release
+                },
+                parse_mouse_button(&button)?,
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(CommandStatus {
+            message: "Mouse button sent to stream.".into(),
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn stream_keyboard(
+        &mut self,
+        key_code: i16,
+        pressed: bool,
+        shift: bool,
+        ctrl: bool,
+        alt: bool,
+        meta: bool,
+        non_normalized: bool,
+    ) -> Result<CommandStatus, String> {
+        self.ensure_stream_input_active()?;
+        StreamInputSender
+            .send_keyboard(
+                key_code,
+                if pressed {
+                    KeyAction::Down
+                } else {
+                    KeyAction::Up
+                },
+                KeyModifiers {
+                    shift,
+                    ctrl,
+                    alt,
+                    meta,
+                },
+                non_normalized,
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(CommandStatus {
+            message: "Keyboard event sent to stream.".into(),
+        })
+    }
+
+    fn stream_text(&mut self, text: String) -> Result<CommandStatus, String> {
+        self.ensure_stream_input_active()?;
+        StreamInputSender
+            .send_utf8_text(&text)
+            .map_err(|error| error.to_string())?;
+        Ok(CommandStatus {
+            message: "Text input sent to stream.".into(),
+        })
+    }
+
+    fn stream_scroll(&mut self, delta_x: i16, delta_y: i16) -> Result<CommandStatus, String> {
+        self.ensure_stream_input_active()?;
+        if delta_y != 0 {
+            StreamInputSender
+                .send_high_res_scroll(delta_y)
+                .map_err(|error| error.to_string())?;
+        }
+        if delta_x != 0 {
+            StreamInputSender
+                .send_high_res_horizontal_scroll(delta_x)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(CommandStatus {
+            message: "Scroll input sent to stream.".into(),
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn stream_controller(
+        &mut self,
+        controller_number: u8,
+        active_gamepad_mask: u16,
+        button_flags: i32,
+        left_trigger: u8,
+        right_trigger: u8,
+        left_stick_x: i16,
+        left_stick_y: i16,
+        right_stick_x: i16,
+        right_stick_y: i16,
+    ) -> Result<CommandStatus, String> {
+        self.ensure_stream_input_active()?;
+        StreamInputSender
+            .send_controller(ControllerState {
+                controller_number,
+                active_gamepad_mask,
+                button_flags,
+                left_trigger,
+                right_trigger,
+                left_stick_x,
+                left_stick_y,
+                right_stick_x,
+                right_stick_y,
+            })
+            .map_err(|error| error.to_string())?;
+        Ok(CommandStatus {
+            message: "Controller input sent to stream.".into(),
+        })
+    }
+}
+
+fn parse_mouse_button(button: &str) -> Result<MouseButton, String> {
+    match button {
+        "left" => Ok(MouseButton::Left),
+        "middle" => Ok(MouseButton::Middle),
+        "right" => Ok(MouseButton::Right),
+        "x1" => Ok(MouseButton::X1),
+        "x2" => Ok(MouseButton::X2),
+        _ => Err(format!("Unsupported mouse button '{button}'.")),
     }
 }
 

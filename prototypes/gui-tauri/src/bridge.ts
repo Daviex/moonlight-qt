@@ -88,6 +88,18 @@ export interface StreamingSettings {
   enableYUV444: boolean;
 }
 
+export interface StreamControllerInput {
+  controllerNumber: number;
+  activeGamepadMask: number;
+  buttonFlags: number;
+  leftTrigger: number;
+  rightTrigger: number;
+  leftStickX: number;
+  leftStickY: number;
+  rightStickX: number;
+  rightStickY: number;
+}
+
 export interface DisplayInfo {
   nativeWidth: number;
   nativeHeight: number;
@@ -196,6 +208,27 @@ export const bridge = {
   openUrl: (url: string) => invoke<CommandStatus>('open_url', { url }),
   emitControllerAction: (action: ControllerAction) =>
     invoke<CommandStatus>('emit_controller_action', { action }),
+  streamMouseMove: (deltaX: number, deltaY: number) =>
+    invoke<CommandStatus>('stream_mouse_move', { deltaX, deltaY }),
+  streamMousePosition: (x: number, y: number, referenceWidth: number, referenceHeight: number) =>
+    invoke<CommandStatus>('stream_mouse_position', { x, y, referenceWidth, referenceHeight }),
+  streamMouseButton: (button: 'left' | 'middle' | 'right' | 'x1' | 'x2', pressed: boolean) =>
+    invoke<CommandStatus>('stream_mouse_button', { button, pressed }),
+  streamKeyboard: (
+    keyCode: number,
+    pressed: boolean,
+    shift: boolean,
+    ctrl: boolean,
+    alt: boolean,
+    meta: boolean,
+    nonNormalized: boolean,
+  ) =>
+    invoke<CommandStatus>('stream_keyboard', { keyCode, pressed, shift, ctrl, alt, meta, nonNormalized }),
+  streamText: (text: string) => invoke<CommandStatus>('stream_text', { text }),
+  streamScroll: (deltaX: number, deltaY: number) =>
+    invoke<CommandStatus>('stream_scroll', { deltaX, deltaY }),
+  streamController: (input: StreamControllerInput) =>
+    invoke<CommandStatus>('stream_controller', { ...input }),
   listen: (handler: (event: BridgeEvent) => void) =>
     listen<BridgeEvent>(BRIDGE_EVENT, (event) => handler(event.payload)),
 };

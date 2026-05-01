@@ -41,6 +41,7 @@ import {
 import { AppsPage } from './components/AppsPage';
 import { HostsPage } from './components/HostsPage';
 import { StreamPanel } from './components/StreamPanel';
+import { StreamInputSurface } from './components/StreamInputSurface';
 import { applyStoredTheme, readStoredTheme, themeOptions, UiTheme } from './ui/theme';
 import { canPairHost } from './ui/hosts';
 import { applyStoredDebugUi, readStoredDebugUi } from './ui/debug';
@@ -1268,6 +1269,7 @@ export default function App() {
         onReturnToHosts={() => setPage('hosts')}
         onDismiss={dismissStreamState}
       />
+      <StreamInputSurface streamState={streamState} />
 
       {page === 'hosts' && (
         <HostsPage

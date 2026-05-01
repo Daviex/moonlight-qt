@@ -429,6 +429,115 @@ fn quit_running_app(
 }
 
 #[tauri::command]
+fn stream_mouse_move(
+    delta_x: i16,
+    delta_y: i16,
+    backend: tauri::State<'_, BackendState>,
+) -> Result<CommandStatus, String> {
+    backend
+        .lock()
+        .map_err(|error| error.to_string())?
+        .stream_mouse_move(delta_x, delta_y)
+}
+
+#[tauri::command]
+fn stream_mouse_position(
+    x: i16,
+    y: i16,
+    reference_width: i16,
+    reference_height: i16,
+    backend: tauri::State<'_, BackendState>,
+) -> Result<CommandStatus, String> {
+    backend
+        .lock()
+        .map_err(|error| error.to_string())?
+        .stream_mouse_position(x, y, reference_width, reference_height)
+}
+
+#[tauri::command]
+fn stream_mouse_button(
+    button: String,
+    pressed: bool,
+    backend: tauri::State<'_, BackendState>,
+) -> Result<CommandStatus, String> {
+    backend
+        .lock()
+        .map_err(|error| error.to_string())?
+        .stream_mouse_button(button, pressed)
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+fn stream_keyboard(
+    key_code: i16,
+    pressed: bool,
+    shift: bool,
+    ctrl: bool,
+    alt: bool,
+    meta: bool,
+    non_normalized: bool,
+    backend: tauri::State<'_, BackendState>,
+) -> Result<CommandStatus, String> {
+    backend
+        .lock()
+        .map_err(|error| error.to_string())?
+        .stream_keyboard(key_code, pressed, shift, ctrl, alt, meta, non_normalized)
+}
+
+#[tauri::command]
+fn stream_text(
+    text: String,
+    backend: tauri::State<'_, BackendState>,
+) -> Result<CommandStatus, String> {
+    backend
+        .lock()
+        .map_err(|error| error.to_string())?
+        .stream_text(text)
+}
+
+#[tauri::command]
+fn stream_scroll(
+    delta_x: i16,
+    delta_y: i16,
+    backend: tauri::State<'_, BackendState>,
+) -> Result<CommandStatus, String> {
+    backend
+        .lock()
+        .map_err(|error| error.to_string())?
+        .stream_scroll(delta_x, delta_y)
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+fn stream_controller(
+    controller_number: u8,
+    active_gamepad_mask: u16,
+    button_flags: i32,
+    left_trigger: u8,
+    right_trigger: u8,
+    left_stick_x: i16,
+    left_stick_y: i16,
+    right_stick_x: i16,
+    right_stick_y: i16,
+    backend: tauri::State<'_, BackendState>,
+) -> Result<CommandStatus, String> {
+    backend
+        .lock()
+        .map_err(|error| error.to_string())?
+        .stream_controller(
+            controller_number,
+            active_gamepad_mask,
+            button_flags,
+            left_trigger,
+            right_trigger,
+            left_stick_x,
+            left_stick_y,
+            right_stick_x,
+            right_stick_y,
+        )
+}
+
+#[tauri::command]
 fn set_app_hidden(
     host_id: String,
     app_id: String,
@@ -650,7 +759,14 @@ fn main() {
             system_info,
             open_url,
             save_settings,
-            emit_controller_action
+            emit_controller_action,
+            stream_mouse_move,
+            stream_mouse_position,
+            stream_mouse_button,
+            stream_keyboard,
+            stream_text,
+            stream_scroll,
+            stream_controller
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Moonlight Tauri prototype");

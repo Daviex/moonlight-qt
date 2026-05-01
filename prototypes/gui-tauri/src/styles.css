@@ -517,6 +517,32 @@ nav button.nav-active {
   border-color: var(--color-success-border);
 }
 
+.stream-input-surface {
+  display: grid;
+  gap: 0.35rem;
+  min-height: 12rem;
+  place-content: center;
+  text-align: center;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 14%, transparent), transparent),
+    var(--color-surface);
+  border: 1px dashed var(--color-accent);
+  border-radius: var(--radius-lg);
+  color: var(--color-text);
+  cursor: crosshair;
+  outline: none;
+  padding: 1rem;
+  user-select: none;
+}
+
+.stream-input-surface:focus {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+
+.stream-input-surface small {
+  color: var(--color-muted);
+}
+
 .stream-status,
 .stream-messages {
   display: flex;

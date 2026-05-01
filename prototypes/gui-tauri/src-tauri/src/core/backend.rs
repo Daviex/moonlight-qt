@@ -45,4 +45,64 @@ pub trait MoonlightCore: Send {
     ) -> Result<u32, String>;
     fn system_info(&mut self) -> Result<SystemInfo, String>;
     fn open_url(&mut self, url: &str) -> Result<CommandStatus, String>;
+
+    fn stream_mouse_move(&mut self, _delta_x: i16, _delta_y: i16) -> Result<CommandStatus, String> {
+        Err("Stream input is not available for this backend.".into())
+    }
+
+    fn stream_mouse_position(
+        &mut self,
+        _x: i16,
+        _y: i16,
+        _reference_width: i16,
+        _reference_height: i16,
+    ) -> Result<CommandStatus, String> {
+        Err("Stream input is not available for this backend.".into())
+    }
+
+    fn stream_mouse_button(
+        &mut self,
+        _button: String,
+        _pressed: bool,
+    ) -> Result<CommandStatus, String> {
+        Err("Stream input is not available for this backend.".into())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn stream_keyboard(
+        &mut self,
+        _key_code: i16,
+        _pressed: bool,
+        _shift: bool,
+        _ctrl: bool,
+        _alt: bool,
+        _meta: bool,
+        _non_normalized: bool,
+    ) -> Result<CommandStatus, String> {
+        Err("Stream input is not available for this backend.".into())
+    }
+
+    fn stream_text(&mut self, _text: String) -> Result<CommandStatus, String> {
+        Err("Stream input is not available for this backend.".into())
+    }
+
+    fn stream_scroll(&mut self, _delta_x: i16, _delta_y: i16) -> Result<CommandStatus, String> {
+        Err("Stream input is not available for this backend.".into())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn stream_controller(
+        &mut self,
+        _controller_number: u8,
+        _active_gamepad_mask: u16,
+        _button_flags: i32,
+        _left_trigger: u8,
+        _right_trigger: u8,
+        _left_stick_x: i16,
+        _left_stick_y: i16,
+        _right_stick_x: i16,
+        _right_stick_y: i16,
+    ) -> Result<CommandStatus, String> {
+        Err("Stream input is not available for this backend.".into())
+    }
 }
