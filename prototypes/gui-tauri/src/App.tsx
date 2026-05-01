@@ -444,6 +444,10 @@ export default function App() {
     try {
       const result = await bridge.launchApp(selectedHostId, app.id);
       setStatus(result.message);
+      setStreamState((previousState) => ({
+        ...previousState,
+        message: result.message,
+      }));
       await refreshApps(selectedHostId, showHiddenApps);
       await refreshHosts();
     }
@@ -475,6 +479,10 @@ export default function App() {
     try {
       const result = await bridge.resumeSession(host.id);
       setStatus(result.message);
+      setStreamState((previousState) => ({
+        ...previousState,
+        message: result.message,
+      }));
       await refreshHosts();
     }
     catch (error) {
@@ -645,6 +653,9 @@ export default function App() {
 
       const descriptor = await bridge.activeStreamWindow();
       if (!descriptor || cancelled) {
+        if (!descriptor) {
+          writeDebugLog(`stream window descriptor not ready; phase=${streamState.phase}; message=${streamState.message}`);
+        }
         return;
       }
 
@@ -671,6 +682,7 @@ export default function App() {
       streamWindow.once('tauri://error', (event) => {
         writeDebugLog(`stream window creation failed: ${String(event.payload)}`);
       });
+      writeDebugLog(`stream window creation requested; title=${descriptor.title}; size=${descriptor.width}x${descriptor.height}; mode=${descriptor.mode}`);
     };
 
     void syncStreamWindow().catch((error) => {
