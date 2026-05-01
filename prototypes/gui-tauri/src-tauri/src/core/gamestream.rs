@@ -3,7 +3,7 @@
 use super::error::CoreError;
 use super::gamestream_sys;
 use std::ffi::CString;
-use std::os::raw::c_int;
+use std::os::raw::{c_char, c_int};
 
 const DEFAULT_VIDEO_PACKET_SIZE: u32 = 1392;
 
@@ -59,6 +59,25 @@ pub struct StreamConfiguration {
     pub streaming_remotely: StreamingRemotely,
     pub audio_configuration: AudioConfiguration,
     pub supported_video_formats: c_int,
+    pub remote_input_crypto: RemoteInputCrypto,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RemoteInputCrypto {
+    pub aes_key: [u8; 16],
+    pub aes_iv: [u8; 16],
+}
+
+impl RemoteInputCrypto {
+    pub fn generate() -> Self {
+        use rand::RngCore;
+
+        let mut crypto = Self::default();
+        let mut rng = rand::rngs::OsRng;
+        rng.fill_bytes(&mut crypto.aes_key);
+        rng.fill_bytes(&mut crypto.aes_iv[..4]);
+        crypto
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -100,6 +119,11 @@ impl StreamCallbacks {
 }
 
 impl StreamConfiguration {
+    pub fn with_remote_input_crypto(mut self, crypto: RemoteInputCrypto) -> Self {
+        self.remote_input_crypto = crypto;
+        self
+    }
+
     pub fn to_raw(&self) -> gamestream_sys::StreamConfiguration {
         gamestream_sys::StreamConfiguration {
             width: saturated_c_int(self.width),
@@ -110,6 +134,8 @@ impl StreamConfiguration {
             streaming_remotely: self.streaming_remotely.as_raw(),
             audio_configuration: self.audio_configuration.as_raw(),
             supported_video_formats: self.supported_video_formats,
+            remote_input_aes_key: bytes_to_c_chars(self.remote_input_crypto.aes_key),
+            remote_input_aes_iv: bytes_to_c_chars(self.remote_input_crypto.aes_iv),
             ..gamestream_sys::StreamConfiguration::default()
         }
     }
@@ -141,6 +167,7 @@ impl From<&crate::core::types::StreamingSettings> for StreamConfiguration {
             } else {
                 settings.video_codec_config
             },
+            remote_input_crypto: RemoteInputCrypto::default(),
         }
     }
 }
@@ -217,6 +244,7 @@ impl Default for StreamConfiguration {
             streaming_remotely: StreamingRemotely::Auto,
             audio_configuration: AudioConfiguration::Stereo,
             supported_video_formats: gamestream_sys::VIDEO_FORMAT_H264,
+            remote_input_crypto: RemoteInputCrypto::default(),
         }
     }
 }
@@ -225,11 +253,15 @@ fn saturated_c_int(value: u32) -> c_int {
     value.min(c_int::MAX as u32) as c_int
 }
 
+fn bytes_to_c_chars(bytes: [u8; 16]) -> [c_char; 16] {
+    bytes.map(|value| value as c_char)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        AudioConfiguration, RawSessionConfiguration, ServerConnectionConfiguration,
-        StreamConfiguration, StreamingRemotely,
+        AudioConfiguration, RawSessionConfiguration, RemoteInputCrypto,
+        ServerConnectionConfiguration, StreamConfiguration, StreamingRemotely,
     };
     use crate::core::gamestream_sys;
     use crate::core::settings::default_streaming_settings;
@@ -248,6 +280,10 @@ mod tests {
             audio_configuration: AudioConfiguration::Surround71,
             supported_video_formats: gamestream_sys::VIDEO_FORMAT_H265
                 | gamestream_sys::VIDEO_FORMAT_H265_MAIN10,
+            remote_input_crypto: RemoteInputCrypto {
+                aes_key: [0xF1; 16],
+                aes_iv: [0x22; 16],
+            },
         };
 
         let raw = config.to_raw();
@@ -266,6 +302,8 @@ mod tests {
             gamestream_sys::VIDEO_FORMAT_H265 | gamestream_sys::VIDEO_FORMAT_H265_MAIN10,
             raw.supported_video_formats
         );
+        assert_eq!(0xF1, raw.remote_input_aes_key[0] as u8);
+        assert_eq!(0x22, raw.remote_input_aes_iv[0] as u8);
     }
 
     #[test]
@@ -293,6 +331,15 @@ mod tests {
 
         assert_eq!(1024, raw.packet_size);
         assert_eq!(gamestream_sys::STREAM_CFG_LOCAL, raw.streaming_remotely);
+    }
+
+    #[test]
+    fn remote_input_crypto_generation_populates_key_and_first_iv_word() {
+        let crypto = RemoteInputCrypto::generate();
+
+        assert_ne!([0; 16], crypto.aes_key);
+        assert!(crypto.aes_iv[..4].iter().any(|value| *value != 0));
+        assert!(crypto.aes_iv[4..].iter().all(|value| *value == 0));
     }
 
     #[test]

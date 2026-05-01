@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use super::error::CoreError;
-use super::gamestream::StreamConfiguration;
+use super::gamestream::{RemoteInputCrypto, StreamConfiguration};
 use super::host_store::StoredHost;
 use super::types::{AppEntry, StreamingSettings};
 
@@ -45,7 +45,8 @@ impl StreamLaunchPlan {
             app_id: app.id.clone(),
             app_name: app.name.clone(),
             server_certificate_pem: host.server_certificate_pem.clone(),
-            stream_config: StreamConfiguration::from(settings),
+            stream_config: StreamConfiguration::from(settings)
+                .with_remote_input_crypto(RemoteInputCrypto::generate()),
         })
     }
 }
