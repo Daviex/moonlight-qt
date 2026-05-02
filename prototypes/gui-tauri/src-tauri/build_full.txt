@@ -1,0 +1,176 @@
+   Compiling moonlight-gui-tauri-prototype v0.1.0 (C:\Users\david\Desktop\Work\moonlight-qt\prototypes\gui-tauri\src-tauri)
+error[E0277]: `*mut c_void` cannot be sent between threads safely
+   --> src\core\gamestream.rs:56:26
+    |
+ 56 | static VIDEO_SINK_STATE: OnceLock<Mutex<VideoSinkState>> = OnceLock::new();
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `*mut c_void` cannot be sent between threads safely
+    |
+    = help: within `VideoSinkState`, the trait `Send` is not implemented for `*mut c_void`
+note: required because it appears within the type `D3D11VideoFrame`
+   --> src\core\gamestream.rs:458:8
+    |
+458 | struct D3D11VideoFrame {
+    |        ^^^^^^^^^^^^^^^
+note: required because it appears within the type `DecodedVideoFrame`
+   --> src\core\gamestream.rs:365:6
+    |
+365 | enum DecodedVideoFrame {
+    |      ^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `std::option::Option<DecodedVideoFrame>`
+   --> C:\Users\david\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\option.rs:600:10
+    |
+600 | pub enum Option<T> {
+    |          ^^^^^^
+note: required because it appears within the type `VideoSinkState`
+   --> src\core\gamestream.rs:353:8
+    |
+353 | struct VideoSinkState {
+    |        ^^^^^^^^^^^^^^
+    = note: required for `std::sync::Mutex<VideoSinkState>` to implement `Sync`
+    = note: 1 redundant requirement hidden
+    = note: required for `OnceLock<std::sync::Mutex<VideoSinkState>>` to implement `Sync`
+    = note: shared static variables must have a type that implements `Sync`
+
+error[E0277]: `*mut c_void` cannot be sent between threads safely
+   --> src\core\gamestream.rs:69:30
+    |
+ 69 | static VIDEO_RENDERER_STATE: OnceLock<Mutex<Option<NativeVideoRenderer>>> = OnceLock::new();
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `*mut c_void` cannot be sent between threads safely
+    |
+    = help: within `std::option::Option<DecodedVideoFrame>`, the trait `Send` is not implemented for `*mut c_void`
+note: required because it appears within the type `D3D11VideoFrame`
+   --> src\core\gamestream.rs:458:8
+    |
+458 | struct D3D11VideoFrame {
+    |        ^^^^^^^^^^^^^^^
+note: required because it appears within the type `DecodedVideoFrame`
+   --> src\core\gamestream.rs:365:6
+    |
+365 | enum DecodedVideoFrame {
+    |      ^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `std::option::Option<DecodedVideoFrame>`
+   --> C:\Users\david\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\option.rs:600:10
+    |
+600 | pub enum Option<T> {
+    |          ^^^^^^
+    = note: required for `std::sync::Mutex<std::option::Option<DecodedVideoFrame>>` to implement `Sync`
+note: required because it appears within the type `LatestVideoFrameSlot`
+   --> src\core\gamestream.rs:479:8
+    |
+479 | struct LatestVideoFrameSlot {
+    |        ^^^^^^^^^^^^^^^^^^^^
+    = note: required for `Arc<LatestVideoFrameSlot>` to implement `Send`
+note: required because it appears within the type `NativeVideoRenderer`
+   --> src\core\gamestream.rs:467:8
+    |
+467 | struct NativeVideoRenderer {
+    |        ^^^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `std::option::Option<NativeVideoRenderer>`
+   --> C:\Users\david\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\option.rs:600:10
+    |
+600 | pub enum Option<T> {
+    |          ^^^^^^
+    = note: required for `std::sync::Mutex<std::option::Option<NativeVideoRenderer>>` to implement `Sync`
+    = note: 1 redundant requirement hidden
+    = note: required for `OnceLock<std::sync::Mutex<std::option::Option<NativeVideoRenderer>>>` to implement `Sync`
+    = note: shared static variables must have a type that implements `Sync`
+
+error[E0277]: the trait bound `DecodedVideoFrame: Eq` is not satisfied
+   --> src\core\gamestream.rs:361:5
+    |
+352 | #[derive(Clone, Debug, Default, Eq, PartialEq)]
+    |                                 -- in this derive macro expansion
+...
+361 |     last_decoded_frame: Option<DecodedVideoFrame>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+    |
+help: the trait `Eq` is not implemented for `DecodedVideoFrame`
+   --> src\core\gamestream.rs:365:1
+    |
+365 | enum DecodedVideoFrame {
+    | ^^^^^^^^^^^^^^^^^^^^^^
+help: the trait `Eq` is implemented for `std::option::Option<T>`
+   --> C:\Users\david\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\option.rs:595:16
+    |
+595 | #[derive_const(Eq)]
+    |                ^^
+    = note: required for `std::option::Option<DecodedVideoFrame>` to implement `Eq`
+note: required by a bound in `std::cmp::AssertParamIsEq`
+   --> C:\Users\david\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\cmp.rs:379:31
+    |
+379 | pub struct AssertParamIsEq<T: Eq + PointeeSized> {
+    |                               ^^ required by this bound in `AssertParamIsEq`
+
+error[E0369]: binary operation `==` cannot be applied to type `std::option::Option<DecodedVideoFrame>`
+   --> src\core\gamestream.rs:361:5
+    |
+352 | #[derive(Clone, Debug, Default, Eq, PartialEq)]
+    |                                     --------- in this derive macro expansion
+...
+361 |     last_decoded_frame: Option<DecodedVideoFrame>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: an implementation of `PartialEq` might be missing for `DecodedVideoFrame`
+   --> src\core\gamestream.rs:365:1
+    |
+365 | enum DecodedVideoFrame {
+    | ^^^^^^^^^^^^^^^^^^^^^^ must implement `PartialEq`
+help: consider annotating `DecodedVideoFrame` with `#[derive(PartialEq)]`
+    |
+365 + #[derive(PartialEq)]
+366 | enum DecodedVideoFrame {
+    |
+
+error[E0277]: `*mut c_void` cannot be sent between threads safely
+    --> src\core\gamestream.rs:1403:37
+     |
+1403 |       let thread = std::thread::spawn(move || {
+     |  __________________------------------_^
+     | |                  |
+     | |                  required by a bound introduced by this call
+1404 | |         if let Err(error) =
+1405 | |             native_video_renderer_loop(width, height, thread_frame_slot, stop_receiver)
+...    |
+1412 | |     });
+     | |_____^ `*mut c_void` cannot be sent between threads safely
+     |
+     = help: within `std::option::Option<DecodedVideoFrame>`, the trait `Send` is not implemented for `*mut c_void`
+note: required because it appears within the type `D3D11VideoFrame`
+    --> src\core\gamestream.rs:458:8
+     |
+ 458 | struct D3D11VideoFrame {
+     |        ^^^^^^^^^^^^^^^
+note: required because it appears within the type `DecodedVideoFrame`
+    --> src\core\gamestream.rs:365:6
+     |
+ 365 | enum DecodedVideoFrame {
+     |      ^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `std::option::Option<DecodedVideoFrame>`
+    --> C:\Users\david\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\option.rs:600:10
+     |
+ 600 | pub enum Option<T> {
+     |          ^^^^^^
+     = note: required for `std::sync::Mutex<std::option::Option<DecodedVideoFrame>>` to implement `Sync`
+note: required because it appears within the type `LatestVideoFrameSlot`
+    --> src\core\gamestream.rs:479:8
+     |
+ 479 | struct LatestVideoFrameSlot {
+     |        ^^^^^^^^^^^^^^^^^^^^
+     = note: required for `Arc<LatestVideoFrameSlot>` to implement `Send`
+note: required because it's used within this closure
+    --> src\core\gamestream.rs:1403:37
+     |
+1403 |     let thread = std::thread::spawn(move || {
+     |                                     ^^^^^^^
+note: required by a bound in `std::thread::spawn`
+    --> C:\Users\david\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\std\src\thread\functions.rs:128:8
+     |
+ 125 | pub fn spawn<F, T>(f: F) -> JoinHandle<T>
+     |        ----- required by a bound in this function
+...
+ 128 |     F: Send + 'static,
+     |        ^^^^ required by this bound in `spawn`
+
+Some errors have detailed explanations: E0277, E0369.
+For more information about an error, try `rustc --explain E0277`.
+error: could not compile `moonlight-gui-tauri-prototype` (bin "moonlight-gui-tauri-prototype") due to 5 previous errors

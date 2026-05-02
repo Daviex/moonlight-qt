@@ -349,7 +349,7 @@ struct VideoSinkConfiguration {
     flags: c_int,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default)]
 struct VideoSinkState {
     configuration: Option<VideoSinkConfiguration>,
     started: bool,
@@ -361,12 +361,13 @@ struct VideoSinkState {
     last_decoded_frame: Option<DecodedVideoFrame>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 enum DecodedVideoFrame {
     Rgba(RgbaVideoFrame),
     Yuv420(Yuv420VideoFrame),
     Nv12(NvVideoFrame),
     Nv21(NvVideoFrame),
+    D3D11Surface(D3D11VideoFrame),
 }
 
 impl DecodedVideoFrame {
@@ -375,6 +376,7 @@ impl DecodedVideoFrame {
             Self::Rgba(frame) => frame.width,
             Self::Yuv420(frame) => frame.width,
             Self::Nv12(frame) | Self::Nv21(frame) => frame.width,
+            Self::D3D11Surface(frame) => frame.width,
         }
     }
 
@@ -383,6 +385,7 @@ impl DecodedVideoFrame {
             Self::Rgba(frame) => frame.height,
             Self::Yuv420(frame) => frame.height,
             Self::Nv12(frame) | Self::Nv21(frame) => frame.height,
+            Self::D3D11Surface(frame) => frame.height,
         }
     }
 
@@ -391,6 +394,7 @@ impl DecodedVideoFrame {
             Self::Rgba(frame) => frame.frame_number,
             Self::Yuv420(frame) => frame.frame_number,
             Self::Nv12(frame) | Self::Nv21(frame) => frame.frame_number,
+            Self::D3D11Surface(frame) => frame.frame_number,
         }
     }
 
@@ -399,6 +403,7 @@ impl DecodedVideoFrame {
             Self::Rgba(frame) => frame.decoded_at,
             Self::Yuv420(frame) => frame.decoded_at,
             Self::Nv12(frame) | Self::Nv21(frame) => frame.decoded_at,
+            Self::D3D11Surface(frame) => frame.decoded_at,
         }
     }
 
@@ -408,6 +413,7 @@ impl DecodedVideoFrame {
             Self::Yuv420(_) => Sdl3VideoTextureFormat::Yuv420,
             Self::Nv12(_) => Sdl3VideoTextureFormat::Nv12,
             Self::Nv21(_) => Sdl3VideoTextureFormat::Nv21,
+            Self::D3D11Surface(_) => Sdl3VideoTextureFormat::Nv12, // D3D11 hardware decoder outputs NV12 format
         }
     }
 }
@@ -447,6 +453,21 @@ struct VideoPlane {
     pixels: Vec<u8>,
     pitch: usize,
 }
+
+#[derive(Clone, Debug)]
+struct D3D11VideoFrame {
+    width: c_int,
+    height: c_int,
+    frame_number: c_int,
+    decoded_at: Instant,
+    surface_ptr: *mut c_void,
+    is_hdr: bool,
+}
+
+// SAFETY: D3D11 surface pointers are thread-safe when managed by the hardware decoder
+// The surface is only accessed in the renderer thread after decoding completes
+unsafe impl Send for D3D11VideoFrame {}
+unsafe impl Sync for D3D11VideoFrame {}
 
 struct NativeVideoRenderer {
     frame_slot: Arc<LatestVideoFrameSlot>,
@@ -1248,13 +1269,22 @@ fn process_pull_video_decode_unit(
                 match hw_decoder.decode_packet(decoder.codec_context, &payload, frame_number) {
                     Ok(Some(decoded_hw_frame)) => {
                         // Hardware decode successful! Convert to DecodedVideoFrame
+                        let gpu_frame = DecodedVideoFrame::D3D11Surface(D3D11VideoFrame {
+                            width: decoded_hw_frame.width as c_int,
+                            height: decoded_hw_frame.height as c_int,
+                            frame_number,
+                            decoded_at: Instant::now(),
+                            surface_ptr: decoded_hw_frame.surface_ptr,
+                            is_hdr: decoded_hw_frame.hdr_metadata.is_hdr,
+                        });
                         logger::log(&format!(
-                            "🎬 Hardware decoded frame #{}: {}x{} (GPU surface)",
-                            frame_number, decoded_hw_frame.width, decoded_hw_frame.height
+                            "🎬 Hardware decoded frame #{}: {}x{} (GPU surface, HDR={})",
+                            frame_number,
+                            decoded_hw_frame.width,
+                            decoded_hw_frame.height,
+                            decoded_hw_frame.hdr_metadata.is_hdr
                         ));
-                        // TODO: Convert decoded_hw_frame to DecodedVideoFrame
-                        // For now, fall back to software
-                        decode_pull_video_payload(decoder, &payload, frame_number)
+                        Some(gpu_frame)
                     }
                     Ok(None) => {
                         // No frame ready yet from hardware decoder, try software
@@ -1758,6 +1788,15 @@ fn update_sdl3_video_texture(
             .map_err(|error| error.to_string()),
         DecodedVideoFrame::Nv12(frame) | DecodedVideoFrame::Nv21(frame) => {
             update_sdl3_nv_texture(texture, &frame.y, &frame.uv)
+        }
+        DecodedVideoFrame::D3D11Surface(frame) => {
+            // D3D11 GPU surfaces require special handling for rendering
+            // For now, we defer to Phase 5d: GPU texture mapping implementation
+            logger::log(&format!(
+                "📺 D3D11 GPU surface frame #{}: {}x{} (renderer integration pending)",
+                frame.frame_number, frame.width, frame.height
+            ));
+            Err("D3D11 GPU surface rendering not yet implemented - Phase 5d pending".into())
         }
     }
 }
@@ -2539,6 +2578,11 @@ fn validate_decoded_video_frame(frame: &DecodedVideoFrame) -> Result<(), String>
         DecodedVideoFrame::Nv12(frame) | DecodedVideoFrame::Nv21(frame) => {
             validate_video_plane(&frame.y, frame.height as usize, "Y")?;
             validate_video_plane(&frame.uv, frame.height as usize / 2, "UV")?;
+        }
+        DecodedVideoFrame::D3D11Surface(frame) => {
+            if frame.surface_ptr.is_null() {
+                return Err("D3D11 GPU surface pointer is null".into());
+            }
         }
     }
     Ok(())
