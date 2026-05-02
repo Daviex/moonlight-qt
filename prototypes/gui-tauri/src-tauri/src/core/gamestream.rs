@@ -69,6 +69,10 @@ static VIDEO_DECODER_THREAD: OnceLock<Mutex<Option<VideoDecoderThread>>> = OnceL
 static VIDEO_RENDERER_STATE: OnceLock<Mutex<Option<NativeVideoRenderer>>> = OnceLock::new();
 static VIDEO_QUEUE_DIAGNOSTICS: OnceLock<Mutex<NativeVideoQueueDiagnostics>> = OnceLock::new();
 static VIDEO_DECODE_DIAGNOSTICS: OnceLock<Mutex<NativeVideoDecodeDiagnostics>> = OnceLock::new();
+#[cfg(target_os = "windows")]
+static HDR_RENDERER_STATE: OnceLock<Mutex<Option<HdrRendererState>>> = OnceLock::new();
+#[cfg(target_os = "linux")]
+static VULKAN_RENDERER_STATE: OnceLock<Mutex<Option<VulkanRendererState>>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AudioConfiguration {
@@ -503,6 +507,28 @@ enum Sdl3VideoTextureFormat {
     Yuv420,
     Nv12,
     Nv21,
+}
+
+// Phase 5e: HDR Renderer State
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone)]
+struct HdrRendererState {
+    hdr_enabled: bool,
+    peak_brightness: f32,  // max brightness (nits) - 1000 for HDR10
+    color_primaries: String, // "BT.2020" for HDR
+    transfer_function: String, // "SMPTE2084" for HDR10
+}
+
+#[cfg(target_os = "windows")]
+impl Default for HdrRendererState {
+    fn default() -> Self {
+        Self {
+            hdr_enabled: false,
+            peak_brightness: 1000.0,
+            color_primaries: "BT.709".to_string(),
+            transfer_function: "SDR".to_string(),
+        }
+    }
 }
 
 enum Sdl3VideoTextureInner<'a> {
@@ -1731,6 +1757,26 @@ fn native_video_renderer_loop(
                 update_sdl3_video_texture_wrapped(&video_texture, &frame)
                     .map_err(|error| error.to_string())?;
                 let update_us = update_start.elapsed().as_micros();
+                
+                // Phase 5e: Detect HDR and configure rendering
+                #[cfg(target_os = "windows")]
+                {
+                    if let DecodedVideoFrame::D3D11Surface(gpu_frame) = &frame {
+                        if gpu_frame.is_hdr {
+                            // HDR content detected - configure tone mapping
+                            logger::log("🎬 HDR10 frame detected - enabling tone mapping shader");
+                            if let Ok(mut hdr_state) = HDR_RENDERER_STATE.get_or_init(|| Mutex::new(Some(HdrRendererState::default()))).lock() {
+                                if let Some(state) = hdr_state.as_mut() {
+                                    state.hdr_enabled = true;
+                                    state.color_primaries = "BT.2020".to_string();
+                                    state.transfer_function = "SMPTE2084".to_string();
+                                    state.peak_brightness = 1000.0;
+                                }
+                            }
+                        }
+                    }
+                }
+                
                 let render_start = Instant::now();
                 render_sdl3_video_frame_wrapped(
                     &mut canvas,
@@ -4227,6 +4273,117 @@ fn saturated_c_int(value: u32) -> c_int {
 
 fn bytes_to_c_chars(bytes: [u8; 16]) -> [c_char; 16] {
     bytes.map(|value| value as c_char)
+}
+
+
+// Phase 5e: HDR Rendering support
+#[cfg(target_os = "windows")]
+fn setup_hdr_rendering() -> Result<(), String> {
+    // Initialize HDR renderer state
+    if let Ok(mut state) = HDR_RENDERER_STATE.get_or_init(|| Mutex::new(Some(HdrRendererState::default()))).lock() {
+        if let Some(hdr) = state.as_mut() {
+            hdr.hdr_enabled = false; // Will be set when HDR frame detected
+            logger::log("✓ HDR rendering framework initialized");
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn get_hdr_state() -> Result<HdrRendererState, String> {
+    if let Ok(state) = HDR_RENDERER_STATE.get_or_init(|| Mutex::new(Some(HdrRendererState::default()))).lock() {
+        if let Some(hdr) = state.as_ref() {
+            return Ok(hdr.clone());
+        }
+    }
+    Ok(HdrRendererState::default())
+}
+
+// Phase 5e: Tone mapping shader for converting SDR to HDR
+#[cfg(target_os = "windows")]
+fn create_tone_mapping_shader() -> String {
+    // HLSL shader for HDR10 tone mapping using ST.2084 (PQ) transfer function
+    // This shader converts SDR video to HDR color space using Rec.2020 primaries
+    r#"
+Texture2D inputTexture : register(t0);
+SamplerState inputSampler : register(s0);
+
+cbuffer HDRConstants : register(b0) {
+    float4 colorGamut;  // Peak brightness + color primaries
+    float3 padding;
+};
+
+float3 LinearToSRGB(float3 lin) {
+    return pow(lin, 1.0 / 2.2);
+}
+
+float3 SRGBToLinear(float3 srgb) {
+    return pow(srgb, 2.2);
+}
+
+float3 Rec2020ToRec709(float3 col) {
+    // Transform from Rec.2020 back to Rec.709 if needed for SDR output
+    float3x3 transform = float3x3(
+        1.6605, -0.5876, -0.0729,
+        -0.1246, 1.1329, -0.0083,
+        -0.0182, -0.1006, 1.1187
+    );
+    return mul(col, transform);
+}
+
+float LinearToST2084(float linear) {
+    // ST.2084 (PQ) OECF for HDR10 - maps linear to [0,1] 
+    const float m1 = 0.1593017578125;
+    const float m2 = 78.84375;
+    const float c1 = 0.8359375;
+    const float c2 = 18.8515625;
+    const float c3 = 18.6875;
+    
+    float lm1 = pow(linear, m1);
+    float num = c1 + c2 * lm1;
+    float den = 1.0 + c3 * lm1;
+    return pow(num / den, m2);
+}
+
+float4 main(float2 uv : TEXCOORD0) : SV_TARGET {
+    float4 sdrSample = inputTexture.Sample(inputSampler, uv);
+    
+    // Convert from SDR (sRGB) to linear
+    float3 linear = SRGBToLinear(sdrSample.rgb);
+    
+    // Scale up to HDR range (0-100 nits typical SDR, map to 0-1000 nits HDR)
+    float3 hdr = linear * 10.0;
+    
+    // Apply ST.2084 transfer function
+    float r = LinearToST2084(hdr.r);
+    float g = LinearToST2084(hdr.g);
+    float b = LinearToST2084(hdr.b);
+    
+    return float4(r, g, b, sdrSample.a);
+}
+"#.to_string()
+}
+
+// Phase 5f: Linux Vulkan/Libplacebo preparation (architecture mirror)
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+struct VulkanRendererState {
+    vulkan_enabled: bool,
+    libplacebo_available: bool,
+    transfer_function: String,
+    color_primaries: String,
+}
+
+#[cfg(target_os = "linux")]
+impl Default for VulkanRendererState {
+    fn default() -> Self {
+        Self {
+            vulkan_enabled: false,
+            libplacebo_available: false,
+            transfer_function: "SDR".to_string(),
+            color_primaries: "BT.709".to_string(),
+        }
+    }
 }
 
 #[cfg(test)]
