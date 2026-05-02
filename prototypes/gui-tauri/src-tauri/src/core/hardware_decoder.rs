@@ -323,8 +323,14 @@ impl D3D11Device {
 
     /// Get the device pointer for FFmpeg hwcontext
     pub fn get_device_ptr(&self) -> Option<*mut c_void> {
-        // COM objects in windows-rs are opaque, just cast the option directly
-        self.device.as_ref().map(|_d| std::ptr::null_mut::<c_void>())
+        // CRITICAL: Return the actual device pointer for FFmpeg D3D11VA
+        // The device is an ID3D11Device COM object - we cast it to c_void
+        // for FFmpeg's av_hwdevice_ctx_create
+        self.device.as_ref().map(|d| {
+            // SAFETY: ID3D11Device is a COM object with stable memory layout
+            // We're casting the reference to a void pointer for FFmpeg
+            d as *const _ as *mut c_void
+        })
     }
 
     /// Get raw device for surface creation
@@ -405,45 +411,69 @@ impl D3D11HwContext {
             return Err("D3D11 device does not support video decoding".into());
         }
 
-        // Step 1: Create FFmpeg hwdevice context
+        // Step 1: Create FFmpeg hwdevice context with D3D11VA
         let mut hw_device_ctx: *mut c_void = std::ptr::null_mut();
         
-        // SAFETY: av_hwdevice_ctx_create is an FFmpeg API that creates a reference-counted context.
-        // The device pointer is valid for the lifetime of the D3D11Device.
-        logger::log("Attempting to create FFmpeg D3D11VA hwdevice context...");
+        logger::log("Attempting to create FFmpeg D3D11VA hwdevice context with default device...");
+        
+        // IMPORTANT: D3D11VA device parameter should be NULL for default device,
+        // or a device index like "0", "1" for selecting specific adapters.
+        // Do NOT pass the actual device pointer - FFmpeg will enumerate and use the best device.
         let result = unsafe {
             super::gamestream_sys::av_hwdevice_ctx_create(
-                &mut hw_device_ctx,                                    // Output context
+                &mut hw_device_ctx,                                    // Output context (pointer to pointer)
                 super::gamestream_sys::AV_HWDEVICE_TYPE_D3D11VA,       // Hardware type
-                std::ptr::null(),                                       // Device name (let FFmpeg choose)
-                std::ptr::null_mut(),                                   // Options
-                0,                                                      // Flags
+                std::ptr::null(),                                      // Device name (NULL = default/first device)
+                std::ptr::null_mut(),                                  // Options (NULL)
+                0,                                                     // Flags
             )
         };
 
         if result != 0 {
             logger::log(format!(
-                "❌ D3D11VA hwdevice_ctx_create failed with error code: {} (0x{:08x})",
+                "❌ D3D11VA hwdevice_ctx_create with default device failed: error {} (0x{:08x})",
                 result, result as u32
             ));
-            logger::log("Possible causes for D3D11VA unavailability:");
-            logger::log("  1. FFmpeg compiled without D3D11VA support");
-            logger::log("  2. GPU drivers don't expose D3D11VA/DXVA2 capabilities");
-            logger::log("  3. Windows Media Feature Pack not installed (N/KN editions)");
-            logger::log("  4. Older GPU that doesn't support DXVA2");
-            logger::log("  5. Newer FFmpeg versions may require different initialization");
-            return Err(format!(
-                "D3D11VA hardware decoding unavailable (error {}). Falling back to software decoder.",
-                result
-            ));
+            
+            // Try with device index "0" for primary adapter
+            logger::log("Attempting with device index '0'...");
+            let device_index = std::ffi::CString::new("0")
+                .map_err(|_| "Failed to create C string for device index")?;
+            
+            let result2 = unsafe {
+                super::gamestream_sys::av_hwdevice_ctx_create(
+                    &mut hw_device_ctx,
+                    super::gamestream_sys::AV_HWDEVICE_TYPE_D3D11VA,
+                    device_index.as_ptr(),
+                    std::ptr::null_mut(),
+                    0,
+                )
+            };
+            
+            if result2 != 0 {
+                logger::log(format!(
+                    "❌ D3D11VA with device index '0' also failed: error {} (0x{:08x})",
+                    result2, result2 as u32
+                ));
+                logger::log("Possible causes for D3D11VA unavailability:");
+                logger::log("  1. FFmpeg compiled without D3D11VA support");
+                logger::log("  2. GPU drivers don't expose D3D11VA/DXVA2 capabilities");
+                logger::log("  3. Windows Media Feature Pack not installed (N/KN editions)");
+                logger::log("  4. Older GPU that doesn't support DXVA2");
+                logger::log("  5. System has no compatible D3D11 device");
+                return Err(format!(
+                    "D3D11VA hardware decoding unavailable. Falling back to software decoder.",
+                ));
+            }
+            logger::log("✅ D3D11VA hwdevice context created with device index '0'");
+        } else {
+            logger::log("✅ D3D11VA hwdevice context created with default device");
         }
 
         if hw_device_ctx.is_null() {
             logger::log("❌ FFmpeg hwdevice context creation returned null");
             return Err("hwdevice context is null".into());
         }
-
-        logger::log("✅ FFmpeg D3D11VA hwdevice context created successfully");
 
         Ok(Self {
             hw_device_ctx: Some(hw_device_ctx),
