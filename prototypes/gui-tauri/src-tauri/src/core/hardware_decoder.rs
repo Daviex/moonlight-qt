@@ -633,6 +633,9 @@ pub struct D3D11HardwareDecoder {
     hw_context: Option<D3D11HwContext>,
     surface_pool: Option<GpuSurfacePool>,
     pub is_available: bool,
+    // Keep allocated frames alive - do NOT free them
+    // The D3D11 surfaces in frame.data[0] remain valid only while the frame is allocated
+    allocated_frames: std::sync::Mutex<Vec<*mut super::gamestream_sys::AVFrame>>,
 }
 
 unsafe impl Send for D3D11HardwareDecoder {}
@@ -652,6 +655,7 @@ impl D3D11HardwareDecoder {
                         hw_context: None,
                         surface_pool: None,
                         is_available: true,
+                        allocated_frames: std::sync::Mutex::new(Vec::new()),
                     })
                 } else {
                     logger::log("D3D11 device created but video decoding not supported");
@@ -660,6 +664,7 @@ impl D3D11HardwareDecoder {
                         hw_context: None,
                         surface_pool: None,
                         is_available: false,
+                        allocated_frames: std::sync::Mutex::new(Vec::new()),
                     })
                 }
             }
@@ -670,6 +675,7 @@ impl D3D11HardwareDecoder {
                     hw_context: None,
                     surface_pool: None,
                     is_available: false,
+                    allocated_frames: std::sync::Mutex::new(Vec::new()),
                 })
             }
         }
@@ -860,10 +866,25 @@ impl D3D11HardwareDecoder {
             // Frame decoded successfully!
             let frame_ref = &*frame;
             
+            // Log frame dimensions for debugging
+            logger::log(&format!(
+                "Frame decoded: {}x{} (format={})",
+                frame_ref.width, frame_ref.height, frame_ref.format
+            ));
+            
+            // CRITICAL: For D3D11VA, frame->data[0] is an ID3D11Texture2D* that's managed by 
+            // FFmpeg's hwframe context. When the AVFrame is freed, the reference is released.
+            // We must keep the frame alive to maintain the surface reference.
             let surface_ptr = if frame_ref.data[0].is_null() {
+                logger::log("⚠️  Frame data[0] is NULL!");
                 std::ptr::null_mut()
             } else {
-                frame_ref.data[0] as *mut c_void
+                let texture_ptr = frame_ref.data[0] as *mut c_void;
+                logger::log(&format!(
+                    "Frame surface_ptr: {:p}",
+                    texture_ptr
+                ));
+                texture_ptr
             };
 
             // Extract HDR metadata if present
@@ -879,15 +900,31 @@ impl D3D11HardwareDecoder {
             };
 
             logger::log(&format!(
-                "✅ D3D11 Hardware Decoded: {}x{} Format={} HDR={}",
+                "✅ D3D11 Hardware Decoded: {}x{} Format={} HDR={} surface_ptr={:p}",
                 result.width,
                 result.height,
                 result.format,
-                result.hdr_metadata.is_hdr
+                result.hdr_metadata.is_hdr,
+                result.surface_ptr
             ));
 
-            let mut frm = frame;
-            sys::av_frame_free(&mut frm);
+            // CRITICAL FIX: Keep the AVFrame allocated to preserve D3D11 surface validity
+            // FFmpeg D3D11VA stores a reference to D3D11 surfaces in frame->data[0].
+            // The surface reference is managed by FFmpeg's hwframe context and becomes
+            // invalid when the AVFrame is freed. To keep the surface alive, we must keep
+            // the AVFrame allocated.
+            // 
+            // We store the frame pointer in a persistent Vec. The frames are kept alive
+            // for the duration of the streaming session. In a production system, we would
+            // implement proper reference counting and frame release when rendering completes.
+            if let Ok(mut frames) = self.allocated_frames.lock() {
+                frames.push(frame);
+            } else {
+                // If mutex is poisoned, free the frame to avoid double-free
+                let mut frm = frame;
+                sys::av_frame_free(&mut frm);
+            }
+            
             Ok(Some(result))
         }
     }

@@ -1364,6 +1364,7 @@ fn video_decoder_thread_loop(mut decoder: SoftwareVideoDecoder, should_stop: Arc
     logger::log("Rust video decoder thread stopped");
 }
 
+#[cfg(moonlight_common_c_linked)]
 fn process_pull_video_decode_unit(
     decoder: &mut SoftwareVideoDecoder,
     decode_unit: *mut gamestream_sys::DecodeUnit,
@@ -1828,12 +1829,12 @@ fn native_video_renderer_loop(
     let mut canvas = window.into_canvas();
     let texture_creator = canvas.texture_creator();
     disable_sdl3_renderer_vsync(&canvas);
-    let mut video_texture = create_sdl3_video_texture(
-        &texture_creator,
-        width,
-        height,
-        Sdl3VideoTextureFormat::Rgba,
-    )?;
+    
+    // DO NOT create initial texture with codec_ctx width/height!
+    // They may be 0 until the first frame is decoded.
+    // Instead, we'll create the texture when the first frame arrives.
+    let mut video_texture: Option<Sdl3VideoTexture> = None;
+    
     sdl.mouse().show_cursor(false);
     sdl.mouse().capture(true);
     sdl.mouse().set_relative_mouse_mode(canvas.window(), true);
@@ -1849,12 +1850,17 @@ fn native_video_renderer_loop(
             break;
         }
         let mut pending_controller_axis_updates = Vec::new();
+        
+        // Process input events (use dummy dimensions if texture not created yet)
+        let (event_width, event_height) = video_texture.as_ref()
+            .map(|tex| (tex.width, tex.height))
+            .unwrap_or((1920, 1080));
         for event in event_pump.poll_iter() {
             if handle_sdl3_video_event(
                 event,
                 &input_sender,
-                video_texture.width,
-                video_texture.height,
+                event_width,
+                event_height,
                 &mut canvas,
                 &mut controllers,
                 &mut pending_controller_axis_updates,
@@ -1867,107 +1873,123 @@ fn native_video_renderer_loop(
             &input_sender,
             pending_controller_axis_updates,
         );
+        
         match receive_latest_video_frame(&frame_slot) {
             Some(frame) => {
                 validate_decoded_video_frame(&frame)?;
                 let frame_width = frame.width() as usize;
                 let frame_height = frame.height() as usize;
                 let frame_format = frame.texture_format();
-                if frame_width != video_texture.width
-                    || frame_height != video_texture.height
-                    || frame_format != video_texture.format
-                {
+                
+                // Initialize or recreate texture based on frame dimensions
+                let needs_texture_creation = match &video_texture {
+                    None => {
+                        logger::log(&format!(
+                            "First frame received: {}x{}, creating texture...",
+                            frame_width, frame_height
+                        ));
+                        true
+                    }
+                    Some(tex) => {
+                        frame_width != tex.width
+                            || frame_height != tex.height
+                            || frame_format != tex.format
+                    }
+                };
+                
+                if needs_texture_creation {
                     // Create appropriate texture based on frame type
                     #[cfg(target_os = "windows")]
                     if let DecodedVideoFrame::D3D11Surface(gpu_frame) = &frame {
-                        video_texture = create_sdl3_d3d11_texture(
+                        video_texture = Some(create_sdl3_d3d11_texture(
                             canvas.raw(),
                             gpu_frame.surface_ptr,
                             frame_width,
                             frame_height,
-                        )?;
+                        )?);
                     } else {
-                        video_texture = create_sdl3_video_texture(
+                        video_texture = Some(create_sdl3_video_texture(
                             &texture_creator,
                             frame_width,
                             frame_height,
                             frame_format,
-                        )?;
+                        )?);
                     }
                     
                     #[cfg(not(target_os = "windows"))]
                     {
-                        video_texture = create_sdl3_video_texture(
+                        video_texture = Some(create_sdl3_video_texture(
                             &texture_creator,
                             frame_width,
                             frame_height,
                             frame_format,
-                        )?;
+                        )?);
                     }
                     
                     diagnostics.recreated_textures =
                         diagnostics.recreated_textures.saturating_add(1);
                     logger::log(format!(
-                        "SDL3 video texture recreated; width={}; height={}; format={:?}; frame={}",
-                        video_texture.width,
-                        video_texture.height,
-                        video_texture.format,
-                        frame.frame_number()
+                        "SDL3 video texture created; width={}; height={}; format={:?}; frame={}",
+                        frame_width, frame_height, frame_format, frame.frame_number()
                     ));
                 }
-                let update_start = Instant::now();
-                update_sdl3_video_texture_wrapped(&video_texture, &frame)
-                    .map_err(|error| error.to_string())?;
-                let update_us = update_start.elapsed().as_micros();
                 
-                // Phase 5e: Detect HDR and apply tone mapping
-                #[cfg(target_os = "windows")]
-                {
-                    if let DecodedVideoFrame::D3D11Surface(gpu_frame) = &frame {
-                        if gpu_frame.is_hdr {
-                            // HDR content detected - setup and execute tone mapping
-                            if let Ok(mut hdr_state) = HDR_RENDERER_STATE.get_or_init(|| Mutex::new(Some(HdrRendererState::default()))).lock() {
-                                if let Some(state) = hdr_state.as_mut() {
-                                    if !state.hdr_enabled {
-                                        logger::log("🎬 HDR10 frame detected - enabling tone mapping shader");
-                                        state.hdr_enabled = true;
-                                        state.color_primaries = "BT.2020".to_string();
-                                        state.transfer_function = "SMPTE2084".to_string();
-                                        state.peak_brightness = 1000.0;
+                // Now we have a valid texture
+                if let Some(video_texture) = &mut video_texture {
+                    let update_start = Instant::now();
+                    update_sdl3_video_texture_wrapped(&video_texture, &frame)
+                        .map_err(|error| error.to_string())?;
+                    let update_us = update_start.elapsed().as_micros();
+                    
+                    // Phase 5e: Detect HDR and apply tone mapping
+                    #[cfg(target_os = "windows")]
+                    {
+                        if let DecodedVideoFrame::D3D11Surface(gpu_frame) = &frame {
+                            if gpu_frame.is_hdr {
+                                // HDR content detected - setup and execute tone mapping
+                                if let Ok(mut hdr_state) = HDR_RENDERER_STATE.get_or_init(|| Mutex::new(Some(HdrRendererState::default()))).lock() {
+                                    if let Some(state) = hdr_state.as_mut() {
+                                        if !state.hdr_enabled {
+                                            logger::log("🎬 HDR10 frame detected - enabling tone mapping shader");
+                                            state.hdr_enabled = true;
+                                            state.color_primaries = "BT.2020".to_string();
+                                            state.transfer_function = "SMPTE2084".to_string();
+                                            state.peak_brightness = 1000.0;
+                                            
+                                            // Enable DXGI HDR backbuffer
+                                            let _ = enable_dxgi_hdr_backbuffer(
+                                                video_texture.width as u32,
+                                                video_texture.height as u32,
+                                            );
+                                        }
                                         
-                                        // Enable DXGI HDR backbuffer
-                                        let _ = enable_dxgi_hdr_backbuffer(
-                                            video_texture.width as u32,
-                                            video_texture.height as u32,
-                                        );
-                                    }
-                                    
-                                    // Apply tone mapping to current frame
-                                    if state.shader_compiled {
-                                        let _ = apply_tone_mapping_to_frame();
+                                        // Apply tone mapping to current frame
+                                        if state.shader_compiled {
+                                            let _ = apply_tone_mapping_to_frame();
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+                    
+                    let render_start = Instant::now();
+                    render_sdl3_video_frame_wrapped(
+                        &mut canvas,
+                        &video_texture,
+                    )?;
+                    let render_us = render_start.elapsed().as_micros();
+                    let frame_age_us = frame.decoded_at().elapsed().as_micros();
+                    diagnostics.record_frame(
+                        frame.frame_number(),
+                        frame_format,
+                        update_us,
+                        render_us,
+                        frame_age_us,
+                        0,
+                    );
+                    diagnostics.maybe_log(video_texture.width, video_texture.height, &canvas);
                 }
-                
-                let render_start = Instant::now();
-                render_sdl3_video_frame_wrapped(
-                    &mut canvas,
-                    &video_texture,
-                )?;
-                let render_us = render_start.elapsed().as_micros();
-                let frame_age_us = frame.decoded_at().elapsed().as_micros();
-                diagnostics.record_frame(
-                    frame.frame_number(),
-                    frame_format,
-                    update_us,
-                    render_us,
-                    frame_age_us,
-                    0,
-                );
-                diagnostics.maybe_log(video_texture.width, video_texture.height, &canvas);
             }
             None => {}
         }
@@ -2041,24 +2063,47 @@ fn create_sdl3_d3d11_texture<'a>(
     // Phase 5d: Direct D3D11→SDL3 GPU Texture Sharing
     // Use sdl3::sys to wrap D3D11 texture with SDL_CreateTextureWithProperties
     
+    logger::log(&format!(
+        "create_sdl3_d3d11_texture called with: ptr={:p}, width={}, height={}",
+        d3d11_texture_ptr, width, height
+    ));
+    
     if d3d11_texture_ptr.is_null() {
         return Err("D3D11 texture pointer is null".into());
+    }
+    
+    if width == 0 || height == 0 {
+        logger::log(&format!(
+            "❌ INVALID DIMENSIONS PASSED TO SDL3: {}x{}",
+            width, height
+        ));
+        return Err(format!(
+            "Invalid dimensions: {}x{} (must be > 0)",
+            width, height
+        ));
     }
 
     unsafe {
         // Create property structure
         let props = sdl3::sys::properties::SDL_CreateProperties();
 
-        // Set D3D11 texture pointer (cast to *const i8 for C string)
-        let prop_name = b"SDL_PROP_TEXTURE_CREATE_D3D11_TEXTURE_POINTER\0".as_ptr() as *const i8;
+        // SDL3 property names must match the public headers exactly.
+        let prop_name = b"SDL.texture.create.d3d11.texture\0".as_ptr() as *const i8;
         sdl3::sys::properties::SDL_SetPointerProperty(
             props,
             prop_name,
             d3d11_texture_ptr,
         );
 
+        let access_prop = b"SDL.texture.create.access\0".as_ptr() as *const i8;
+        sdl3::sys::properties::SDL_SetNumberProperty(
+            props,
+            access_prop,
+            0, // SDL_TEXTUREACCESS_STATIC
+        );
+
         // Set pixel format to NV12 (hardware decoder output format)
-        let format_prop = b"SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER\0".as_ptr() as *const i8;
+        let format_prop = b"SDL.texture.create.format\0".as_ptr() as *const i8;
         sdl3::sys::properties::SDL_SetNumberProperty(
             props,
             format_prop,
@@ -2066,7 +2111,7 @@ fn create_sdl3_d3d11_texture<'a>(
         );
 
         // Set width
-        let width_prop = b"SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER\0".as_ptr() as *const i8;
+        let width_prop = b"SDL.texture.create.width\0".as_ptr() as *const i8;
         sdl3::sys::properties::SDL_SetNumberProperty(
             props,
             width_prop,
@@ -2074,7 +2119,7 @@ fn create_sdl3_d3d11_texture<'a>(
         );
 
         // Set height
-        let height_prop = b"SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER\0".as_ptr() as *const i8;
+        let height_prop = b"SDL.texture.create.height\0".as_ptr() as *const i8;
         sdl3::sys::properties::SDL_SetNumberProperty(
             props,
             height_prop,
@@ -2082,7 +2127,7 @@ fn create_sdl3_d3d11_texture<'a>(
         );
 
         // Set colorspace to JPEG (YUV BT.601)
-        let colorspace_prop = b"SDL_PROP_TEXTURE_CREATE_COLORSPACE_NUMBER\0".as_ptr() as *const i8;
+        let colorspace_prop = b"SDL.texture.create.colorspace\0".as_ptr() as *const i8;
         sdl3::sys::properties::SDL_SetNumberProperty(
             props,
             colorspace_prop,
