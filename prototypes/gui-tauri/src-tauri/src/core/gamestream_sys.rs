@@ -600,6 +600,10 @@ extern "C" {
     pub fn av_frame_alloc() -> *mut AVFrame;
     pub fn av_frame_free(frame: *mut *mut AVFrame);
     pub fn av_frame_unref(frame: *mut AVFrame);
+    pub fn av_frame_get_side_data(
+        frame: *const AVFrame,
+        type_: c_int,
+    ) -> *mut c_void;
 
     // Hardware acceleration (D3D11VA) - Phase 2 integration
     pub fn av_hwdevice_ctx_create(
