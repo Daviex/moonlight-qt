@@ -3363,6 +3363,7 @@ impl StreamConfiguration {
     }
 
     pub fn preferred_for_server(mut self, server_codec_modes: c_int) -> Self {
+        // First, find and log the preferred codec
         let Some(preferred_format) =
             preferred_available_video_format(self.supported_video_formats, server_codec_modes)
         else {
@@ -3372,13 +3373,48 @@ impl StreamConfiguration {
             ));
             return self;
         };
+        
         if preferred_format != self.supported_video_formats {
             logger::log(format!(
                 "Selected preferred stream codec; requested_formats=0x{:x}; server_modes=0x{server_codec_modes:x}; selected=0x{preferred_format:x}",
                 self.supported_video_formats
             ));
         }
-        self.supported_video_formats = preferred_format;
+        
+        // Filter to server-supported formats while preserving the full bitmask of what's available.
+        // This preserves HDR format information for hdr_query_parameters().
+        let supported_by_server = self.supported_video_formats & server_codec_modes;
+        if supported_by_server != 0 && supported_by_server != self.supported_video_formats {
+            self.supported_video_formats = supported_by_server;
+        }
+        
+        self
+    }
+    
+    pub fn prefer_hdr_codecs_if_requested(mut self, enable_hdr: bool) -> Self {
+        if !enable_hdr {
+            return self;
+        }
+
+        const HDR_10BIT_CODECS: &[c_int] = &[
+            gamestream_sys::VIDEO_FORMAT_AV1_HIGH10_444,
+            gamestream_sys::VIDEO_FORMAT_AV1_MAIN10,
+            gamestream_sys::VIDEO_FORMAT_HEVC_REXT10_444,
+            gamestream_sys::VIDEO_FORMAT_H265_MAIN10,
+        ];
+
+        // Find the first (highest priority) 10-bit codec available
+        if let Some(&preferred) = HDR_10BIT_CODECS
+            .iter()
+            .find(|&&codec| self.supported_video_formats & codec != 0)
+        {
+            logger::log(format!(
+                "HDR enabled; locking to 10-bit codec 0x{:x} (was 0x{:x})",
+                preferred, self.supported_video_formats
+            ));
+            self.supported_video_formats = preferred;
+        }
+
         self
     }
 }
@@ -3421,6 +3457,7 @@ fn stream_configuration_from_settings(
         supported_video_formats,
         remote_input_crypto: RemoteInputCrypto::default(),
     }
+    .prefer_hdr_codecs_if_requested(settings.enable_hdr)
 }
 
 fn requested_video_formats_for_settings(

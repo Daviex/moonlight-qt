@@ -86,12 +86,17 @@ impl StreamRendererBackend {
 }
 
 fn platform_hardware_backend() -> StreamRendererBackend {
+    #[cfg(target_os = "windows")]
+    {
+        StreamRendererBackend::D3d11
+    }
+
     #[cfg(all(target_os = "linux", libplacebo_renderer_linked))]
     {
         StreamRendererBackend::LibplaceboVulkan
     }
 
-    #[cfg(not(all(target_os = "linux", libplacebo_renderer_linked)))]
+    #[cfg(not(any(target_os = "windows", all(target_os = "linux", libplacebo_renderer_linked))))]
     {
         StreamRendererBackend::SoftwareSdl
     }
@@ -108,9 +113,11 @@ mod tests {
         let plan = StreamRendererPlan::new(&settings).unwrap();
 
         assert_eq!(VideoDecoderPreference::Automatic, plan.decoder_preference);
+        #[cfg(target_os = "windows")]
+        assert_eq!(StreamRendererBackend::D3d11, plan.backend);
         #[cfg(all(target_os = "linux", libplacebo_renderer_linked))]
         assert_eq!(StreamRendererBackend::LibplaceboVulkan, plan.backend);
-        #[cfg(not(all(target_os = "linux", libplacebo_renderer_linked)))]
+        #[cfg(not(any(target_os = "windows", all(target_os = "linux", libplacebo_renderer_linked))))]
         assert_eq!(StreamRendererBackend::SoftwareSdl, plan.backend);
         assert!(plan.vsync);
     }
