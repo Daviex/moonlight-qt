@@ -1,0 +1,62 @@
+    Checking moonlight-gui-tauri-prototype v0.1.0 (C:\Users\david\Desktop\Work\moonlight-qt\prototypes\gui-tauri\src-tauri)
+error[E0308]: arguments to this function are incorrect
+    --> src\core\gamestream.rs:2356:17
+     |
+2356 |                 sdl3::sys::render::SDL_UpdateYUVTexture(
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+note: expected `*const u8`, found `*const c_void`
+    --> src\core\gamestream.rs:2359:21
+     |
+2359 |                     frame.y.pixels.as_ptr() as *const c_void,
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = note: expected raw pointer `*const u8`
+                found raw pointer `*const c_void`
+note: expected `*const u8`, found `*const c_void`
+    --> src\core\gamestream.rs:2361:21
+     |
+2361 |                     frame.u.pixels.as_ptr() as *const c_void,
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = note: expected raw pointer `*const u8`
+                found raw pointer `*const c_void`
+note: expected `*const u8`, found `*const c_void`
+    --> src\core\gamestream.rs:2363:21
+     |
+2363 |                     frame.v.pixels.as_ptr() as *const c_void,
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = note: expected raw pointer `*const u8`
+                found raw pointer `*const c_void`
+note: function defined here
+    --> C:\Users\david\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sdl3-sys-0.6.4+SDL-3.4.6\src\generated\render.rs:2056:12
+     |
+2056 |     pub fn SDL_UpdateYUVTexture(
+     |            ^^^^^^^^^^^^^^^^^^^^
+
+error[E0308]: arguments to this function are incorrect
+    --> src\core\gamestream.rs:2373:17
+     |
+2373 |                 sdl3::sys::render::SDL_UpdateNVTexture(
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+note: expected `*const u8`, found `*const c_void`
+    --> src\core\gamestream.rs:2376:21
+     |
+2376 |                     frame.y.pixels.as_ptr() as *const c_void,
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = note: expected raw pointer `*const u8`
+                found raw pointer `*const c_void`
+note: expected `*const u8`, found `*const c_void`
+    --> src\core\gamestream.rs:2378:21
+     |
+2378 |                     frame.uv.pixels.as_ptr() as *const c_void,
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = note: expected raw pointer `*const u8`
+                found raw pointer `*const c_void`
+note: function defined here
+    --> C:\Users\david\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sdl3-sys-0.6.4+SDL-3.4.6\src\generated\render.rs:2099:12
+     |
+2099 |     pub fn SDL_UpdateNVTexture(
+     |            ^^^^^^^^^^^^^^^^^^^
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `moonlight-gui-tauri-prototype` (bin "moonlight-gui-tauri-prototype") due to 2 previous errors

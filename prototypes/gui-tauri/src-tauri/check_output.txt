@@ -1,4 +1,6 @@
-   Compiling moonlight-gui-tauri-prototype v0.1.0 (C:\Users\david\Desktop\Work\moonlight-qt\prototypes\gui-tauri\src-tauri)
+    Checking windows v0.54.0
+    Checking cpal v0.15.3
+    Checking moonlight-gui-tauri-prototype v0.1.0 (C:\Users\david\Desktop\Work\moonlight-qt\prototypes\gui-tauri\src-tauri)
 error[E0599]: no method named `is_null` found for struct `SDL_PropertiesID` in the current scope
     --> src\core\gamestream.rs:1830:18
      |
@@ -48,4 +50,3 @@ error[E0502]: cannot borrow `canvas` as mutable because it is also borrowed as i
 Some errors have detailed explanations: E0308, E0502, E0599.
 For more information about an error, try `rustc --explain E0308`.
 error: could not compile `moonlight-gui-tauri-prototype` (bin "moonlight-gui-tauri-prototype") due to 4 previous errors
-

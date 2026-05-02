@@ -1,17 +1,11 @@
-   Compiling moonlight-gui-tauri-prototype v0.1.0 (C:\Users\david\Desktop\Work\moonlight-qt\prototypes\gui-tauri\src-tauri)
-error[E0599]: no method named `is_null` found for struct `SDL_PropertiesID` in the current scope
-    --> src\core\gamestream.rs:1830:18
-     |
-1830 |         if props.is_null() {
-     |                  ^^^^^^^ method not found in `SDL_PropertiesID`
-
+    Checking moonlight-gui-tauri-prototype v0.1.0 (C:\Users\david\Desktop\Work\moonlight-qt\prototypes\gui-tauri\src-tauri)
 error[E0308]: mismatched types
-    --> src\core\gamestream.rs:2346:21
+    --> src\core\gamestream.rs:2348:21
      |
-2343 |                 sdl3::sys::render::SDL_UpdateTexture(
+2345 |                 sdl3::sys::render::SDL_UpdateTexture(
      |                 ------------------------------------ arguments to this function are incorrect
 ...
-2346 |                     frame.pixels.as_ptr(),
+2348 |                     frame.pixels.as_ptr(),
      |                     ^^^^^^^^^^^^^^^^^^^^^ expected `*const c_void`, found `*const u8`
      |
      = note: expected raw pointer `*const c_void`
@@ -45,7 +39,6 @@ error[E0502]: cannot borrow `canvas` as mutable because it is also borrowed as i
 1737 |                     &video_texture,
      |                     -------------- immutable borrow later used here
 
-Some errors have detailed explanations: E0308, E0502, E0599.
+Some errors have detailed explanations: E0308, E0502.
 For more information about an error, try `rustc --explain E0308`.
-error: could not compile `moonlight-gui-tauri-prototype` (bin "moonlight-gui-tauri-prototype") due to 4 previous errors
-
+error: could not compile `moonlight-gui-tauri-prototype` (bin "moonlight-gui-tauri-prototype") due to 3 previous errors

@@ -505,11 +505,35 @@ enum Sdl3VideoTextureFormat {
     Nv21,
 }
 
+enum Sdl3VideoTextureInner<'a> {
+    Safe(sdl3::render::Texture<'a>),
+    #[cfg(target_os = "windows")]
+    RawD3D11(*mut sdl3::sys::render::SDL_Texture),
+}
+
 struct Sdl3VideoTexture<'a> {
-    texture: sdl3::render::Texture<'a>,
+    inner: Sdl3VideoTextureInner<'a>,
     width: usize,
     height: usize,
     format: Sdl3VideoTextureFormat,
+}
+
+impl<'a> Sdl3VideoTexture<'a> {
+    fn get_raw_texture(&self) -> *mut sdl3::sys::render::SDL_Texture {
+        match &self.inner {
+            Sdl3VideoTextureInner::Safe(tex) => tex.raw(),
+            #[cfg(target_os = "windows")]
+            Sdl3VideoTextureInner::RawD3D11(ptr) => *ptr,
+        }
+    }
+
+    fn is_gpu_surface(&self) -> bool {
+        #[cfg(target_os = "windows")]
+        if matches!(&self.inner, Sdl3VideoTextureInner::RawD3D11(_)) {
+            return true;
+        }
+        false
+    }
 }
 
 struct NativeVideoQueueDiagnostics {
@@ -1268,7 +1292,7 @@ fn process_pull_video_decode_unit(
                 // Try hardware decode
                 match hw_decoder.decode_packet(decoder.codec_context, &payload, frame_number) {
                     Ok(Some(decoded_hw_frame)) => {
-                        // Hardware decode successful! Convert to DecodedVideoFrame
+                        // Hardware decode successful! Keep GPU surface for rendering
                         let gpu_frame = DecodedVideoFrame::D3D11Surface(D3D11VideoFrame {
                             width: decoded_hw_frame.width as c_int,
                             height: decoded_hw_frame.height as c_int,
@@ -1278,11 +1302,10 @@ fn process_pull_video_decode_unit(
                             is_hdr: decoded_hw_frame.hdr_metadata.is_hdr,
                         });
                         logger::log(&format!(
-                            "🎬 Hardware decoded frame #{}: {}x{} (GPU surface, HDR={})",
+                            "✅ GPU decode frame #{}: {}x{} (Phase 5d: zero-copy rendering)",
                             frame_number,
                             decoded_hw_frame.width,
-                            decoded_hw_frame.height,
-                            decoded_hw_frame.hdr_metadata.is_hdr
+                            decoded_hw_frame.height
                         ));
                         Some(gpu_frame)
                     }
@@ -1666,12 +1689,34 @@ fn native_video_renderer_loop(
                     || frame_height != video_texture.height
                     || frame_format != video_texture.format
                 {
-                    video_texture = create_sdl3_video_texture(
-                        &texture_creator,
-                        frame_width,
-                        frame_height,
-                        frame_format,
-                    )?;
+                    // Create appropriate texture based on frame type
+                    #[cfg(target_os = "windows")]
+                    if let DecodedVideoFrame::D3D11Surface(gpu_frame) = &frame {
+                        video_texture = create_sdl3_d3d11_texture(
+                            canvas.raw(),
+                            gpu_frame.surface_ptr,
+                            frame_width,
+                            frame_height,
+                        )?;
+                    } else {
+                        video_texture = create_sdl3_video_texture(
+                            &texture_creator,
+                            frame_width,
+                            frame_height,
+                            frame_format,
+                        )?;
+                    }
+                    
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        video_texture = create_sdl3_video_texture(
+                            &texture_creator,
+                            frame_width,
+                            frame_height,
+                            frame_format,
+                        )?;
+                    }
+                    
                     diagnostics.recreated_textures =
                         diagnostics.recreated_textures.saturating_add(1);
                     logger::log(format!(
@@ -1683,15 +1728,13 @@ fn native_video_renderer_loop(
                     ));
                 }
                 let update_start = Instant::now();
-                update_sdl3_video_texture(&mut video_texture.texture, &frame)
+                update_sdl3_video_texture_wrapped(&video_texture, &frame)
                     .map_err(|error| error.to_string())?;
                 let update_us = update_start.elapsed().as_micros();
                 let render_start = Instant::now();
-                render_sdl3_video_frame(
+                render_sdl3_video_frame_wrapped(
                     &mut canvas,
-                    &video_texture.texture,
-                    video_texture.width,
-                    video_texture.height,
+                    &video_texture,
                 )?;
                 let render_us = render_start.elapsed().as_micros();
                 let frame_age_us = frame.decoded_at().elapsed().as_micros();
@@ -1760,11 +1803,97 @@ fn create_sdl3_video_texture<'a>(
         .create_texture_streaming(pixel_format, width as u32, height as u32)
         .map_err(|error| error.to_string())?;
     Ok(Sdl3VideoTexture {
-        texture,
+        inner: Sdl3VideoTextureInner::Safe(texture),
         width,
         height,
         format,
     })
+}
+
+#[cfg(target_os = "windows")]
+fn create_sdl3_d3d11_texture<'a>(
+    renderer_raw: *mut sdl3::sys::render::SDL_Renderer,
+    d3d11_texture_ptr: *mut c_void,
+    width: usize,
+    height: usize,
+) -> Result<Sdl3VideoTexture<'a>, String> {
+    // Phase 5d: Direct D3D11→SDL3 GPU Texture Sharing
+    // Use sdl3::sys to wrap D3D11 texture with SDL_CreateTextureWithProperties
+    
+    if d3d11_texture_ptr.is_null() {
+        return Err("D3D11 texture pointer is null".into());
+    }
+
+    unsafe {
+        // Create property structure
+        let props = sdl3::sys::properties::SDL_CreateProperties();
+
+        // Set D3D11 texture pointer (cast to *const i8 for C string)
+        let prop_name = b"SDL_PROP_TEXTURE_CREATE_D3D11_TEXTURE_POINTER\0".as_ptr() as *const i8;
+        sdl3::sys::properties::SDL_SetPointerProperty(
+            props,
+            prop_name,
+            d3d11_texture_ptr,
+        );
+
+        // Set pixel format to NV12 (hardware decoder output format)
+        let format_prop = b"SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER\0".as_ptr() as *const i8;
+        sdl3::sys::properties::SDL_SetNumberProperty(
+            props,
+            format_prop,
+            0x4E_56_31_32 as i64, // SDL_PIXELFORMAT_NV12
+        );
+
+        // Set width
+        let width_prop = b"SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER\0".as_ptr() as *const i8;
+        sdl3::sys::properties::SDL_SetNumberProperty(
+            props,
+            width_prop,
+            width as i64,
+        );
+
+        // Set height
+        let height_prop = b"SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER\0".as_ptr() as *const i8;
+        sdl3::sys::properties::SDL_SetNumberProperty(
+            props,
+            height_prop,
+            height as i64,
+        );
+
+        // Set colorspace to JPEG (YUV BT.601)
+        let colorspace_prop = b"SDL_PROP_TEXTURE_CREATE_COLORSPACE_NUMBER\0".as_ptr() as *const i8;
+        sdl3::sys::properties::SDL_SetNumberProperty(
+            props,
+            colorspace_prop,
+            5 as i64, // SDL_COLORSPACE_JPEG
+        );
+
+        // Create texture from properties
+        let raw_texture = sdl3::sys::render::SDL_CreateTextureWithProperties(
+            renderer_raw,
+            props,
+        );
+        sdl3::sys::properties::SDL_DestroyProperties(props);
+
+        if raw_texture.is_null() {
+            return Err(format!(
+                "Failed to create D3D11 texture wrapper: {}",
+                sdl3::get_error()
+            ));
+        }
+
+        logger::log(&format!(
+            "✅ D3D11 GPU texture wrapped in SDL3: {}x{} (zero-copy GPU rendering)",
+            width, height
+        ));
+
+        Ok(Sdl3VideoTexture {
+            inner: Sdl3VideoTextureInner::RawD3D11(raw_texture),
+            width,
+            height,
+            format: Sdl3VideoTextureFormat::Nv12,
+        })
+    }
 }
 
 fn update_sdl3_video_texture(
@@ -1789,14 +1918,11 @@ fn update_sdl3_video_texture(
         DecodedVideoFrame::Nv12(frame) | DecodedVideoFrame::Nv21(frame) => {
             update_sdl3_nv_texture(texture, &frame.y, &frame.uv)
         }
-        DecodedVideoFrame::D3D11Surface(frame) => {
-            // D3D11 GPU surfaces require special handling for rendering
-            // For now, we defer to Phase 5d: GPU texture mapping implementation
-            logger::log(&format!(
-                "📺 D3D11 GPU surface frame #{}: {}x{} (renderer integration pending)",
-                frame.frame_number, frame.width, frame.height
-            ));
-            Err("D3D11 GPU surface rendering not yet implemented - Phase 5d pending".into())
+        DecodedVideoFrame::D3D11Surface(_) => {
+            // Phase 5d: GPU texture already on GPU
+            // SDL3 wraps the D3D11 texture directly - no data update needed
+            // Texture was created with the D3D11 pointer, renderer uses it directly
+            Ok(())
         }
     }
 }
@@ -2200,6 +2326,99 @@ fn sdl3_controller_mapping_candidates() -> Vec<std::path::PathBuf> {
             .join("gamecontrollerdb.txt"),
     );
     candidates
+}
+
+fn update_sdl3_video_texture_wrapped(
+    texture: &Sdl3VideoTexture,
+    frame: &DecodedVideoFrame,
+) -> Result<(), String> {
+    // For D3D11 GPU surfaces, texture is already on GPU - no update needed
+    if texture.is_gpu_surface() {
+        logger::log("GPU texture update skipped (already on GPU)");
+        return Ok(());
+    }
+    
+    // For CPU textures, update with frame data
+    match frame {
+        DecodedVideoFrame::Rgba(frame) => {
+            unsafe {
+                sdl3::sys::render::SDL_UpdateTexture(
+                    texture.get_raw_texture(),
+                    std::ptr::null(),
+                    frame.pixels.as_ptr() as *const c_void,
+                    (frame.width as usize * 4) as i32,
+                )
+            };
+            Ok(())
+        }
+        DecodedVideoFrame::Yuv420(frame) => {
+            unsafe {
+                sdl3::sys::render::SDL_UpdateYUVTexture(
+                    texture.get_raw_texture(),
+                    std::ptr::null(),
+                    frame.y.pixels.as_ptr(),
+                    frame.y.pitch as i32,
+                    frame.u.pixels.as_ptr(),
+                    frame.u.pitch as i32,
+                    frame.v.pixels.as_ptr(),
+                    frame.v.pitch as i32,
+                )
+            };
+            Ok(())
+        }
+        DecodedVideoFrame::Nv12(frame) | DecodedVideoFrame::Nv21(frame) => {
+            let y_pitch = c_int::try_from(frame.y.pitch).map_err(|_| "NV12 Y pitch overflows int")?;
+            let uv_pitch = c_int::try_from(frame.uv.pitch).map_err(|_| "NV12 UV pitch overflows int")?;
+            unsafe {
+                sdl3::sys::render::SDL_UpdateNVTexture(
+                    texture.get_raw_texture(),
+                    std::ptr::null(),
+                    frame.y.pixels.as_ptr(),
+                    y_pitch,
+                    frame.uv.pixels.as_ptr(),
+                    uv_pitch,
+                )
+            };
+            Ok(())
+        }
+        DecodedVideoFrame::D3D11Surface(_) => Ok(()),
+    }
+}
+
+fn render_sdl3_video_frame_wrapped(
+    canvas: &mut sdl3::render::WindowCanvas,
+    texture: &Sdl3VideoTexture,
+) -> Result<(), String> {
+    let (output_width, output_height) = canvas.output_size().map_err(|error| error.to_string())?;
+    let video_region = scaled_video_region(
+        texture.width,
+        texture.height,
+        output_width as usize,
+        output_height as usize,
+    );
+    canvas.clear();
+    
+    let raw_canvas = canvas.raw();
+    let raw_texture = texture.get_raw_texture();
+    
+    unsafe {
+        sdl3::sys::render::SDL_RenderTexture(
+            raw_canvas,
+            raw_texture,
+            std::ptr::null(),
+            &mut sdl3::sys::rect::SDL_FRect {
+                x: video_region.x,
+                y: video_region.y,
+                w: video_region.width,
+                h: video_region.height,
+            },
+        );
+    }
+    
+    if !canvas.present() {
+        return Err(sdl3::get_error().to_string());
+    }
+    Ok(())
 }
 
 fn render_sdl3_video_frame(
