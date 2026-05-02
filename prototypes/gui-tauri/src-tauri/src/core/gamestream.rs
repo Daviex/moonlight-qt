@@ -2984,6 +2984,23 @@ impl SoftwareVideoDecoder {
         }
         configure_ffmpeg_decoder_threading(codec_context);
 
+        // Try to attach hardware decoder if available (Windows D3D11VA)
+        #[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
+        {
+            if let Ok(slot) = HARDWARE_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+                if let Some(ref hw_decoder) = *slot {
+                    if let Err(e) = hw_decoder.attach_to_codec_context(codec_context as *mut c_void) {
+                        logger::log(format!(
+                            "⚠️  Failed to attach hardware decoder to codec context: {}",
+                            e
+                        ));
+                    } else {
+                        logger::log("✅ Hardware decoder attached to codec context");
+                    }
+                }
+            }
+        }
+
         // SAFETY: codec_context is newly allocated and options may be NULL.
         let open_result =
             unsafe { gamestream_sys::avcodec_open2(codec_context, codec, std::ptr::null_mut()) };
