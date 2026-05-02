@@ -41,45 +41,82 @@ impl GpuSurface {
         let dev_ref = device.device.as_ref()
             .ok_or("D3D11 device is null")?;
 
-        let desc = D3D11_TEXTURE2D_DESC {
-            Width: width,
-            Height: height,
-            MipLevels: 1,
-            ArraySize: 1,
-            Format: DXGI_FORMAT_NV12, // Common decode format for H.264/H.265
-            SampleDesc: DXGI_SAMPLE_DESC {
-                Count: 1,
-                Quality: 0,
-            },
-            Usage: D3D11_USAGE_DEFAULT,
-            BindFlags: ((D3D11_BIND_DECODER.0 | D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32),
-            CPUAccessFlags: Default::default(),
-            MiscFlags: (D3D11_RESOURCE_MISC_SHARED.0 as u32),
-        };
-
-        // SAFETY: CreateTexture2D is a Windows API call
-        // windows-rs signature: 
-        // pub unsafe fn CreateTexture2D(
-        //     &self,
-        //     pdesc: *const D3D11_TEXTURE2D_DESC,
-        //     pinitialdata: Option<&[D3D11_SUBRESOURCE_DATA]>,
-        //     pptexture2d: Option<*mut Option<ID3D11Texture2D>>
-        // ) -> Result<()>
-        let mut texture: Option<ID3D11Texture2D> = None;
-        let result = unsafe {
-            dev_ref.CreateTexture2D(&desc, None, Some(&mut texture as *mut Option<ID3D11Texture2D>))
-        };
-
-        if result.is_err() {
-            return Err(format!("Failed to create D3D11 texture: {:?}", result));
+        // Validate dimensions
+        if width == 0 || height == 0 || width > 8192 || height > 8192 {
+            return Err(format!(
+                "Invalid texture dimensions: {}x{} (must be 1-8192)",
+                width, height
+            ));
         }
 
-        Ok(Self {
-            texture,
-            width,
-            height,
-            format: 0, // NV12
-        })
+        logger::log(format!("Creating texture surface {}x{}", width, height));
+
+        // Try NV12 format first (hardware decode target)
+        let formats_to_try = [
+            (DXGI_FORMAT_NV12, "NV12"),
+            (DXGI_FORMAT_B8G8R8A8_UNORM, "BGRA8"),  // Fallback: more universally supported
+        ];
+
+        for (format, format_name) in &formats_to_try {
+            // Properly combine D3D11_BIND_FLAG enums and convert to u32
+            // For decode surfaces: DECODER is mandatory
+            let bind_flags = (D3D11_BIND_DECODER.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32;
+
+            let desc = D3D11_TEXTURE2D_DESC {
+                Width: width,
+                Height: height,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: *format,
+                SampleDesc: DXGI_SAMPLE_DESC {
+                    Count: 1,
+                    Quality: 0,
+                },
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: bind_flags,
+                CPUAccessFlags: D3D11_CPU_ACCESS_FLAG(0).0 as u32, // No CPU access
+                MiscFlags: D3D11_RESOURCE_MISC_SHARED.0 as u32, // For sharing
+            };
+
+            logger::log(format!(
+                "Attempting {}x{} {} with bindflags {:?}",
+                width, height, format_name, bind_flags
+            ));
+
+            // SAFETY: CreateTexture2D is a Windows API call
+            let mut texture: Option<ID3D11Texture2D> = None;
+            let result = unsafe {
+                dev_ref.CreateTexture2D(&desc, None, Some(&mut texture as *mut Option<ID3D11Texture2D>))
+            };
+
+            match result {
+                Ok(()) if texture.is_some() => {
+                    logger::log(format!("✅ Created texture {}x{} with format {}", width, height, format_name));
+                    return Ok(Self {
+                        texture,
+                        width,
+                        height,
+                        format: if *format == DXGI_FORMAT_NV12 { 0 } else { 1 },
+                    });
+                }
+                Ok(()) => {
+                    logger::log(format!("⚠️  {} returned success but texture is null", format_name));
+                    continue;
+                }
+                Err(e) => {
+                    logger::log(format!(
+                        "❌ {} failed: error {:#010x} ({:?})",
+                        format_name, e.code().0, e
+                    ));
+                    continue;
+                }
+            }
+        }
+
+        Err(format!(
+            "Failed to create texture {}x{} with any format (NV12, BGRA8)",
+            width, height
+        ))
     }
 
     /// Get texture pointer for FFmpeg integration
