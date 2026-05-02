@@ -527,6 +527,8 @@ impl D3D11HwContext {
         &self,
         codec_ctx: *mut super::gamestream_sys::AVCodecContext,
     ) -> Result<(), String> {
+        use std::os::raw::c_void;
+        
         if codec_ctx.is_null() {
             return Err("codec_ctx is null".into());
         }
@@ -535,8 +537,8 @@ impl D3D11HwContext {
 
         logger::log("Attaching D3D11VA hwcontext to codec context...");
 
+        // Create a reference to the hardware device context
         // SAFETY: av_buffer_ref creates a reference to an existing buffer reference.
-        // The returned pointer must be freed with av_buffer_unref.
         let hw_device_ref = unsafe {
             super::gamestream_sys::av_buffer_ref(hw_device_ctx)
         };
@@ -546,11 +548,16 @@ impl D3D11HwContext {
             return Err("av_buffer_ref failed".into());
         }
 
-        // TODO: Set hw_device_ctx on codec_ctx
-        // This requires access to codec_ctx's hw_device_ctx field
-        // For now, we've prepared the reference
-
-        logger::log("D3D11VA hwcontext prepared for codec context (reference attached)");
+        // Set hw_device_ctx on codec context
+        // SAFETY: We set the hw_device_ctx field which is at a known offset in AVCodecContext.
+        // This mirrors the native C++ code: context->hw_device_ctx = av_buffer_ref(m_HwDeviceContext);
+        unsafe {
+            // AVCodecContext has hw_device_ctx at byte offset 576 (FFmpeg ABI-stable)
+            let offset = 576usize;
+            let hw_ctx_field = (codec_ctx as *mut u8).add(offset) as *mut *mut c_void;
+            *hw_ctx_field = hw_device_ref;
+            logger::log("✅ D3D11VA hwcontext attached to codec context");
+        }
 
         Ok(())
     }
