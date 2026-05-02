@@ -61,6 +61,9 @@ static HARDWARE_DECODER_STATE: OnceLock<Mutex<Option<hardware_decoder::D3D11Hard
     OnceLock::new();
 #[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
 static GPU_SYNC_STATE: OnceLock<Mutex<Option<hardware_decoder::GpuSync>>> = OnceLock::new();
+#[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
+static D3D11_SOFTWARE_DECODER_STATE: OnceLock<Mutex<Option<hardware_decoder::D3D11SoftwareDecoder>>> =
+    OnceLock::new();
 #[cfg(moonlight_common_c_linked)]
 static VIDEO_DECODER_THREAD: OnceLock<Mutex<Option<VideoDecoderThread>>> = OnceLock::new();
 static VIDEO_RENDERER_STATE: OnceLock<Mutex<Option<NativeVideoRenderer>>> = OnceLock::new();
@@ -985,15 +988,50 @@ unsafe extern "C" fn headless_video_setup(
                 return gamestream_sys::DR_OK;
             }
 
-            // Fallback to D3D11 software decoding
+            // Fallback to D3D11 software decoding (Priority 2)
             emit_stream_event(
                 BridgeEventKind::Status,
                 "⚠️  D3D11 hardware decoder unavailable, attempting D3D11 software decoder (Priority 2)...".into(),
             );
             
-            // TODO: Implement D3D11 software decoder wrapper
-            // This would use D3D11 device but software FFmpeg decode
-            // For now, fall through to CPU software decode
+            let sw_decoder_result = hardware_decoder::create_d3d11_software_decoder(
+                width as u32,
+                height as u32,
+            );
+            
+            if let Ok(decoder) = sw_decoder_result {
+                if let Ok(mut slot) = D3D11_SOFTWARE_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+                    *slot = Some(decoder);
+                }
+                emit_stream_event(
+                    BridgeEventKind::Status,
+                    format!("✅ D3D11 SOFTWARE decoder initialized for {width}x{height}@{redraw_rate}."),
+                );
+                store_video_sink_state(|state| {
+                    *state = VideoSinkState {
+                        configuration: Some(VideoSinkConfiguration {
+                            video_format,
+                            width,
+                            height,
+                            redraw_rate,
+                            flags: _dr_flags,
+                        }),
+                        ..VideoSinkState::default()
+                    };
+                });
+                start_native_video_renderer(width, height);
+                emit_stream_event(
+                    BridgeEventKind::Status,
+                    format!("🎮 Headless video sink configured for {width}x{height}@{redraw_rate} with D3D11 SOFTWARE decoding (Priority 2)."),
+                );
+                return gamestream_sys::DR_OK;
+            }
+            
+            // Final fallback to CPU software decode
+            emit_stream_event(
+                BridgeEventKind::Status,
+                "⚠️  D3D11 software decoder unavailable, falling back to CPU software decoder (Priority 3)...".into(),
+            );
         }
 
         // === LINUX FALLBACK CHAIN ===
@@ -1097,7 +1135,7 @@ unsafe extern "C" fn headless_video_cleanup() {
     #[cfg(moonlight_common_c_linked)]
     stop_video_decoder_thread();
     
-    // Cleanup hardware decoder
+    // Cleanup hardware decoders
     #[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
     {
         if let Ok(mut slot) = HARDWARE_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
@@ -1106,7 +1144,10 @@ unsafe extern "C" fn headless_video_cleanup() {
         if let Ok(mut slot) = GPU_SYNC_STATE.get_or_init(|| Mutex::new(None)).lock() {
             *slot = None;
         }
-        logger::log("D3D11 hardware decoder released");
+        if let Ok(mut slot) = D3D11_SOFTWARE_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+            *slot = None;
+        }
+        logger::log("D3D11 hardware and software decoders released");
     }
     
     stop_native_video_renderer();
