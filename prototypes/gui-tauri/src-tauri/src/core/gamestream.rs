@@ -1076,28 +1076,45 @@ unsafe extern "C" fn headless_video_setup(
                 if let Ok(mut slot) = D3D11_SOFTWARE_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
                     *slot = Some(decoder);
                 }
-                emit_stream_event(
-                    BridgeEventKind::Status,
-                    format!("✅ D3D11 SOFTWARE decoder initialized for {width}x{height}@{redraw_rate}."),
-                );
-                store_video_sink_state(|state| {
-                    *state = VideoSinkState {
-                        configuration: Some(VideoSinkConfiguration {
-                            video_format,
-                            width,
-                            height,
-                            redraw_rate,
-                            flags: _dr_flags,
-                        }),
-                        ..VideoSinkState::default()
-                    };
-                });
-                start_native_video_renderer(width, height);
-                emit_stream_event(
-                    BridgeEventKind::Status,
-                    format!("🎮 Headless video sink configured for {width}x{height}@{redraw_rate} with D3D11 SOFTWARE decoding (Priority 2)."),
-                );
-                return gamestream_sys::DR_OK;
+                
+                // Also create a CPU software decoder for FFmpeg bitstream decoding
+                let cpu_decoder_result = SoftwareVideoDecoder::new(video_format);
+                
+                match cpu_decoder_result {
+                    Ok(cpu_decoder) => {
+                        if let Ok(mut slot) = VIDEO_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+                            *slot = Some(cpu_decoder);
+                        }
+                        emit_stream_event(
+                            BridgeEventKind::Status,
+                            format!("✅ D3D11 SOFTWARE decoder initialized for {width}x{height}@{redraw_rate}."),
+                        );
+                        store_video_sink_state(|state| {
+                            *state = VideoSinkState {
+                                configuration: Some(VideoSinkConfiguration {
+                                    video_format,
+                                    width,
+                                    height,
+                                    redraw_rate,
+                                    flags: _dr_flags,
+                                }),
+                                ..VideoSinkState::default()
+                            };
+                        });
+                        start_native_video_renderer(width, height);
+                        emit_stream_event(
+                            BridgeEventKind::Status,
+                            format!("🎮 Headless video sink configured for {width}x{height}@{redraw_rate} with D3D11 SOFTWARE decoding (Priority 2)."),
+                        );
+                        return gamestream_sys::DR_OK;
+                    }
+                    Err(error) => {
+                        emit_stream_event(
+                            BridgeEventKind::Status,
+                            format!("⚠️  D3D11 software decoder GPU surface pool ready, but CPU FFmpeg decoder failed: {error}. Falling back to CPU software decoder (Priority 3)..."),
+                        );
+                    }
+                }
             }
             
             // Final fallback to CPU software decode
