@@ -40,6 +40,12 @@ const VIDEO_CODEC_CONFIG_FORCE_H264: c_int = 1;
 const VIDEO_CODEC_CONFIG_FORCE_HEVC: c_int = 2;
 const VIDEO_CODEC_CONFIG_FORCE_AV1: c_int = 4;
 
+// Decoder capability bits
+const DECODER_CAP_SLICES_MASK: u32 = 0x0F;
+const DECODER_CAP_HEVC_RFI: u32 = 0x10;
+const DECODER_CAP_AV1_RFI: u32 = 0x20;
+const DECODER_CAP_PULL_THREAD: u32 = 0x40;
+
 static STREAM_EVENT_CONTEXT: OnceLock<Mutex<Option<StreamEventContext>>> = OnceLock::new();
 static AUDIO_SINK_STATE: OnceLock<Mutex<AudioSinkState>> = OnceLock::new();
 #[cfg(moonlight_common_c_linked)]
@@ -125,6 +131,42 @@ impl RemoteInputCrypto {
         rng.fill_bytes(&mut crypto.aes_iv[..4]);
         crypto
     }
+}
+
+/// Get decoder capabilities based on CPU count and platform
+/// This matches the behavior of FFmpegVideoDecoder::getDecoderCapabilities()
+fn get_decoder_capabilities() -> u32 {
+    // Check environment variable override first
+    if let Ok(caps_str) = std::env::var("DECODER_CAPS") {
+        if let Ok(caps) = u32::from_str_radix(&caps_str, 16) {
+            logger::log(format!(
+                "Using decoder capability override: 0x{:x}",
+                caps
+            ));
+            return caps;
+        }
+    }
+
+    // For software FFmpeg decoder (CPU-based):
+    // - Calculate parallel decode slices based on CPU core count (max 4)
+    // - Enable HEVC Reference Frame Invalidation (RFI)
+    // - Enable AV1 RFI
+    // - Mark that we use pull-model rendering thread
+
+    let cpu_count = num_cpus::get() as u32;
+    let slices = cpu_count.min(4);
+
+    let mut capabilities = slices & DECODER_CAP_SLICES_MASK;
+    capabilities |= DECODER_CAP_HEVC_RFI;
+    capabilities |= DECODER_CAP_AV1_RFI;
+    capabilities |= DECODER_CAP_PULL_THREAD;
+
+    logger::log(format!(
+        "Decoder capabilities: slices={}; hevc_rfi=true; av1_rfi=true; pull_thread=true; raw=0x{:x}",
+        slices, capabilities
+    ));
+
+    capabilities
 }
 
 #[derive(Clone, Debug, Default)]
@@ -3636,6 +3678,9 @@ fn start_gamestream_session(
     session: &mut RawSessionConfiguration,
     callbacks: &mut StreamCallbacks,
 ) -> Result<(), CoreError> {
+    // Detect and log decoder capabilities
+    let _decoder_caps = get_decoder_capabilities();
+    
     let (connection_callbacks, video_callbacks, audio_callbacks) = callbacks.as_raw_parts();
     // SAFETY: RawSessionConfiguration owns the C strings referenced by SERVER_INFORMATION,
     // and StreamCallbacks owns the callback structs passed to Limelight for this call.

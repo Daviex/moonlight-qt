@@ -12,6 +12,7 @@ aes = "0.8"
 cpal = "0.15"
 ecb = { version = "0.1", features = ["alloc"] }
 mdns-sd = "0.19"
+num_cpus = "1.16"
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 rsa = { version = "0.9", features = ["sha2"] }
