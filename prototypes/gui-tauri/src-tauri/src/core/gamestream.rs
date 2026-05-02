@@ -1235,22 +1235,63 @@ fn process_pull_video_decode_unit(
     let decode_unit = unsafe { &*decode_unit };
     let bytes_received = decode_unit_bytes(decode_unit);
     let payload = unsafe { copy_decode_unit_payload(decode_unit) };
+    let frame_number = decode_unit.frame_number;
     let decode_start = Instant::now();
-    let decoded_frame = decode_pull_video_payload(decoder, &payload, decode_unit.frame_number);
+    
+    // Try hardware decoder first (Phase 5 integration)
+    #[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
+    let decoded_frame = {
+        // Check if hardware decoder is available
+        if let Ok(hw_slot) = HARDWARE_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+            if let Some(hw_decoder) = hw_slot.as_ref() {
+                // Try hardware decode
+                match hw_decoder.decode_packet(decoder.codec_context, &payload, frame_number) {
+                    Ok(Some(decoded_hw_frame)) => {
+                        // Hardware decode successful! Convert to DecodedVideoFrame
+                        logger::log(&format!(
+                            "🎬 Hardware decoded frame #{}: {}x{} (GPU surface)",
+                            frame_number, decoded_hw_frame.width, decoded_hw_frame.height
+                        ));
+                        // TODO: Convert decoded_hw_frame to DecodedVideoFrame
+                        // For now, fall back to software
+                        decode_pull_video_payload(decoder, &payload, frame_number)
+                    }
+                    Ok(None) => {
+                        // No frame ready yet from hardware decoder, try software
+                        decode_pull_video_payload(decoder, &payload, frame_number)
+                    }
+                    Err(error) => {
+                        logger::log(&format!("⚠️ Hardware decode error: {error}, falling back to software"));
+                        decode_pull_video_payload(decoder, &payload, frame_number)
+                    }
+                }
+            } else {
+                // Hardware decoder not initialized
+                decode_pull_video_payload(decoder, &payload, frame_number)
+            }
+        } else {
+            decode_pull_video_payload(decoder, &payload, frame_number)
+        }
+    };
+    
+    // Fallback: Software decode (all platforms or if hardware unavailable)
+    #[cfg(not(all(moonlight_common_c_linked, target_os = "windows")))]
+    let decoded_frame = decode_pull_video_payload(decoder, &payload, frame_number);
+    
     let decode_us = decode_start.elapsed().as_micros();
     let decoded = decoded_frame.is_some();
     let decoded_format = decoded_frame
         .as_ref()
         .map(DecodedVideoFrame::texture_format);
     record_native_video_decode_diagnostics(
-        decode_unit.frame_number,
+        frame_number,
         bytes_received,
         decoded,
         decoded_format,
         decode_us,
     );
     let update = update_video_sink_after_decode(
-        decode_unit.frame_number,
+        frame_number,
         bytes_received,
         payload,
         decoded_frame,
