@@ -1,5 +1,5 @@
 next todo:
-
+- Check into log Why HDR did't worked out. PC had HDR enabled, Settings into Tauri was enabled, was sent as written into log, but the session was without HDR enabled, log are situated in: "C:\Users\david\Desktop\Work\moonlight-qt\log_for_hdr"
 - D3D12 native renderer
 - UI overhaul:
     - No launch - Direct or Hide (Y or Triangle or Right Click for mouse or Long click for touch) to have a menu to appear on a single game to select something
