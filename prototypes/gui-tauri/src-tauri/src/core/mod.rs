@@ -6,6 +6,7 @@ pub mod events;
 pub mod factory;
 pub mod gamestream;
 pub mod gamestream_sys;
+pub mod hardware_decoder;
 pub mod host_http;
 pub mod host_store;
 pub mod hosts;
