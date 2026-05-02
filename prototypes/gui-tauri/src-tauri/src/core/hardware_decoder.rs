@@ -8,6 +8,8 @@ use windows::Win32::Graphics::Direct3D::*;
 use windows::Win32::Graphics::Direct3D11::*;
 #[cfg(target_os = "windows")]
 use windows::Win32::Graphics::Dxgi::Common::*;
+#[cfg(target_os = "windows")]
+use windows::Win32::Foundation::*;
 
 use std::os::raw::c_void;
 use std::sync::{Arc, Mutex};
@@ -56,9 +58,16 @@ impl GpuSurface {
         };
 
         // SAFETY: CreateTexture2D is a Windows API call
+        // windows-rs signature: 
+        // pub unsafe fn CreateTexture2D(
+        //     &self,
+        //     pdesc: *const D3D11_TEXTURE2D_DESC,
+        //     pinitialdata: Option<&[D3D11_SUBRESOURCE_DATA]>,
+        //     pptexture2d: Option<*mut Option<ID3D11Texture2D>>
+        // ) -> Result<()>
         let mut texture: Option<ID3D11Texture2D> = None;
         let result = unsafe {
-            dev_ref.CreateTexture2D(&desc, None, Some(&mut texture as *mut _ as *mut _))
+            dev_ref.CreateTexture2D(&desc, None, Some(&mut texture as *mut Option<ID3D11Texture2D>))
         };
 
         if result.is_err() {
@@ -223,18 +232,29 @@ impl D3D11Device {
         ];
 
         // SAFETY: D3D11CreateDevice is a Windows API call that initializes COM objects.
-        // The returned device and context are properly reference-counted by Windows.
+        // Signature from windows-rs:
+        // pub unsafe fn D3D11CreateDevice<P0>(
+        //     padapter: P0,
+        //     drivertype: D3D_DRIVER_TYPE,
+        //     software: HMODULE,
+        //     flags: D3D11_CREATE_DEVICE_FLAG,
+        //     pfeaturelevels: Option<&[D3D_FEATURE_LEVEL]>,
+        //     sdkversion: u32,
+        //     ppdevice: Option<*mut Option<ID3D11Device>>,
+        //     pfeaturelevel: Option<*mut D3D_FEATURE_LEVEL>,
+        //     ppimmediatecontext: Option<*mut Option<ID3D11DeviceContext>>
+        // ) -> Result<()>
         let result = unsafe {
             D3D11CreateDevice(
-                None,                                          // No specific adapter
-                D3D_DRIVER_TYPE_HARDWARE,                      // Use hardware acceleration
-                None,                                          // No software rasterizer
-                D3D11_CREATE_DEVICE_VIDEO_SUPPORT,             // Enable video support
-                Some(&feature_levels),
-                feature_levels.len() as u32,                   // Number of feature levels
-                Some(&mut device as *mut _ as *mut _),         // Output device
-                Some(&mut feature_level as *mut _),            // Output feature level
-                Some(&mut context as *mut _ as *mut _),        // Output context
+                None,                                          // padapter: No specific adapter
+                D3D_DRIVER_TYPE_HARDWARE,                      // drivertype: Use hardware acceleration
+                None,                                          // software: No software rasterizer
+                D3D11_CREATE_DEVICE_VIDEO_SUPPORT,             // flags: Enable video support
+                Some(&feature_levels[..]),                     // pfeaturelevels: Feature levels array
+                7,                                             // sdkversion: D3D 11 SDK
+                Some(&mut device as *mut Option<ID3D11Device>), // ppdevice: Output device
+                Some(&mut feature_level as *mut D3D_FEATURE_LEVEL), // pfeaturelevel: Output feature level
+                Some(&mut context as *mut Option<ID3D11DeviceContext>), // ppimmediatecontext: Output context
             )
         };
 
@@ -248,7 +268,7 @@ impl D3D11Device {
         match (device, context) {
             (Some(d), Some(c)) => {
                 logger::log(format!(
-                    "D3D11 device created successfully. Feature level: {}",
+                    "✅ D3D11 device created successfully. Feature level: {}",
                     feature_level.0
                 ));
                 Ok(Self {
@@ -330,6 +350,12 @@ pub struct D3D11HwContext {
     hw_device_ctx: Option<*mut c_void>,
     device: Option<D3D11Device>,
 }
+
+#[cfg(moonlight_common_c_linked)]
+unsafe impl Send for D3D11HwContext {}
+
+#[cfg(moonlight_common_c_linked)]
+unsafe impl Sync for D3D11HwContext {}
 
 #[cfg(moonlight_common_c_linked)]
 impl D3D11HwContext {
@@ -470,6 +496,9 @@ pub struct D3D11HardwareDecoder {
     surface_pool: Option<GpuSurfacePool>,
     pub is_available: bool,
 }
+
+unsafe impl Send for D3D11HardwareDecoder {}
+unsafe impl Sync for D3D11HardwareDecoder {}
 
 impl D3D11HardwareDecoder {
     /// Check if D3D11VA hardware decoding is available on this system
@@ -631,7 +660,8 @@ impl D3D11HardwareDecoder {
                 packet_data.len() as i32,
             );
             if ret < 0 {
-                sys::av_packet_free(&mut (*(&packet as *const _ as *mut _)));
+                let mut pkt = packet;
+                sys::av_packet_free(&mut pkt);
                 return Err(format!("av_packet_from_data failed: {ret}"));
             }
 
@@ -640,7 +670,8 @@ impl D3D11HardwareDecoder {
             if ret < 0 && ret != sys::AVERROR_EAGAIN {
                 logger::log(&format!("❌ avcodec_send_packet failed: {ret}"));
                 sys::av_packet_unref(packet);
-                sys::av_packet_free(&mut (*(&packet as *const _ as *mut _)));
+                let mut pkt = packet;
+                sys::av_packet_free(&mut pkt);
                 return Err(format!("avcodec_send_packet failed: {ret}"));
             }
 
@@ -648,42 +679,46 @@ impl D3D11HardwareDecoder {
             let frame = sys::av_frame_alloc();
             if frame.is_null() {
                 sys::av_packet_unref(packet);
-                sys::av_packet_free(&mut (*(&packet as *const _ as *mut _)));
+                let mut pkt = packet;
+                sys::av_packet_free(&mut pkt);
                 return Err("Failed to allocate AVFrame".into());
             }
 
             let ret = sys::avcodec_receive_frame(codec_ctx, frame);
             sys::av_packet_unref(packet);
-            sys::av_packet_free(&mut (*(&packet as *const _ as *mut _)));
+            let mut pkt = packet;
+            sys::av_packet_free(&mut pkt);
 
             if ret == sys::AVERROR_EAGAIN || ret == sys::AVERROR_EOF {
                 // No frame available yet (normal during setup or end of stream)
-                sys::av_frame_free(&mut (*(&frame as *const _ as *mut _)));
+                let mut frm = frame;
+                sys::av_frame_free(&mut frm);
                 return Ok(None);
             }
 
             if ret < 0 {
                 logger::log(&format!("❌ avcodec_receive_frame failed: {ret}"));
-                sys::av_frame_free(&mut (*(&frame as *const _ as *mut _)));
+                let mut frm = frame;
+                sys::av_frame_free(&mut frm);
                 return Err(format!("avcodec_receive_frame failed: {ret}"));
             }
 
             // Frame decoded successfully!
-            let decoded_frame = (*frame);
-            let surface_ptr = if decoded_frame.data[0].is_null() {
+            let frame_ref = &*frame;
+            let surface_ptr = if frame_ref.data[0].is_null() {
                 std::ptr::null_mut()
             } else {
-                decoded_frame.data[0] as *mut c_void
+                frame_ref.data[0] as *mut c_void
             };
 
             // Extract HDR metadata if present
             let hdr_metadata = self.extract_hdr_metadata_unsafe(frame)?;
 
             let result = DecodedFrame {
-                width: decoded_frame.width as u32,
-                height: decoded_frame.height as u32,
+                width: frame_ref.width as u32,
+                height: frame_ref.height as u32,
                 surface_ptr,
-                format: decoded_frame.format,
+                format: frame_ref.format,
                 hdr_metadata,
                 frame_number,
             };
@@ -696,7 +731,8 @@ impl D3D11HardwareDecoder {
                 result.hdr_metadata.is_hdr
             ));
 
-            sys::av_frame_free(&mut (*(&frame as *const _ as *mut _)));
+            let mut frm = frame;
+            sys::av_frame_free(&mut frm);
             Ok(Some(result))
         }
     }
@@ -760,14 +796,15 @@ impl D3D11HardwareDecoder {
 
         unsafe {
             // Set pixel format for hardware decoding
-            if let Err(e) = sys::av_opt_set_int(
+            let ret = sys::av_opt_set_int(
                 codec_ctx as *mut c_void,
                 b"pix_fmt\0".as_ptr() as *const i8,
                 sys::AV_PIX_FMT_D3D11 as i64,
                 0,
-            ) {
+            );
+            if ret < 0 {
                 // This may fail; FFmpeg sets it automatically for hwaccel
-                logger::log(&format!("Note: pix_fmt setting returned {e} (may be automatic)"));
+                logger::log(&format!("Note: pix_fmt setting returned {ret} (may be automatic)"));
             }
 
             // Set low-latency mode for streaming

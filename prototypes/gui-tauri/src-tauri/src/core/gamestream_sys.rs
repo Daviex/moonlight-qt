@@ -604,6 +604,10 @@ extern "C" {
         frame: *const AVFrame,
         type_: c_int,
     ) -> *mut c_void;
+    
+    // Memory management (Phase 5 GPU decode)
+    pub fn av_malloc(size: usize) -> *mut c_void;
+    pub fn av_free(ptr: *mut c_void);
 
     // Hardware acceleration (D3D11VA) - Phase 2 integration
     pub fn av_hwdevice_ctx_create(
