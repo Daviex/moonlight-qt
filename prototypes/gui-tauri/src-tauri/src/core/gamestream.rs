@@ -1061,13 +1061,18 @@ unsafe extern "C" fn headless_video_setup(
                 
                 // Create a SoftwareVideoDecoder which will attach hardware context in its new() method
                 // This is needed to activate the decoder thread
+                logger::log(format!("Creating SoftwareVideoDecoder wrapper for hardware decoding with video_format={}", video_format));
                 let decoder_result = SoftwareVideoDecoder::new(video_format);
+                logger::log(format!("SoftwareVideoDecoder::new() returned: {:?}", if decoder_result.is_ok() { "Ok" } else { "Err" }));
                 match decoder_result {
                     Ok(decoder) => {
+                        logger::log("Storing SoftwareVideoDecoder in VIDEO_DECODER_STATE...");
                         if let Ok(mut slot) = VIDEO_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
                             *slot = Some(decoder);
+                            logger::log("✅ Hardware decoder ready in video decoder pipeline");
+                        } else {
+                            logger::log("⚠️  Failed to lock VIDEO_DECODER_STATE");
                         }
-                        logger::log("✅ Hardware decoder ready in video decoder pipeline");
                     }
                     Err(e) => {
                         logger::log(format!("⚠️  Failed to create software decoder wrapper for hardware decoding: {}", e));
