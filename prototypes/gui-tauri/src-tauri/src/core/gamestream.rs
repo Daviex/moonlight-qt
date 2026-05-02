@@ -1311,29 +1311,56 @@ fn stop_video_decoder_thread() {
 
 #[cfg(moonlight_common_c_linked)]
 fn video_decoder_thread_loop(mut decoder: SoftwareVideoDecoder, should_stop: Arc<AtomicBool>) {
-    while !should_stop.load(Ordering::Acquire) {
-        let mut frame_handle: *mut c_void = std::ptr::null_mut();
-        let mut decode_unit: *mut gamestream_sys::DecodeUnit = std::ptr::null_mut();
-        // SAFETY: Output pointers are valid stack locals. Limelight owns the returned decode unit
-        // until LiCompleteVideoFrame() is called below.
-        let got_frame =
-            unsafe { gamestream_sys::LiWaitForNextVideoFrame(&mut frame_handle, &mut decode_unit) };
-        if !got_frame {
-            continue;
-        }
-        if should_stop.load(Ordering::Acquire) {
+    logger::log("VIDEO DECODER THREAD: Starting main loop");
+    
+    // Use catch_unwind to capture panics in unsafe FFI code
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        while !should_stop.load(Ordering::Acquire) {
+            logger::log("VIDEO DECODER THREAD: Waiting for next video frame...");
+            
+            let mut frame_handle: *mut c_void = std::ptr::null_mut();
+            let mut decode_unit: *mut gamestream_sys::DecodeUnit = std::ptr::null_mut();
+            
+            // SAFETY: Output pointers are valid stack locals. Limelight owns the returned decode unit
+            // until LiCompleteVideoFrame() is called below.
+            let got_frame =
+                unsafe { gamestream_sys::LiWaitForNextVideoFrame(&mut frame_handle, &mut decode_unit) };
+            
+            if !got_frame {
+                logger::log("VIDEO DECODER THREAD: No frame available, continuing");
+                continue;
+            }
+            
+            logger::log(&format!("VIDEO DECODER THREAD: Got frame handle={:p}, decode_unit={:p}", frame_handle, decode_unit));
+            
+            if should_stop.load(Ordering::Acquire) {
+                logger::log("VIDEO DECODER THREAD: Stop signal received, breaking");
+                // SAFETY: frame_handle was returned by LiWaitForNextVideoFrame and must be completed once.
+                unsafe { gamestream_sys::LiCompleteVideoFrame(frame_handle, gamestream_sys::DR_OK) };
+                break;
+            }
+            
+            logger::log("VIDEO DECODER THREAD: Processing decode unit...");
+            let status = process_pull_video_decode_unit(&mut decoder, decode_unit);
+            logger::log(&format!("VIDEO DECODER THREAD: Process returned status={}", status));
+            
             // SAFETY: frame_handle was returned by LiWaitForNextVideoFrame and must be completed once.
-            unsafe { gamestream_sys::LiCompleteVideoFrame(frame_handle, gamestream_sys::DR_OK) };
-            break;
+            unsafe { gamestream_sys::LiCompleteVideoFrame(frame_handle, status) };
         }
-        let status = process_pull_video_decode_unit(&mut decoder, decode_unit);
-        // SAFETY: frame_handle was returned by LiWaitForNextVideoFrame and must be completed once.
-        unsafe { gamestream_sys::LiCompleteVideoFrame(frame_handle, status) };
+    }));
+    
+    match result {
+        Ok(_) => {
+            logger::log("VIDEO DECODER THREAD: Exited normally");
+        }
+        Err(e) => {
+            logger::log(&format!("❌ VIDEO DECODER THREAD PANICKED: {:?}", e));
+        }
     }
+    
     logger::log("Rust video decoder thread stopped");
 }
 
-#[cfg(moonlight_common_c_linked)]
 fn process_pull_video_decode_unit(
     decoder: &mut SoftwareVideoDecoder,
     decode_unit: *mut gamestream_sys::DecodeUnit,
@@ -1342,81 +1369,96 @@ fn process_pull_video_decode_unit(
         return gamestream_sys::DR_OK;
     }
 
-    // SAFETY: Limelight owns the decode unit for the duration of this callback.
-    let decode_unit = unsafe { &*decode_unit };
-    let bytes_received = decode_unit_bytes(decode_unit);
-    let payload = unsafe { copy_decode_unit_payload(decode_unit) };
-    let frame_number = decode_unit.frame_number;
-    let decode_start = Instant::now();
-    
-    // Try hardware decoder first (Phase 5 integration)
-    #[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
-    let decoded_frame = {
-        // Check if hardware decoder is available
-        if let Ok(hw_slot) = HARDWARE_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
-            if let Some(hw_decoder) = hw_slot.as_ref() {
-                // Try hardware decode
-                match hw_decoder.decode_packet(decoder.codec_context, &payload, frame_number) {
-                    Ok(Some(decoded_hw_frame)) => {
-                        // Hardware decode successful! Keep GPU surface for rendering
-                        let gpu_frame = DecodedVideoFrame::D3D11Surface(D3D11VideoFrame {
-                            width: decoded_hw_frame.width as c_int,
-                            height: decoded_hw_frame.height as c_int,
-                            frame_number,
-                            decoded_at: Instant::now(),
-                            surface_ptr: decoded_hw_frame.surface_ptr,
-                            is_hdr: decoded_hw_frame.hdr_metadata.is_hdr,
-                        });
-                        logger::log(&format!(
-                            "✅ GPU decode frame #{}: {}x{} (Phase 5d: zero-copy rendering)",
-                            frame_number,
-                            decoded_hw_frame.width,
-                            decoded_hw_frame.height
-                        ));
-                        Some(gpu_frame)
+    // Wrap entire processing in panic catcher
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // SAFETY: Limelight owns the decode unit for the duration of this callback.
+        let decode_unit = unsafe { &*decode_unit };
+        let bytes_received = decode_unit_bytes(decode_unit);
+        let payload = unsafe { copy_decode_unit_payload(decode_unit) };
+        let frame_number = decode_unit.frame_number;
+        let decode_start = Instant::now();
+        
+        logger::log(&format!("VIDEO DECODE UNIT: frame={}, bytes={}", frame_number, bytes_received));
+        
+        // Try hardware decoder first (Phase 5 integration)
+        #[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
+        let decoded_frame = {
+            // Check if hardware decoder is available
+            if let Ok(hw_slot) = HARDWARE_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+                if let Some(hw_decoder) = hw_slot.as_ref() {
+                    logger::log(&format!("VIDEO DECODE UNIT: Attempting hardware decode, codec_context={:p}", decoder.codec_context));
+                    
+                    // Try hardware decode
+                    match hw_decoder.decode_packet(decoder.codec_context, &payload, frame_number) {
+                        Ok(Some(decoded_hw_frame)) => {
+                            // Hardware decode successful! Keep GPU surface for rendering
+                            let gpu_frame = DecodedVideoFrame::D3D11Surface(D3D11VideoFrame {
+                                width: decoded_hw_frame.width as c_int,
+                                height: decoded_hw_frame.height as c_int,
+                                frame_number,
+                                decoded_at: Instant::now(),
+                                surface_ptr: decoded_hw_frame.surface_ptr,
+                                is_hdr: decoded_hw_frame.hdr_metadata.is_hdr,
+                            });
+                            logger::log(&format!(
+                                "✅ GPU decode frame #{}: {}x{} (Phase 5d: zero-copy rendering)",
+                                frame_number,
+                                decoded_hw_frame.width,
+                                decoded_hw_frame.height
+                            ));
+                            Some(gpu_frame)
+                        }
+                        Ok(None) => {
+                            // No frame ready yet from hardware decoder, try software
+                            decode_pull_video_payload(decoder, &payload, frame_number)
+                        }
+                        Err(error) => {
+                            logger::log(&format!("⚠️ Hardware decode error: {error}, falling back to software"));
+                            decode_pull_video_payload(decoder, &payload, frame_number)
+                        }
                     }
-                    Ok(None) => {
-                        // No frame ready yet from hardware decoder, try software
-                        decode_pull_video_payload(decoder, &payload, frame_number)
-                    }
-                    Err(error) => {
-                        logger::log(&format!("⚠️ Hardware decode error: {error}, falling back to software"));
-                        decode_pull_video_payload(decoder, &payload, frame_number)
-                    }
+                } else {
+                    // Hardware decoder not initialized
+                    decode_pull_video_payload(decoder, &payload, frame_number)
                 }
             } else {
-                // Hardware decoder not initialized
                 decode_pull_video_payload(decoder, &payload, frame_number)
             }
-        } else {
-            decode_pull_video_payload(decoder, &payload, frame_number)
+        };
+        
+        // Fallback: Software decode (all platforms or if hardware unavailable)
+        #[cfg(not(all(moonlight_common_c_linked, target_os = "windows")))]
+        let decoded_frame = decode_pull_video_payload(decoder, &payload, frame_number);
+        
+        let decode_us = decode_start.elapsed().as_micros();
+        let decoded = decoded_frame.is_some();
+        let decoded_format = decoded_frame
+            .as_ref()
+            .map(DecodedVideoFrame::texture_format);
+        record_native_video_decode_diagnostics(
+            frame_number,
+            bytes_received,
+            decoded,
+            decoded_format,
+            decode_us,
+        );
+        let update = update_video_sink_after_decode(
+            frame_number,
+            bytes_received,
+            payload,
+            decoded_frame,
+        );
+        emit_video_sink_update_events(&update);
+        gamestream_sys::DR_OK
+    }));
+
+    match result {
+        Ok(ret_code) => ret_code,
+        Err(panic_info) => {
+            logger::log(&format!("❌ PANIC in video decode unit processing: {:?}", panic_info));
+            gamestream_sys::DR_NEED_IDR  // Error code for decode failures
         }
-    };
-    
-    // Fallback: Software decode (all platforms or if hardware unavailable)
-    #[cfg(not(all(moonlight_common_c_linked, target_os = "windows")))]
-    let decoded_frame = decode_pull_video_payload(decoder, &payload, frame_number);
-    
-    let decode_us = decode_start.elapsed().as_micros();
-    let decoded = decoded_frame.is_some();
-    let decoded_format = decoded_frame
-        .as_ref()
-        .map(DecodedVideoFrame::texture_format);
-    record_native_video_decode_diagnostics(
-        frame_number,
-        bytes_received,
-        decoded,
-        decoded_format,
-        decode_us,
-    );
-    let update = update_video_sink_after_decode(
-        frame_number,
-        bytes_received,
-        payload,
-        decoded_frame,
-    );
-    emit_video_sink_update_events(&update);
-    gamestream_sys::DR_OK
+    }
 }
 
 #[cfg(moonlight_common_c_linked)]

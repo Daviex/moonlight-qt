@@ -536,30 +536,51 @@ impl D3D11HwContext {
         let hw_device_ctx = self.hw_device_ctx.ok_or("hwdevice context not initialized")?;
 
         logger::log("Attaching D3D11VA hwcontext to codec context...");
+        logger::log(&format!("  codec_ctx pointer: {:p}", codec_ctx));
+        logger::log(&format!("  hw_device_ctx pointer: {:p}", hw_device_ctx));
 
         // Create a reference to the hardware device context
         // SAFETY: av_buffer_ref creates a reference to an existing buffer reference.
+        logger::log("Calling av_buffer_ref to create buffer reference...");
         let hw_device_ref = unsafe {
             super::gamestream_sys::av_buffer_ref(hw_device_ctx)
         };
 
         if hw_device_ref.is_null() {
-            logger::log("Failed to create buffer reference for hwdevice context");
+            logger::log("❌ Failed to create buffer reference for hwdevice context (av_buffer_ref returned NULL)");
             return Err("av_buffer_ref failed".into());
         }
+        
+        logger::log(&format!("✅ av_buffer_ref succeeded, got reference: {:p}", hw_device_ref));
 
         // Set hw_device_ctx on codec context
         // SAFETY: We set the hw_device_ctx field which is at a known offset in AVCodecContext.
         // This mirrors the native C++ code: context->hw_device_ctx = av_buffer_ref(m_HwDeviceContext);
-        unsafe {
-            // AVCodecContext has hw_device_ctx at byte offset 576 (FFmpeg ABI-stable)
-            let offset = 576usize;
-            let hw_ctx_field = (codec_ctx as *mut u8).add(offset) as *mut *mut c_void;
-            *hw_ctx_field = hw_device_ref;
-            logger::log("✅ D3D11VA hwcontext attached to codec context");
+        logger::log("Writing hw_device_ref to codec context at offset 576...");
+        
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            unsafe {
+                // AVCodecContext has hw_device_ctx at byte offset 576 (FFmpeg ABI-stable)
+                let offset = 576usize;
+                logger::log(&format!("  Calculating target pointer: base={:p}, offset={}", codec_ctx as *mut u8, offset));
+                let hw_ctx_field = (codec_ctx as *mut u8).add(offset) as *mut *mut c_void;
+                logger::log(&format!("  Target field pointer: {:p}", hw_ctx_field));
+                logger::log(&format!("  Writing value: {:p}", hw_device_ref));
+                *hw_ctx_field = hw_device_ref;
+                logger::log("✅ Successfully wrote hw_device_ref to codec context");
+            }
+        }));
+        
+        match result {
+            Ok(_) => {
+                logger::log("✅ D3D11VA hwcontext attached to codec context");
+                Ok(())
+            }
+            Err(e) => {
+                logger::log(&format!("❌ PANIC while writing to codec context: {:?}", e));
+                Err("Panic occurred while attaching hwcontext".into())
+            }
         }
-
-        Ok(())
     }
 
     /// Get the hardware context pointer for sharing with other codecs
@@ -1039,29 +1060,81 @@ pub fn initialize_d3d11va_context(
     height: u32,
 ) -> Result<D3D11HardwareDecoder, String> {
     logger::log("Initializing FFmpeg D3D11VA hardware acceleration context...");
+    logger::log(&format!("  Target resolution: {}x{}", width, height));
 
     // Phase 1: Create D3D11 device
-    let mut decoder = D3D11HardwareDecoder::new()?;
+    logger::log("Phase 1: Creating D3D11 device for hardware decoding...");
+    let phase1_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        D3D11HardwareDecoder::new()
+    }));
+    
+    let mut decoder = match phase1_result {
+        Ok(Ok(dec)) => {
+            logger::log("✅ Phase 1: D3D11 device created successfully");
+            dec
+        }
+        Ok(Err(e)) => {
+            logger::log(&format!("❌ Phase 1 FAILED: {}", e));
+            return Err(format!("Phase 1 (D3D11 device creation) failed: {}", e));
+        }
+        Err(panic_info) => {
+            logger::log(&format!("❌ Phase 1 PANICKED: {:?}", panic_info));
+            return Err("Phase 1 panicked during D3D11 device creation".into());
+        }
+    };
+
     if !decoder.is_available {
+        logger::log("❌ Phase 1: D3D11 hardware decoding not available on this system");
         return Err("D3D11 hardware decoding not available on this system".into());
     }
 
     // Phase 2: Initialize FFmpeg hwcontext
-    decoder.initialize_hw_context()?;
+    logger::log("Phase 2: Initializing FFmpeg hwcontext for hardware decoding...");
+    let phase2_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        decoder.initialize_hw_context()
+    }));
+    
+    match phase2_result {
+        Ok(Ok(())) => {
+            logger::log("✅ Phase 2: FFmpeg hwcontext initialized successfully");
+        }
+        Ok(Err(e)) => {
+            logger::log(&format!("❌ Phase 2 FAILED: {}", e));
+            return Err(format!("Phase 2 (FFmpeg hwcontext) failed: {}", e));
+        }
+        Err(panic_info) => {
+            logger::log(&format!("❌ Phase 2 PANICKED: {:?}", panic_info));
+            return Err("Phase 2 panicked during FFmpeg hwcontext initialization".into());
+        }
+    }
 
     // Phase 3: Initialize GPU surface pools
-    // Typical pool sizes:
-    // - 4-6 surfaces for single-threaded decode
-    // - 8-12 surfaces for parallel decode
+    logger::log("Phase 3: Initializing GPU surface pools...");
     let pool_size = std::cmp::min(
         std::cmp::max(4, num_cpus::get() * 2),
         12,
     );
-    decoder.initialize_surface_pools(width, height, pool_size)?;
+    logger::log(&format!("  Pool size: {} surfaces", pool_size));
+    
+    let phase3_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        decoder.initialize_surface_pools(width, height, pool_size)
+    }));
+    
+    match phase3_result {
+        Ok(Ok(())) => {
+            logger::log("✅ Phase 3: GPU surface pools initialized successfully");
+        }
+        Ok(Err(e)) => {
+            logger::log(&format!("❌ Phase 3 FAILED: {}", e));
+            return Err(format!("Phase 3 (GPU surface pools) failed: {}", e));
+        }
+        Err(panic_info) => {
+            logger::log(&format!("❌ Phase 3 PANICKED: {:?}", panic_info));
+            return Err("Phase 3 panicked during GPU surface pool initialization".into());
+        }
+    }
 
     logger::log("D3D11VA context fully initialized: GPU device, hwcontext, and surface pools ready");
-
-    // TODO: Phase 4 - Setup synchronization
 
     Ok(decoder)
 }
@@ -1162,22 +1235,37 @@ pub fn create_complete_hardware_decoder(
     height: u32,
 ) -> Result<(D3D11HardwareDecoder, GpuSync), String> {
     logger::log("Creating complete D3D11VA hardware decoder (all 4 phases)...");
+    logger::log(&format!("  Requested resolution: {}x{}", width, height));
 
-    // Initialize phases 1-3
-    let decoder = initialize_d3d11va_context(width, height)?;
+    // Wrap the entire hardware decoder creation in a panic catcher
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        logger::log("Phase 1-3: Initializing D3D11VA context...");
+        let decoder = initialize_d3d11va_context(width, height)?;
+        logger::log("Phase 1-3: ✅ D3D11VA context initialized");
 
-    // Phase 4: Synchronization
-    let sync = GpuSync::new()?;
+        // Phase 4: Synchronization
+        logger::log("Phase 4: Initializing GPU synchronization...");
+        let sync = GpuSync::new()?;
+        logger::log("Phase 4: ✅ GPU synchronization initialized");
 
-    logger::log(
-        "D3D11VA hardware decoder fully initialized with all 4 phases:\n  \
-         Phase 1 ✅ D3D11 device creation\n  \
-         Phase 2 ✅ FFmpeg hwcontext integration\n  \
-         Phase 3 ✅ GPU surface pool management\n  \
-         Phase 4 ✅ Decode/render synchronization"
-    );
+        logger::log(
+            "D3D11VA hardware decoder fully initialized with all 4 phases:\n  \
+             Phase 1 ✅ D3D11 device creation\n  \
+             Phase 2 ✅ FFmpeg hwcontext integration\n  \
+             Phase 3 ✅ GPU surface pool management\n  \
+             Phase 4 ✅ Decode/render synchronization"
+        );
 
-    Ok((decoder, sync))
+        Ok((decoder, sync))
+    }));
+
+    match result {
+        Ok(inner_result) => inner_result,
+        Err(panic_info) => {
+            logger::log(&format!("❌ PANIC during hardware decoder creation: {:?}", panic_info));
+            Err("Hardware decoder creation panicked - see logs for details".into())
+        }
+    }
 }
 
 /// D3D11 Software Decoder (Windows Priority 2 Fallback)
