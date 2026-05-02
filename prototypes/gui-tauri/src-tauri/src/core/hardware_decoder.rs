@@ -975,6 +975,19 @@ impl D3D11HardwareDecoder {
             self.extract_hdr_metadata_unsafe(frame)
         }
     }
+
+    /// Attach hardware context to FFmpeg codec context
+    #[cfg(moonlight_common_c_linked)]
+    pub fn attach_to_codec_context(
+        &self,
+        codec_ctx: *mut c_void,
+    ) -> Result<(), String> {
+        if let Some(hw_ctx) = &self.hw_context {
+            hw_ctx.attach_to_codec_context(codec_ctx as *mut super::gamestream_sys::AVCodecContext)
+        } else {
+            Err("Hardware context not initialized".into())
+        }
+    }
 }
 
 /// HDR Metadata from decoded frames
