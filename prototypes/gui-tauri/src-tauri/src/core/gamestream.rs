@@ -3,6 +3,8 @@
 use super::error::CoreError;
 use super::events::{BridgeEvent, BridgeEventKind};
 use super::gamestream_sys;
+#[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
+use super::hardware_decoder;
 use super::stream_input::{
     ButtonAction, ControllerCapabilities, ControllerState, ControllerType, KeyAction, KeyModifiers,
     MouseButton as StreamMouseButton, StreamInputSender,
@@ -54,6 +56,11 @@ static AUDIO_PLAYBACK_STATE: OnceLock<Mutex<Option<AudioPlayback>>> = OnceLock::
 static VIDEO_SINK_STATE: OnceLock<Mutex<VideoSinkState>> = OnceLock::new();
 #[cfg(moonlight_common_c_linked)]
 static VIDEO_DECODER_STATE: OnceLock<Mutex<Option<SoftwareVideoDecoder>>> = OnceLock::new();
+#[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
+static HARDWARE_DECODER_STATE: OnceLock<Mutex<Option<hardware_decoder::D3D11HardwareDecoder>>> =
+    OnceLock::new();
+#[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
+static GPU_SYNC_STATE: OnceLock<Mutex<Option<hardware_decoder::GpuSync>>> = OnceLock::new();
 #[cfg(moonlight_common_c_linked)]
 static VIDEO_DECODER_THREAD: OnceLock<Mutex<Option<VideoDecoderThread>>> = OnceLock::new();
 static VIDEO_RENDERER_STATE: OnceLock<Mutex<Option<NativeVideoRenderer>>> = OnceLock::new();
@@ -934,6 +941,57 @@ unsafe extern "C" fn headless_video_setup(
     _dr_flags: c_int,
 ) -> c_int {
     #[cfg(moonlight_common_c_linked)]
+    {
+        // Try hardware decoding first (D3D11 on Windows)
+        #[cfg(target_os = "windows")]
+        let hw_decoder_result = hardware_decoder::create_complete_hardware_decoder(
+            width as u32,
+            height as u32,
+        );
+
+        #[cfg(target_os = "windows")]
+        if let Ok((decoder, sync)) = hw_decoder_result {
+            if let Ok(mut slot) = HARDWARE_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+                *slot = Some(decoder);
+            }
+            if let Ok(mut slot) = GPU_SYNC_STATE.get_or_init(|| Mutex::new(None)).lock() {
+                *slot = Some(sync);
+            }
+            emit_stream_event(
+                BridgeEventKind::Status,
+                format!("D3D11VA hardware decoder initialized for {width}x{height}@{redraw_rate}."),
+            );
+            store_video_sink_state(|state| {
+                *state = VideoSinkState {
+                    configuration: Some(VideoSinkConfiguration {
+                        video_format,
+                        width,
+                        height,
+                        redraw_rate,
+                        flags: _dr_flags,
+                    }),
+                    ..VideoSinkState::default()
+                };
+            });
+            start_native_video_renderer(width, height);
+            emit_stream_event(
+                BridgeEventKind::Status,
+                format!("Headless video sink configured for {width}x{height}@{redraw_rate} with hardware decoding."),
+            );
+            return gamestream_sys::DR_OK;
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            emit_stream_event(
+                BridgeEventKind::Status,
+                "D3D11VA hardware decoder unavailable, falling back to software decoding.".into(),
+            );
+        }
+    }
+
+    // Fallback to software decoding
+    #[cfg(moonlight_common_c_linked)]
     let decoder_result = SoftwareVideoDecoder::new(video_format);
 
     store_video_sink_state(|state| {
@@ -1005,6 +1063,19 @@ unsafe extern "C" fn headless_video_stop() {
 unsafe extern "C" fn headless_video_cleanup() {
     #[cfg(moonlight_common_c_linked)]
     stop_video_decoder_thread();
+    
+    // Cleanup hardware decoder
+    #[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
+    {
+        if let Ok(mut slot) = HARDWARE_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+            *slot = None;
+        }
+        if let Ok(mut slot) = GPU_SYNC_STATE.get_or_init(|| Mutex::new(None)).lock() {
+            *slot = None;
+        }
+        logger::log("D3D11 hardware decoder released");
+    }
+    
     stop_native_video_renderer();
     #[cfg(moonlight_common_c_linked)]
     if let Ok(mut slot) = VIDEO_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
