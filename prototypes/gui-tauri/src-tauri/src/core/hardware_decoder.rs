@@ -399,6 +399,7 @@ impl D3D11HwContext {
     /// Initialize FFmpeg D3D11VA hardware context
     pub fn new(device: D3D11Device) -> Result<Self, String> {
         logger::log("Initializing FFmpeg D3D11VA hardware context...");
+        logger::log(format!("GPU Info: {}", device.get_device_info()));
 
         if !device.supports_video_decoding() {
             return Err("D3D11 device does not support video decoding".into());
@@ -409,6 +410,7 @@ impl D3D11HwContext {
         
         // SAFETY: av_hwdevice_ctx_create is an FFmpeg API that creates a reference-counted context.
         // The device pointer is valid for the lifetime of the D3D11Device.
+        logger::log("Attempting to create FFmpeg D3D11VA hwdevice context...");
         let result = unsafe {
             super::gamestream_sys::av_hwdevice_ctx_create(
                 &mut hw_device_ctx,                                    // Output context
@@ -421,21 +423,27 @@ impl D3D11HwContext {
 
         if result != 0 {
             logger::log(format!(
-                "Failed to create FFmpeg D3D11VA hwdevice context: error {}",
-                result
+                "❌ D3D11VA hwdevice_ctx_create failed with error code: {} (0x{:08x})",
+                result, result as u32
             ));
+            logger::log("Possible causes for D3D11VA unavailability:");
+            logger::log("  1. FFmpeg compiled without D3D11VA support");
+            logger::log("  2. GPU drivers don't expose D3D11VA/DXVA2 capabilities");
+            logger::log("  3. Windows Media Feature Pack not installed (N/KN editions)");
+            logger::log("  4. Older GPU that doesn't support DXVA2");
+            logger::log("  5. Newer FFmpeg versions may require different initialization");
             return Err(format!(
-                "av_hwdevice_ctx_create failed with error code {}",
+                "D3D11VA hardware decoding unavailable (error {}). Falling back to software decoder.",
                 result
             ));
         }
 
         if hw_device_ctx.is_null() {
-            logger::log("FFmpeg hwdevice context creation returned null");
+            logger::log("❌ FFmpeg hwdevice context creation returned null");
             return Err("hwdevice context is null".into());
         }
 
-        logger::log("FFmpeg D3D11VA hwdevice context created successfully");
+        logger::log("✅ FFmpeg D3D11VA hwdevice context created successfully");
 
         Ok(Self {
             hw_device_ctx: Some(hw_device_ctx),
