@@ -47,6 +47,10 @@ pub const AV_PIX_FMT_NV21: c_int = 24;
 #[cfg(moonlight_common_c_linked)]
 pub const AV_PIX_FMT_RGBA: c_int = 26;
 #[cfg(moonlight_common_c_linked)]
+pub const AV_PIX_FMT_D3D11: c_int = -101;
+#[cfg(moonlight_common_c_linked)]
+pub const AV_HWDEVICE_TYPE_D3D11VA: c_int = 10;
+#[cfg(moonlight_common_c_linked)]
 pub const SWS_FAST_BILINEAR: c_int = 1;
 #[cfg(moonlight_common_c_linked)]
 pub const SWS_BILINEAR: c_int = 1 << 1;
@@ -597,8 +601,17 @@ extern "C" {
     pub fn av_frame_free(frame: *mut *mut AVFrame);
     pub fn av_frame_unref(frame: *mut AVFrame);
 
-    pub fn av_malloc(size: usize) -> *mut c_void;
-    pub fn av_free(ptr: *mut c_void);
+    // Hardware acceleration (D3D11VA) - Phase 2 integration
+    pub fn av_hwdevice_ctx_create(
+        device_ctx: *mut *mut c_void,
+        type_: c_int,
+        device: *const c_char,
+        opts: *mut c_void,
+        flags: c_int,
+    ) -> c_int;
+    pub fn av_hwframe_ctx_init(ref_: *mut c_void) -> c_int;
+    pub fn av_buffer_ref(buf: *mut c_void) -> *mut c_void;
+    pub fn av_buffer_unref(buf: *mut *mut c_void);
 
     pub fn sws_getContext(
         srcW: c_int,
