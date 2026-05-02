@@ -1058,6 +1058,22 @@ unsafe extern "C" fn headless_video_setup(
                     BridgeEventKind::Status,
                     format!("🎮 Headless video sink configured for {width}x{height}@{redraw_rate} with D3D11 HARDWARE decoding (Priority 1)."),
                 );
+                
+                // Create a SoftwareVideoDecoder which will attach hardware context in its new() method
+                // This is needed to activate the decoder thread
+                let decoder_result = SoftwareVideoDecoder::new(video_format);
+                match decoder_result {
+                    Ok(decoder) => {
+                        if let Ok(mut slot) = VIDEO_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+                            *slot = Some(decoder);
+                        }
+                        logger::log("✅ Hardware decoder ready in video decoder pipeline");
+                    }
+                    Err(e) => {
+                        logger::log(format!("⚠️  Failed to create software decoder wrapper for hardware decoding: {}", e));
+                    }
+                }
+                
                 return gamestream_sys::DR_OK;
             }
 
