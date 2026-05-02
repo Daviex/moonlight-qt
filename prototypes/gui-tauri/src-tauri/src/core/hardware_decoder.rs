@@ -8,8 +8,6 @@ use windows::Win32::Graphics::Direct3D::*;
 use windows::Win32::Graphics::Direct3D11::*;
 #[cfg(target_os = "windows")]
 use windows::Win32::Graphics::Dxgi::Common::*;
-#[cfg(target_os = "windows")]
-use windows::Win32::Foundation::*;
 
 use std::os::raw::c_void;
 use std::sync::{Arc, Mutex};
@@ -788,17 +786,33 @@ impl D3D11HardwareDecoder {
         unsafe {
             // Create AVPacket from payload
             let packet = sys::av_packet_alloc();
+            
             if packet.is_null() {
                 return Err("Failed to allocate AVPacket".into());
             }
 
-            // Copy packet data
+            // Use av_malloc for FFmpeg memory management to ensure proper ownership
+            // FFmpeg's av_packet_from_data registers av_free as the destructor
+            let packet_data_ptr = sys::av_malloc(packet_data.len()) as *mut u8;
+            if packet_data_ptr.is_null() {
+                let mut pkt = packet;
+                sys::av_packet_free(&mut pkt);
+                return Err("Failed to allocate packet data with av_malloc".into());
+            }
+            
+            // Copy packet data into FFmpeg-allocated buffer
+            std::ptr::copy_nonoverlapping(packet_data.as_ptr(), packet_data_ptr, packet_data.len());
+            
+            // Use av_packet_from_data with FFmpeg-allocated memory
             let ret = sys::av_packet_from_data(
                 packet,
-                packet_data.as_ptr() as *mut u8,
+                packet_data_ptr,
                 packet_data.len() as i32,
             );
+            
             if ret < 0 {
+                // Free the av_malloc'd memory since av_packet_from_data failed
+                sys::av_free(packet_data_ptr as *mut std::ffi::c_void);
                 let mut pkt = packet;
                 sys::av_packet_free(&mut pkt);
                 return Err(format!("av_packet_from_data failed: {ret}"));
@@ -806,8 +820,8 @@ impl D3D11HardwareDecoder {
 
             // Submit packet to decoder
             let ret = sys::avcodec_send_packet(codec_ctx, packet);
+            
             if ret < 0 && ret != sys::AVERROR_EAGAIN {
-                logger::log(&format!("❌ avcodec_send_packet failed: {ret}"));
                 sys::av_packet_unref(packet);
                 let mut pkt = packet;
                 sys::av_packet_free(&mut pkt);
@@ -816,6 +830,7 @@ impl D3D11HardwareDecoder {
 
             // Try to receive frame
             let frame = sys::av_frame_alloc();
+            
             if frame.is_null() {
                 sys::av_packet_unref(packet);
                 let mut pkt = packet;
@@ -824,6 +839,7 @@ impl D3D11HardwareDecoder {
             }
 
             let ret = sys::avcodec_receive_frame(codec_ctx, frame);
+            
             sys::av_packet_unref(packet);
             let mut pkt = packet;
             sys::av_packet_free(&mut pkt);
@@ -836,7 +852,6 @@ impl D3D11HardwareDecoder {
             }
 
             if ret < 0 {
-                logger::log(&format!("❌ avcodec_receive_frame failed: {ret}"));
                 let mut frm = frame;
                 sys::av_frame_free(&mut frm);
                 return Err(format!("avcodec_receive_frame failed: {ret}"));
@@ -844,6 +859,7 @@ impl D3D11HardwareDecoder {
 
             // Frame decoded successfully!
             let frame_ref = &*frame;
+            
             let surface_ptr = if frame_ref.data[0].is_null() {
                 std::ptr::null_mut()
             } else {
@@ -893,7 +909,7 @@ impl D3D11HardwareDecoder {
         
         let is_hdr = !side_data.is_null();
 
-        Ok(HdrMetadata {
+        let result = HdrMetadata {
             is_hdr,
             color_space: if is_hdr {
                 "BT.2020".to_string()
@@ -907,7 +923,8 @@ impl D3D11HardwareDecoder {
             },
             max_cll: 1000,
             max_fall: 500,
-        })
+        };
+        Ok(result)
     }
 
     /// Configure codec context for hardware acceleration
@@ -1447,8 +1464,8 @@ pub fn configure_codec_for_video_format(
 /// Call this from process_pull_video_decode_unit() to attempt hardware decoding
 #[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
 pub fn try_hardware_decode(
-    payload: &[u8],
-    frame_number: i32,
+    _payload: &[u8],
+    _frame_number: i32,
 ) -> Option<DecodedFrame> {
     // TODO: Phase 5 Implementation
     // 1. Get decoder from HARDWARE_DECODER_STATE static

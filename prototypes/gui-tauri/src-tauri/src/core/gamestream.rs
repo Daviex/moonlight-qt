@@ -69,6 +69,9 @@ static VIDEO_DECODER_THREAD: OnceLock<Mutex<Option<VideoDecoderThread>>> = OnceL
 static VIDEO_RENDERER_STATE: OnceLock<Mutex<Option<NativeVideoRenderer>>> = OnceLock::new();
 static VIDEO_QUEUE_DIAGNOSTICS: OnceLock<Mutex<NativeVideoQueueDiagnostics>> = OnceLock::new();
 static VIDEO_DECODE_DIAGNOSTICS: OnceLock<Mutex<NativeVideoDecodeDiagnostics>> = OnceLock::new();
+// Synchronize FFmpeg codec context access between decoder and renderer threads
+#[cfg(moonlight_common_c_linked)]
+static CODEC_CONTEXT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 #[cfg(target_os = "windows")]
 static HDR_RENDERER_STATE: OnceLock<Mutex<Option<HdrRendererState>>> = OnceLock::new();
 #[cfg(target_os = "linux")]
@@ -1383,14 +1386,21 @@ fn process_pull_video_decode_unit(
         // Try hardware decoder first (Phase 5 integration)
         #[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
         let decoded_frame = {
+            // Synchronize FFmpeg codec context access with renderer thread
+            let _codec_lock = CODEC_CONTEXT_LOCK.get_or_init(|| Mutex::new(())).lock().ok();
+            
             // Check if hardware decoder is available
             if let Ok(hw_slot) = HARDWARE_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
                 if let Some(hw_decoder) = hw_slot.as_ref() {
                     logger::log(&format!("VIDEO DECODE UNIT: Attempting hardware decode, codec_context={:p}", decoder.codec_context));
                     
-                    // Try hardware decode
-                    match hw_decoder.decode_packet(decoder.codec_context, &payload, frame_number) {
-                        Ok(Some(decoded_hw_frame)) => {
+                    // Wrap decode_packet in catch_unwind to catch crashes
+                    let decode_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        hw_decoder.decode_packet(decoder.codec_context, &payload, frame_number)
+                    }));
+                    
+                    match decode_result {
+                        Ok(Ok(Some(decoded_hw_frame))) => {
                             // Hardware decode successful! Keep GPU surface for rendering
                             let gpu_frame = DecodedVideoFrame::D3D11Surface(D3D11VideoFrame {
                                 width: decoded_hw_frame.width as c_int,
@@ -1408,12 +1418,16 @@ fn process_pull_video_decode_unit(
                             ));
                             Some(gpu_frame)
                         }
-                        Ok(None) => {
+                        Ok(Ok(None)) => {
                             // No frame ready yet from hardware decoder, try software
                             decode_pull_video_payload(decoder, &payload, frame_number)
                         }
-                        Err(error) => {
+                        Ok(Err(error)) => {
                             logger::log(&format!("⚠️ Hardware decode error: {error}, falling back to software"));
+                            decode_pull_video_payload(decoder, &payload, frame_number)
+                        }
+                        Err(_panic) => {
+                            logger::log("❌ PANIC in decode_packet! Falling back to software");
                             decode_pull_video_payload(decoder, &payload, frame_number)
                         }
                     }
@@ -1485,30 +1499,49 @@ fn update_video_sink_after_decode(
     payload: Vec<u8>,
     decoded_frame: Option<DecodedVideoFrame>,
 ) -> VideoSinkUpdate {
+    logger::log(&format!("update_video_sink_after_decode: Starting for frame {}", frame_number));
+    
     let mut update = VideoSinkUpdate {
         first_frame: false,
         first_decoded_frame: false,
         frame_number,
         bytes_received,
     };
+    
+    logger::log("update_video_sink_after_decode: Calling store_video_sink_state...");
     store_video_sink_state(|state| {
+        logger::log(&format!("update_video_sink_after_decode: Inside state closure, frames_received={}", state.frames_received));
         update.first_frame = state.frames_received == 0;
         state.frames_received = state.frames_received.saturating_add(1);
         state.bytes_received = state.bytes_received.saturating_add(bytes_received);
         state.last_frame_number = frame_number;
         state.last_frame_payload = payload;
+        
         if let Some(frame) = decoded_frame {
+            logger::log(&format!("update_video_sink_after_decode: Decoded frame available, decoded_frames={}", state.decoded_frames));
             update.first_decoded_frame = state.decoded_frames == 0;
             state.decoded_frames = state.decoded_frames.saturating_add(1);
-            send_native_video_frame(frame.clone());
+            
+            logger::log("update_video_sink_after_decode: Calling send_native_video_frame...");
+            let frame_clone = frame.clone();
+            send_native_video_frame(frame_clone);
+            logger::log("update_video_sink_after_decode: send_native_video_frame completed");
+            
             state.last_decoded_frame = Some(frame);
+            logger::log("update_video_sink_after_decode: Frame stored in state");
         }
     });
+    
+    logger::log("update_video_sink_after_decode: state_closure complete");
     update
 }
 
 fn emit_video_sink_update_events(update: &VideoSinkUpdate) {
+    logger::log(&format!("emit_video_sink_update_events: frame={}, first_frame={}, first_decoded={}", 
+        update.frame_number, update.first_frame, update.first_decoded_frame));
+        
     if update.first_frame {
+        logger::log("emit_video_sink_update_events: Emitting FIRST_FRAME event");
         emit_stream_event(
             BridgeEventKind::Status,
             format!(
@@ -1516,13 +1549,18 @@ fn emit_video_sink_update_events(update: &VideoSinkUpdate) {
                 update.frame_number, update.bytes_received
             ),
         );
+        logger::log("emit_video_sink_update_events: FIRST_FRAME event emitted");
     }
     if update.first_decoded_frame {
+        logger::log("emit_video_sink_update_events: Emitting FIRST_DECODED_FRAME event");
         emit_stream_event(
             BridgeEventKind::Status,
             "First decoded video frame is ready for native presentation.".into(),
         );
+        logger::log("emit_video_sink_update_events: FIRST_DECODED_FRAME event emitted");
     }
+    
+    logger::log("emit_video_sink_update_events: Complete");
 }
 
 fn start_native_video_renderer(width: c_int, height: c_int) {
@@ -1580,32 +1618,74 @@ fn stop_native_video_renderer() {
 }
 
 fn send_native_video_frame(frame: DecodedVideoFrame) {
-    let frame_number = frame.frame_number();
-    if let Ok(slot) = VIDEO_RENDERER_STATE.get_or_init(|| Mutex::new(None)).lock() {
-        if let Some(renderer) = slot.as_ref() {
-            if !renderer.frame_slot.accepting_frames.load(Ordering::Acquire) {
-                record_native_video_queue_diagnostics(frame_number, VideoQueueResult::Disconnected);
-                return;
-            }
-            let Ok(mut pending_frame) = renderer.frame_slot.frame.lock() else {
-                record_native_video_queue_diagnostics(frame_number, VideoQueueResult::Disconnected);
-                return;
-            };
-            if !renderer.frame_slot.accepting_frames.load(Ordering::Acquire) {
-                record_native_video_queue_diagnostics(frame_number, VideoQueueResult::Disconnected);
-                return;
-            }
-            let result = if pending_frame.replace(frame).is_some() {
-                VideoQueueResult::ReplacedStale
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        logger::log("send_native_video_frame: Starting");
+        
+        let frame_number = frame.frame_number();
+        logger::log(&format!("send_native_video_frame: Got frame number: {}", frame_number));
+        
+        if let Ok(slot) = VIDEO_RENDERER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+            logger::log("send_native_video_frame: Got VIDEO_RENDERER_STATE lock");
+            
+            if let Some(renderer) = slot.as_ref() {
+                logger::log("send_native_video_frame: Renderer found");
+                
+                if !renderer.frame_slot.accepting_frames.load(Ordering::Acquire) {
+                    logger::log("send_native_video_frame: Renderer not accepting frames (disconnected)");
+                    record_native_video_queue_diagnostics(frame_number, VideoQueueResult::Disconnected);
+                    return;
+                }
+                
+                logger::log("send_native_video_frame: Attempting to lock frame slot...");
+                let Ok(mut pending_frame) = renderer.frame_slot.frame.lock() else {
+                    logger::log("send_native_video_frame: Failed to lock frame slot");
+                    record_native_video_queue_diagnostics(frame_number, VideoQueueResult::Disconnected);
+                    return;
+                };
+                
+                logger::log("send_native_video_frame: Frame slot locked");
+                
+                if !renderer.frame_slot.accepting_frames.load(Ordering::Acquire) {
+                    logger::log("send_native_video_frame: Renderer no longer accepting frames");
+                    record_native_video_queue_diagnostics(frame_number, VideoQueueResult::Disconnected);
+                    return;
+                }
+                
+                logger::log("send_native_video_frame: Replacing stale frame...");
+                let result = if pending_frame.replace(frame).is_some() {
+                    VideoQueueResult::ReplacedStale
+                } else {
+                    VideoQueueResult::Queued
+                };
+                
+                logger::log("send_native_video_frame: Notifying render thread...");
+                renderer.frame_slot.available.notify_one();
+                logger::log("send_native_video_frame: Notification sent");
+                
+                record_native_video_queue_diagnostics(frame_number, result);
+                logger::log(&format!("send_native_video_frame: Diagnostics recorded, result={:?}", 
+                    match result {
+                        VideoQueueResult::Queued => "Queued",
+                        VideoQueueResult::ReplacedStale => "ReplacedStale",
+                        VideoQueueResult::Disconnected => "Disconnected",
+                    }
+                ));
             } else {
-                VideoQueueResult::Queued
-            };
-            renderer.frame_slot.available.notify_one();
-            record_native_video_queue_diagnostics(frame_number, result);
+                logger::log("send_native_video_frame: No renderer initialized");
+            }
+        } else {
+            logger::log("send_native_video_frame: Failed to lock VIDEO_RENDERER_STATE");
         }
+        
+        logger::log("send_native_video_frame: Complete");
+    }));
+    
+    if let Err(panic_info) = result {
+        logger::log(&format!("❌ PANIC in send_native_video_frame: {:?}", panic_info));
     }
 }
 
+#[derive(Copy, Clone)]
 enum VideoQueueResult {
     Queued,
     ReplacedStale,
