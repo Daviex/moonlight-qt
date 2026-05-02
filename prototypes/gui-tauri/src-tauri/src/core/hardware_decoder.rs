@@ -391,7 +391,6 @@ impl D3D11Device {
 #[cfg(moonlight_common_c_linked)]
 pub struct D3D11HwContext {
     hw_device_ctx: Option<*mut c_void>,
-    device: Option<D3D11Device>,
 }
 
 #[cfg(moonlight_common_c_linked)]
@@ -403,7 +402,7 @@ unsafe impl Sync for D3D11HwContext {}
 #[cfg(moonlight_common_c_linked)]
 impl D3D11HwContext {
     /// Initialize FFmpeg D3D11VA hardware context
-    pub fn new(device: D3D11Device) -> Result<Self, String> {
+    pub fn new(device: &D3D11Device) -> Result<Self, String> {
         logger::log("Initializing FFmpeg D3D11VA hardware context...");
         logger::log(format!("GPU Info: {}", device.get_device_info()));
 
@@ -519,7 +518,6 @@ impl D3D11HwContext {
 
         Ok(Self {
             hw_device_ctx: Some(hw_device_ctx),
-            device: Some(device),
         })
     }
 
@@ -570,7 +568,7 @@ pub struct D3D11HwContext {
 
 #[cfg(not(moonlight_common_c_linked))]
 impl D3D11HwContext {
-    pub fn new(_device: D3D11Device) -> Result<Self, String> {
+    pub fn new(_device: &D3D11Device) -> Result<Self, String> {
         Err("D3D11HwContext requires C library linkage".into())
     }
 
@@ -599,9 +597,6 @@ impl Drop for D3D11HwContext {
             unsafe {
                 super::gamestream_sys::av_buffer_unref(&mut ctx);
             }
-        }
-        if let Some(mut device) = self.device.take() {
-            device.release();
         }
     }
 }
@@ -676,7 +671,7 @@ impl D3D11HardwareDecoder {
             return Err("D3D11 device not available".into());
         }
 
-        let device = self.device.take()
+        let device = self.device.as_ref()
             .ok_or("D3D11 device was not initialized")?;
 
         match D3D11HwContext::new(device) {
@@ -685,7 +680,6 @@ impl D3D11HardwareDecoder {
                 Ok(())
             }
             Err(e) => {
-                self.device = None;
                 Err(format!("Failed to initialize hardware context: {}", e))
             }
         }
