@@ -411,7 +411,23 @@ impl D3D11HwContext {
             return Err("D3D11 device does not support video decoding".into());
         }
 
-        // Step 1: Create FFmpeg hwdevice context with D3D11VA
+        // Step 0: Dynamically resolve D3D11VA device type
+        logger::log("Resolving D3D11VA device type dynamically...");
+        let d3d11va_name = std::ffi::CString::new("d3d11va")
+            .map_err(|_| "Failed to create C string for d3d11va")?;
+        
+        let device_type = unsafe {
+            super::gamestream_sys::av_hwdevice_find_type_by_name(d3d11va_name.as_ptr())
+        };
+        
+        if device_type < 0 {  // AV_HWDEVICE_TYPE_NONE is -1
+            logger::log("❌ FFmpeg is NOT compiled with D3D11VA support");
+            logger::log("This build of FFmpeg does not include D3D11VA/DXVA2 hardware decoding");
+            return Err("FFmpeg D3D11VA not available in this build. Falling back to software decoder.".into());
+        }
+        logger::log(format!("✅ FFmpeg D3D11VA support detected (device_type={})", device_type));
+
+        // Step 1: Create FFmpeg hwdevice context with D3D11VA using resolved device type
         let mut hw_device_ctx: *mut c_void = std::ptr::null_mut();
         
         logger::log("Attempting to create FFmpeg D3D11VA hwdevice context with default device...");
@@ -422,7 +438,7 @@ impl D3D11HwContext {
         let result = unsafe {
             super::gamestream_sys::av_hwdevice_ctx_create(
                 &mut hw_device_ctx,                                    // Output context (pointer to pointer)
-                super::gamestream_sys::AV_HWDEVICE_TYPE_D3D11VA,       // Hardware type
+                device_type,                                           // Dynamically resolved hardware type
                 std::ptr::null(),                                      // Device name (NULL = default/first device)
                 std::ptr::null_mut(),                                  // Options (NULL)
                 0,                                                     // Flags
@@ -430,10 +446,23 @@ impl D3D11HwContext {
         };
 
         if result != 0 {
+            // Get detailed error message from FFmpeg
+            let mut errbuf = [0i8; 256];
+            unsafe {
+                super::gamestream_sys::av_strerror(
+                    result,
+                    errbuf.as_mut_ptr(),
+                    errbuf.len(),
+                );
+            }
+            let error_msg = unsafe { std::ffi::CStr::from_ptr(errbuf.as_ptr()) }
+                .to_string_lossy();
+            
             logger::log(format!(
                 "❌ D3D11VA hwdevice_ctx_create with default device failed: error {} (0x{:08x})",
                 result, result as u32
             ));
+            logger::log(format!("FFmpeg error: {}", error_msg));
             
             // Try with device index "0" for primary adapter
             logger::log("Attempting with device index '0'...");
@@ -443,7 +472,7 @@ impl D3D11HwContext {
             let result2 = unsafe {
                 super::gamestream_sys::av_hwdevice_ctx_create(
                     &mut hw_device_ctx,
-                    super::gamestream_sys::AV_HWDEVICE_TYPE_D3D11VA,
+                    device_type,  // Use resolved device type
                     device_index.as_ptr(),
                     std::ptr::null_mut(),
                     0,
@@ -451,10 +480,23 @@ impl D3D11HwContext {
             };
             
             if result2 != 0 {
+                // Get detailed error message for second attempt
+                let mut errbuf2 = [0i8; 256];
+                unsafe {
+                    super::gamestream_sys::av_strerror(
+                        result2,
+                        errbuf2.as_mut_ptr(),
+                        errbuf2.len(),
+                    );
+                }
+                let error_msg2 = unsafe { std::ffi::CStr::from_ptr(errbuf2.as_ptr()) }
+                    .to_string_lossy();
+                
                 logger::log(format!(
                     "❌ D3D11VA with device index '0' also failed: error {} (0x{:08x})",
                     result2, result2 as u32
                 ));
+                logger::log(format!("FFmpeg error: {}", error_msg2));
                 logger::log("Possible causes for D3D11VA unavailability:");
                 logger::log("  1. FFmpeg compiled without D3D11VA support");
                 logger::log("  2. GPU drivers don't expose D3D11VA/DXVA2 capabilities");

@@ -617,6 +617,8 @@ extern "C" {
         opts: *mut c_void,
         flags: c_int,
     ) -> c_int;
+    pub fn av_hwdevice_find_type_by_name(name: *const c_char) -> c_int;
+    pub fn av_strerror(errnum: c_int, errbuf: *mut c_char, errbuf_size: usize) -> c_int;
     pub fn av_hwframe_ctx_init(ref_: *mut c_void) -> c_int;
     pub fn av_buffer_ref(buf: *mut c_void) -> *mut c_void;
     pub fn av_buffer_unref(buf: *mut *mut c_void);
