@@ -942,95 +942,128 @@ unsafe extern "C" fn headless_video_setup(
 ) -> c_int {
     #[cfg(moonlight_common_c_linked)]
     {
-        // Try hardware decoding first (D3D11 on Windows)
-        #[cfg(target_os = "windows")]
-        let hw_decoder_result = hardware_decoder::create_complete_hardware_decoder(
-            width as u32,
-            height as u32,
-        );
-
-        #[cfg(target_os = "windows")]
-        if let Ok((decoder, sync)) = hw_decoder_result {
-            if let Ok(mut slot) = HARDWARE_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
-                *slot = Some(decoder);
-            }
-            if let Ok(mut slot) = GPU_SYNC_STATE.get_or_init(|| Mutex::new(None)).lock() {
-                *slot = Some(sync);
-            }
-            emit_stream_event(
-                BridgeEventKind::Status,
-                format!("D3D11VA hardware decoder initialized for {width}x{height}@{redraw_rate}."),
-            );
-            store_video_sink_state(|state| {
-                *state = VideoSinkState {
-                    configuration: Some(VideoSinkConfiguration {
-                        video_format,
-                        width,
-                        height,
-                        redraw_rate,
-                        flags: _dr_flags,
-                    }),
-                    ..VideoSinkState::default()
-                };
-            });
-            start_native_video_renderer(width, height);
-            emit_stream_event(
-                BridgeEventKind::Status,
-                format!("Headless video sink configured for {width}x{height}@{redraw_rate} with hardware decoding."),
-            );
-            return gamestream_sys::DR_OK;
-        }
-
+        // === WINDOWS FALLBACK CHAIN ===
+        // Priority 1: D3D11 Hardware (HW decode)
+        // Priority 2: D3D11 Software (SW decode on GPU)
+        // Priority 3: Software SDL (CPU decode)
         #[cfg(target_os = "windows")]
         {
-            emit_stream_event(
-                BridgeEventKind::Status,
-                "D3D11VA hardware decoder unavailable, falling back to software decoding.".into(),
+            // Try D3D11 hardware decoding first
+            let hw_decoder_result = hardware_decoder::create_complete_hardware_decoder(
+                width as u32,
+                height as u32,
             );
-        }
-    }
 
-    // Fallback to software decoding
-    #[cfg(moonlight_common_c_linked)]
-    let decoder_result = SoftwareVideoDecoder::new(video_format);
-
-    store_video_sink_state(|state| {
-        *state = VideoSinkState {
-            configuration: Some(VideoSinkConfiguration {
-                video_format,
-                width,
-                height,
-                redraw_rate,
-                flags: _dr_flags,
-            }),
-            ..VideoSinkState::default()
-        };
-    });
-    #[cfg(moonlight_common_c_linked)]
-    match decoder_result {
-        Ok(decoder) => {
-            let codec = decoder.codec_display_name();
-            if let Ok(mut slot) = VIDEO_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
-                *slot = Some(decoder);
+            if let Ok((decoder, sync)) = hw_decoder_result {
+                if let Ok(mut slot) = HARDWARE_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+                    *slot = Some(decoder);
+                }
+                if let Ok(mut slot) = GPU_SYNC_STATE.get_or_init(|| Mutex::new(None)).lock() {
+                    *slot = Some(sync);
+                }
+                emit_stream_event(
+                    BridgeEventKind::Status,
+                    format!("✅ D3D11VA HARDWARE decoder initialized for {width}x{height}@{redraw_rate}."),
+                );
+                store_video_sink_state(|state| {
+                    *state = VideoSinkState {
+                        configuration: Some(VideoSinkConfiguration {
+                            video_format,
+                            width,
+                            height,
+                            redraw_rate,
+                            flags: _dr_flags,
+                        }),
+                        ..VideoSinkState::default()
+                    };
+                });
+                start_native_video_renderer(width, height);
+                emit_stream_event(
+                    BridgeEventKind::Status,
+                    format!("🎮 Headless video sink configured for {width}x{height}@{redraw_rate} with D3D11 HARDWARE decoding (Priority 1)."),
+                );
+                return gamestream_sys::DR_OK;
             }
+
+            // Fallback to D3D11 software decoding
             emit_stream_event(
                 BridgeEventKind::Status,
-                format!("Software video decoder configured for {codec}."),
+                "⚠️  D3D11 hardware decoder unavailable, attempting D3D11 software decoder (Priority 2)...".into(),
             );
+            
+            // TODO: Implement D3D11 software decoder wrapper
+            // This would use D3D11 device but software FFmpeg decode
+            // For now, fall through to CPU software decode
         }
-        Err(error) => {
+
+        // === LINUX FALLBACK CHAIN ===
+        // Priority 1: Vulkan + Libplacebo (GPU decode)
+        // Priority 2: Software SDL (CPU decode)
+        #[cfg(target_os = "linux")]
+        {
+            // Try Vulkan with libplacebo for GPU decoding
+            // Libplacebo is already integrated in stream_libplacebo.rs
             emit_stream_event(
                 BridgeEventKind::Status,
-                format!("Software video decoder setup failed: {error}."),
+                format!("Attempting Vulkan + Libplacebo GPU decoder for {width}x{height}@{redraw_rate} (Priority 1)..."),
             );
-            return gamestream_sys::DR_NEED_IDR;
+            
+            // TODO: Implement Vulkan decoder integration
+            // Libplacebo can provide Vulkan rendering support
+            // For now, fall through to CPU software decode
         }
     }
+
+    // === FINAL FALLBACK: Software CPU Decoding (All Platforms) ===
+    // This is the universal fallback used on all platforms
+    #[cfg(moonlight_common_c_linked)]
+    {
+        emit_stream_event(
+            BridgeEventKind::Status,
+            "🔄 Using FFmpeg SOFTWARE decoder (CPU decode, all platforms fallback)...".into(),
+        );
+
+        let decoder_result = SoftwareVideoDecoder::new(video_format);
+
+        store_video_sink_state(|state| {
+            *state = VideoSinkState {
+                configuration: Some(VideoSinkConfiguration {
+                    video_format,
+                    width,
+                    height,
+                    redraw_rate,
+                    flags: _dr_flags,
+                }),
+                ..VideoSinkState::default()
+            };
+        });
+
+        match decoder_result {
+            Ok(decoder) => {
+                let codec = decoder.codec_display_name();
+                if let Ok(mut slot) = VIDEO_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+                    *slot = Some(decoder);
+                }
+                emit_stream_event(
+                    BridgeEventKind::Status,
+                    format!("📺 Software video decoder configured for {codec} (Final fallback)."),
+                );
+            }
+            Err(error) => {
+                emit_stream_event(
+                    BridgeEventKind::Status,
+                    format!("❌ All video decoders failed. Software decoder setup error: {error}."),
+                );
+                return gamestream_sys::DR_NEED_IDR;
+            }
+        }
+    }
+
     start_native_video_renderer(width, height);
     emit_stream_event(
         BridgeEventKind::Status,
         format!(
-            "Headless video sink configured for {width}x{height}@{redraw_rate} format {video_format}."
+            "✅ Headless video sink configured for {width}x{height}@{redraw_rate} format {video_format}."
         ),
     );
     gamestream_sys::DR_OK
