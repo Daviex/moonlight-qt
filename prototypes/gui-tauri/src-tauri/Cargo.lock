@@ -2267,6 +2267,7 @@ dependencies = [
  "sha2",
  "tauri",
  "tauri-build",
+ "windows 0.54.0",
  "x509-cert",
  "x509-parser",
 ]

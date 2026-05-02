@@ -25,5 +25,14 @@ tauri = { version = "2", features = ["protocol-asset"] }
 x509-cert = { version = "0.2.5", features = ["builder", "pem"] }
 x509-parser = "0.18"
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.54", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+] }
+
 [features]
 custom-protocol = ["tauri/custom-protocol"]
