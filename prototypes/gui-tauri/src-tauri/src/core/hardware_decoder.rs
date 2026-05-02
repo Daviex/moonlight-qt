@@ -596,9 +596,89 @@ impl D3D11HardwareDecoder {
     pub fn attach_to_codec(&self, _codec_ctx: *mut c_void) -> Result<(), String> {
         Err("Hardware decoding requires C library linkage".into())
     }
+
+    /// Decode a single video packet (Phase 5: Frame Pipeline Integration)
+    ///
+    /// This method:
+    /// 1. Submits video packet to FFmpeg hardware decoder
+    /// 2. Retrieves decoded frames from GPU
+    /// 3. Handles codec-specific features (profiles, levels, HDR)
+    /// 4. Manages surface pool allocation
+    #[cfg(moonlight_common_c_linked)]
+    pub fn decode_packet(
+        &self,
+        _codec_ctx: *mut super::gamestream_sys::AVCodecContext,
+        _packet: &[u8],
+    ) -> Result<Option<DecodedFrame>, String> {
+        // TODO: Phase 5 Implementation
+        // 1. Create AVPacket from payload
+        // 2. Call avcodec_send_packet(codec_ctx, packet)
+        // 3. Call avcodec_receive_frame(codec_ctx, frame)
+        // 4. Check frame format (check for AV_PIX_FMT_D3D11)
+        // 5. Map frame data pointer to GPU surface
+        // 6. Return decoded frame metadata
+        logger::log("⚠️  Hardware decode pipeline not yet implemented");
+        Ok(None)
+    }
+
+    /// Configure codec context for hardware acceleration
+    #[cfg(moonlight_common_c_linked)]
+    pub fn configure_codec_for_hardware(
+        &self,
+        _codec_ctx: *mut super::gamestream_sys::AVCodecContext,
+    ) -> Result<(), String> {
+        // TODO: Phase 5 Implementation
+        // 1. Set codec_ctx->pix_fmt = AV_PIX_FMT_D3D11
+        // 2. Set codec_ctx->hw_device_ctx to our D3D11 context buffer
+        // 3. Handle codec-specific features:
+        //    - H.264: Check for Baseline, Main, High profiles
+        //    - H.265: Handle Main, Main10 (10-bit), etc.
+        //    - AV1: Profile 0, 1, 2, 3 support
+        // 4. Enable reference frame invalidation for low-latency
+        logger::log("⚠️  Codec context hardware configuration not yet implemented");
+        Ok(())
+    }
+
+    /// Handle HDR metadata from decoded frames
+    #[cfg(moonlight_common_c_linked)]
+    pub fn extract_hdr_metadata(
+        &self,
+        _frame: *const super::gamestream_sys::AVFrame,
+    ) -> Result<HdrMetadata, String> {
+        // TODO: Phase 5 Implementation
+        // 1. Check for HDR10 metadata side data
+        // 2. Extract mastering display information
+        // 3. Extract content light level (MaxCLL, MaxFALL)
+        // 4. Check color space: BT.2020, etc.
+        // 5. Return HDR metadata for renderer
+        Ok(HdrMetadata::default())
+    }
 }
 
-impl Drop for D3D11HardwareDecoder {
+/// HDR Metadata from decoded frames
+#[cfg(moonlight_common_c_linked)]
+#[derive(Clone, Debug, Default)]
+pub struct HdrMetadata {
+    pub is_hdr: bool,
+    pub color_space: String,      // "BT.709" (SDR), "BT.2020" (HDR)
+    pub transfer_function: String, // "Linear", "SMPTE2084" (HDR10), "HLG", etc.
+    pub max_cll: u32,              // Maximum Content Light Level
+    pub max_fall: u32,             // Maximum Frame Average Light Level
+}
+
+/// Decoded frame result from hardware decoder
+#[cfg(moonlight_common_c_linked)]
+#[derive(Clone, Debug)]
+pub struct DecodedFrame {
+    pub width: u32,
+    pub height: u32,
+    pub surface_ptr: *mut c_void,
+    pub format: i32, // AV_PIX_FMT_D3D11 or similar
+    pub hdr_metadata: HdrMetadata,
+    pub frame_number: i32,
+}
+
+impl D3D11HardwareDecoder {
     fn drop(&mut self) {
         if let Some(_pool) = self.surface_pool.take() {
             logger::log("Releasing GPU surface pools");
@@ -877,6 +957,85 @@ pub fn create_d3d11_software_decoder(
     D3D11SoftwareDecoder::new(width, height)
 }
 
+/// Phase 5: Frame Pipeline Integration - Codec Support
+///
+/// These functions handle actual video decoding with codec-specific features.
+/// This is where HDR, codec profiles/levels, and bit depths are handled.
+
+/// Detect codec from video format and return FFmpeg codec name
+#[cfg(moonlight_common_c_linked)]
+pub fn detect_codec_name(video_format: i32) -> Option<&'static str> {
+    use super::gamestream_sys::*;
+
+    if video_format & (VIDEO_FORMAT_AV1_MAIN8 | VIDEO_FORMAT_AV1_MAIN10 | 
+                       VIDEO_FORMAT_AV1_HIGH8_444 | VIDEO_FORMAT_AV1_HIGH10_444) != 0 {
+        Some("av1")
+    } else if video_format & (VIDEO_FORMAT_H265 | VIDEO_FORMAT_H265_MAIN10 | 
+                               VIDEO_FORMAT_HEVC_REXT8_444 | VIDEO_FORMAT_HEVC_REXT10_444) != 0 {
+        Some("hevc")
+    } else if video_format & (VIDEO_FORMAT_H264 | VIDEO_FORMAT_H264_HIGH8_444) != 0 {
+        Some("h264")
+    } else {
+        None
+    }
+}
+
+/// Determine HDR support from video format
+#[cfg(moonlight_common_c_linked)]
+pub fn is_hdr_format(video_format: i32) -> bool {
+    use super::gamestream_sys::*;
+
+    // HDR10 profiles (10-bit)
+    video_format & (VIDEO_FORMAT_H265_MAIN10 | 
+                    VIDEO_FORMAT_HEVC_REXT10_444 | 
+                    VIDEO_FORMAT_AV1_MAIN10 | 
+                    VIDEO_FORMAT_AV1_HIGH10_444) != 0
+}
+
+/// Configure codec context for specific video format (codec profiles, levels, HDR)
+#[cfg(moonlight_common_c_linked)]
+pub fn configure_codec_for_video_format(
+    _codec_ctx: *mut super::gamestream_sys::AVCodecContext,
+    video_format: i32,
+) -> Result<(), String> {
+    let codec_name = detect_codec_name(video_format)
+        .ok_or(format!("Unknown video format: {video_format}"))?;
+    let is_hdr = is_hdr_format(video_format);
+
+    logger::log(&format!(
+        "📺 Configuring codec '{}' - HDR: {}",
+        codec_name, is_hdr
+    ));
+
+    // TODO: Phase 5 Implementation
+    // 1. Set appropriate codec context flags based on format
+    // 2. For H.264: Set profile level (Baseline, Main, High)
+    // 3. For H.265: Handle Main vs Main10 (bit depth)
+    // 4. For AV1: Handle profile (0, 1, 2, 3)
+    // 5. Configure HDR metadata handling if is_hdr == true
+    // 6. Set up reference frame invalidation for low-latency
+    // 7. Configure colorspace (BT.709 for SDR, BT.2020 for HDR)
+    logger::log("⚠️  Codec format configuration pending (Phase 5 TODO)");
+
+    Ok(())
+}
+
+/// Hook for decode loop integration
+/// Call this from process_pull_video_decode_unit() to attempt hardware decoding
+#[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
+pub fn try_hardware_decode(
+    payload: &[u8],
+    frame_number: i32,
+) -> Option<DecodedFrame> {
+    // TODO: Phase 5 Implementation
+    // 1. Get decoder from HARDWARE_DECODER_STATE static
+    // 2. If available, call decoder.decode_packet(payload, frame_number)
+    // 3. Return Some(DecodedFrame) on success
+    // 4. Return None to fall back to software decode
+    logger::log("⚠️  Hardware decode attempt pending (Phase 5 TODO)");
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -892,5 +1051,27 @@ mod tests {
         let decoder = D3D11HardwareDecoder::new().expect("decoder creation");
         let caps = decoder.get_capabilities().expect("should get capabilities");
         assert!(!caps.is_empty(), "Capabilities should not be empty");
+    }
+
+    #[cfg(moonlight_common_c_linked)]
+    #[test]
+    fn test_codec_detection() {
+        use super::gamestream_sys::*;
+
+        // Test H.264 detection
+        let h264_format = VIDEO_FORMAT_H264;
+        assert_eq!(detect_codec_name(h264_format), Some("h264"));
+
+        // Test H.265 detection
+        let h265_format = VIDEO_FORMAT_H265;
+        assert_eq!(detect_codec_name(h265_format), Some("hevc"));
+
+        // Test AV1 detection
+        let av1_format = VIDEO_FORMAT_AV1_MAIN8;
+        assert_eq!(detect_codec_name(av1_format), Some("av1"));
+
+        // Test HDR detection
+        assert!(!is_hdr_format(h264_format), "H.264 baseline is not HDR");
+        assert!(is_hdr_format(VIDEO_FORMAT_H265_MAIN10), "H.265 Main10 is HDR");
     }
 }
