@@ -247,7 +247,6 @@ impl D3D11Renderer {
             Flags: 0,
         };
 
-        let mut swapchain: Option<IDXGISwapChain> = None;
         // CreateSwapChainForHwnd returns the swapchain directly via generic T
         let result = unsafe {
             factory.CreateSwapChainForHwnd(
@@ -517,4 +516,173 @@ impl D3D11Renderer {
     pub fn get_device_ptr(&self) -> *mut std::ffi::c_void { std::ptr::null_mut() }
     pub fn device(&self) -> &() { &() }
     pub fn context(&self) -> &() { &() }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::*;
+
+    /// Test that the D3D11 device+shader pipeline can be created headlessly
+    /// (no window needed - just test SRV creation and shader compilation)
+    #[test]
+    fn shader_pipeline_creates_srvs_for_nv12() {
+        unsafe {
+            // Create a D3D11 device
+            let feature_levels = [D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0];
+            let mut device: Option<ID3D11Device> = None;
+            let mut ctx: Option<ID3D11DeviceContext> = None;
+            let mut fl = D3D_FEATURE_LEVEL_11_0;
+            D3D11CreateDevice(
+                None, D3D_DRIVER_TYPE_HARDWARE, HMODULE::default(),
+                D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+                Some(&feature_levels), 7,
+                Some(&mut device as *mut Option<ID3D11Device>),
+                Some(&mut fl as *mut D3D_FEATURE_LEVEL),
+                Some(&mut ctx as *mut Option<ID3D11DeviceContext>),
+            )
+            .expect("D3D11CreateDevice");
+            let device = device.expect("device");
+            let _ctx = ctx.expect("context");
+
+            // Create a small NV12 test texture
+            let w = 64u32;
+            let h = 64u32;
+            let desc = D3D11_TEXTURE2D_DESC {
+                Width: w, Height: h, MipLevels: 1, ArraySize: 1,
+                Format: DXGI_FORMAT_NV12,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: (D3D11_BIND_SHADER_RESOURCE.0) as u32,
+                CPUAccessFlags: 0, MiscFlags: 0,
+            };
+            let y_data = vec![126u8; (w * h) as usize];
+            let uv_data = vec![128u8; ((w / 2) * (h / 2) * 2) as usize];
+            let init_y = D3D11_SUBRESOURCE_DATA {
+                pSysMem: y_data.as_ptr() as *const _, SysMemPitch: w, SysMemSlicePitch: 0,
+            };
+            let init_uv = D3D11_SUBRESOURCE_DATA {
+                pSysMem: uv_data.as_ptr() as *const _, SysMemPitch: w, SysMemSlicePitch: 0,
+            };
+            let init = [init_y, init_uv];
+            let mut tex: Option<ID3D11Texture2D> = None;
+            device
+                .CreateTexture2D(
+                    &desc,
+                    Some(&init as *const D3D11_SUBRESOURCE_DATA),
+                    Some(&mut tex as *mut Option<ID3D11Texture2D>),
+                )
+                .expect("CreateTexture2D");
+            let tex = tex.expect("test NV12 texture");
+
+            // ── Test SRV creation for Y plane (R8_UNORM) ──
+            let luma_desc = D3D11_SHADER_RESOURCE_VIEW_DESC {
+                Format: DXGI_FORMAT_R8_UNORM,
+                ViewDimension: D3D11_SRV_DIMENSION_TEXTURE2D,
+                Anonymous: D3D11_SHADER_RESOURCE_VIEW_DESC_0 {
+                    Texture2D: D3D11_TEX2D_SRV { MostDetailedMip: 0, MipLevels: 1 },
+                },
+            };
+            let mut luma_srv: Option<ID3D11ShaderResourceView> = None;
+            device
+                .CreateShaderResourceView(
+                    &tex,
+                    Some(&luma_desc),
+                    Some(&mut luma_srv as *mut Option<ID3D11ShaderResourceView>),
+                )
+                .expect("Y-plane SRV");
+            assert!(luma_srv.is_some(), "Y-plane SRV should be created");
+
+            // ── Test SRV creation for UV plane (R8G8_UNORM) ──
+            let chroma_desc = D3D11_SHADER_RESOURCE_VIEW_DESC {
+                Format: DXGI_FORMAT_R8G8_UNORM,
+                ViewDimension: D3D11_SRV_DIMENSION_TEXTURE2D,
+                Anonymous: D3D11_SHADER_RESOURCE_VIEW_DESC_0 {
+                    Texture2D: D3D11_TEX2D_SRV { MostDetailedMip: 0, MipLevels: 1 },
+                },
+            };
+            let mut chroma_srv: Option<ID3D11ShaderResourceView> = None;
+            device
+                .CreateShaderResourceView(
+                    &tex,
+                    Some(&chroma_desc),
+                    Some(&mut chroma_srv as *mut Option<ID3D11ShaderResourceView>),
+                )
+                .expect("UV-plane SRV");
+            assert!(chroma_srv.is_some(), "UV-plane SRV should be created");
+
+            // ── Test vertex shader compilation ──
+            let mut vs: Option<ID3D11VertexShader> = None;
+            device
+                .CreateVertexShader(
+                    VERTEX_SHADER_BYTECODE,
+                    None,
+                    Some(&mut vs as *mut Option<ID3D11VertexShader>),
+                )
+                .expect("CreateVertexShader");
+            assert!(vs.is_some(), "vertex shader should compile");
+
+            // ── Test pixel shader compilation ──
+            let mut ps: Option<ID3D11PixelShader> = None;
+            device
+                .CreatePixelShader(
+                    PIXEL_SHADER_BYTECODE,
+                    None,
+                    Some(&mut ps as *mut Option<ID3D11PixelShader>),
+                )
+                .expect("CreatePixelShader");
+            assert!(ps.is_some(), "pixel shader should compile");
+
+            // ── Test input layout ──
+            let input_elements = [
+                D3D11_INPUT_ELEMENT_DESC {
+                    SemanticName: windows::core::s!("POSITION"),
+                    SemanticIndex: 0, Format: DXGI_FORMAT_R32G32_FLOAT,
+                    InputSlot: 0, AlignedByteOffset: 0,
+                    InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA, InstanceDataStepRate: 0,
+                },
+                D3D11_INPUT_ELEMENT_DESC {
+                    SemanticName: windows::core::s!("TEXCOORD"),
+                    SemanticIndex: 0, Format: DXGI_FORMAT_R32G32_FLOAT,
+                    InputSlot: 0, AlignedByteOffset: 8,
+                    InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA, InstanceDataStepRate: 0,
+                },
+            ];
+            let mut layout: Option<ID3D11InputLayout> = None;
+            device
+                .CreateInputLayout(
+                    &input_elements,
+                    VERTEX_SHADER_BYTECODE,
+                    Some(&mut layout as *mut Option<ID3D11InputLayout>),
+                )
+                .expect("CreateInputLayout");
+            assert!(layout.is_some(), "input layout should create");
+
+            // ── Test constant buffer ──
+            let csc = CscConstants {
+                csc_matrix: [1.0; 12],
+                offsets: [0.0; 4],
+                chroma_offset: [0.0; 2],
+                chroma_tex_max: [0.5; 2],
+            };
+            let cbuf_desc = D3D11_BUFFER_DESC {
+                ByteWidth: std::mem::size_of::<CscConstants>() as u32,
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
+                CPUAccessFlags: 0, MiscFlags: 0, StructureByteStride: 0,
+            };
+            let cbuf_init = D3D11_SUBRESOURCE_DATA {
+                pSysMem: &csc as *const _ as *const _,
+                SysMemPitch: 0, SysMemSlicePitch: 0,
+            };
+            let mut cbuf: Option<ID3D11Buffer> = None;
+            device
+                .CreateBuffer(
+                    &cbuf_desc,
+                    Some(&cbuf_init),
+                    Some(&mut cbuf as *mut Option<ID3D11Buffer>),
+                )
+                .expect("CreateBuffer(CSC)");
+            assert!(cbuf.is_some(), "CSC constant buffer should create");
+        }
+    }
 }

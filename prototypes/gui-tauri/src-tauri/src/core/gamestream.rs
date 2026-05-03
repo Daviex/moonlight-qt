@@ -1872,6 +1872,7 @@ fn native_video_renderer_loop(
     let mut d3d11_renderer: Option<D3D11Renderer> = {
         let hwnd = get_sdl3_window_hwnd(window.raw());
         // Try to share the hardware decoder's D3D11 device
+        #[cfg(moonlight_common_c_linked)]
         let hw_device = HARDWARE_DECODER_STATE
             .get()
             .and_then(|s| s.lock().ok())
@@ -1880,6 +1881,8 @@ fn native_video_renderer_loop(
                     decoder.device.as_ref().map(|d| (d.device.clone(), d.context.clone()))
                 })
             });
+        #[cfg(not(moonlight_common_c_linked))]
+        let hw_device: Option<(Option<windows::Win32::Graphics::Direct3D11::ID3D11Device>, Option<windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext>)> = None;
         let result = if let Some((ref dev_opt, ref ctx_opt)) = hw_device {
             logger::log("Using shared D3D11 device from hardware decoder");
             D3D11Renderer::create_with_device(hwnd, width as u32, height as u32, dev_opt.as_ref(), ctx_opt.as_ref())
@@ -1959,7 +1962,6 @@ fn native_video_renderer_loop(
             pending_controller_axis_updates,
         );
 
-        logger::log("Waiting for video frame...");
         match receive_latest_video_frame(&frame_slot) {
             Some(frame) => {
                 validate_decoded_video_frame(&frame)?;
@@ -2089,18 +2091,25 @@ fn native_video_renderer_loop(
 
 fn receive_latest_video_frame(frame_slot: &LatestVideoFrameSlot) -> Option<DecodedVideoFrame> {
     let Ok(mut pending_frame) = frame_slot.frame.lock() else {
+        logger::log("receive_latest_video_frame: lock failed");
         return None;
     };
     if pending_frame.is_none() {
+        logger::log("receive_latest_video_frame: waiting for frame...");
         let Ok((next_pending_frame, _)) = frame_slot
             .available
             .wait_timeout(pending_frame, NATIVE_VIDEO_INPUT_POLL_TIMEOUT)
         else {
+            logger::log("receive_latest_video_frame: condvar poisoned");
             return None;
         };
         pending_frame = next_pending_frame;
     }
-    pending_frame.take()
+    let frame = pending_frame.take();
+    if frame.is_some() {
+        logger::log("receive_latest_video_frame: got a frame!");
+    }
+    frame
 }
 
 fn create_sdl3_video_texture<'a>(
@@ -5254,6 +5263,7 @@ mod tests {
         assert!(callbacks.audio.decode_and_play_sample.is_some());
     }
 
+    #[cfg(moonlight_common_c_linked)]
     #[test]
     fn headless_media_callbacks_are_safe_noop_sinks() {
         let video = super::headless_video_callbacks();

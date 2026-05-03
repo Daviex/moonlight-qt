@@ -656,6 +656,7 @@ impl D3D11HardwareDecoder {
                         hw_context: None,
                         surface_pool: None,
                         is_available: true,
+                        #[cfg(moonlight_common_c_linked)]
                         allocated_frames: std::sync::Mutex::new(Vec::new()),
                     })
                 } else {
@@ -665,6 +666,7 @@ impl D3D11HardwareDecoder {
                         hw_context: None,
                         surface_pool: None,
                         is_available: false,
+                        #[cfg(moonlight_common_c_linked)]
                         allocated_frames: std::sync::Mutex::new(Vec::new()),
                     })
                 }
@@ -676,6 +678,7 @@ impl D3D11HardwareDecoder {
                     hw_context: None,
                     surface_pool: None,
                     is_available: false,
+                    #[cfg(moonlight_common_c_linked)]
                     allocated_frames: std::sync::Mutex::new(Vec::new()),
                 })
             }
