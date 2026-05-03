@@ -424,114 +424,50 @@ impl D3D11HwContext {
         }
         logger::log(format!("✅ FFmpeg D3D11VA support detected (device_type={})", device_type));
 
-        // Step 1: Create FFmpeg hwdevice context with D3D11VA using resolved device type
-        let mut hw_device_ctx: *mut c_void = std::ptr::null_mut();
-        
-        logger::log("Attempting to create FFmpeg D3D11VA hwdevice context with default device...");
-        
-        // IMPORTANT: D3D11VA device parameter should be NULL for default device,
-        // or a device index like "0", "1" for selecting specific adapters.
-        // Do NOT pass the actual device pointer - FFmpeg will enumerate and use the best device.
-        let result = unsafe {
-            super::gamestream_sys::av_hwdevice_ctx_create(
-                &mut hw_device_ctx,                                    // Output context (pointer to pointer)
-                device_type,                                           // Dynamically resolved hardware type
-                std::ptr::null(),                                      // Device name (NULL = default/first device)
-                std::ptr::null_mut(),                                  // Options (NULL)
-                0,                                                     // Flags
-            )
+        // Step 1: Allocate FFmpeg hwdevice context for D3D11VA
+        logger::log("Allocating FFmpeg D3D11VA hwdevice context...");
+
+        let hw_device_ctx = unsafe {
+            super::gamestream_sys::av_hwdevice_ctx_alloc(device_type)
         };
-
-        if result != 0 {
-            // Get detailed error message from FFmpeg
-            let mut errbuf = [0i8; 256];
-            unsafe {
-                super::gamestream_sys::av_strerror(
-                    result,
-                    errbuf.as_mut_ptr(),
-                    errbuf.len(),
-                );
-            }
-            let error_msg = unsafe { std::ffi::CStr::from_ptr(errbuf.as_ptr()) }
-                .to_string_lossy();
-            
-            logger::log(format!(
-                "❌ D3D11VA hwdevice_ctx_create with default device failed: error {} (0x{:08x})",
-                result, result as u32
-            ));
-            logger::log(format!("FFmpeg error: {}", error_msg));
-            
-            // Try with device index "0" for primary adapter
-            logger::log("Attempting with device index '0'...");
-            let device_index = std::ffi::CString::new("0")
-                .map_err(|_| "Failed to create C string for device index")?;
-            
-            let result2 = unsafe {
-                super::gamestream_sys::av_hwdevice_ctx_create(
-                    &mut hw_device_ctx,
-                    device_type,  // Use resolved device type
-                    device_index.as_ptr(),
-                    std::ptr::null_mut(),
-                    0,
-                )
-            };
-            
-            if result2 != 0 {
-                // Get detailed error message for second attempt
-                let mut errbuf2 = [0i8; 256];
-                unsafe {
-                    super::gamestream_sys::av_strerror(
-                        result2,
-                        errbuf2.as_mut_ptr(),
-                        errbuf2.len(),
-                    );
-                }
-                let error_msg2 = unsafe { std::ffi::CStr::from_ptr(errbuf2.as_ptr()) }
-                    .to_string_lossy();
-                
-                logger::log(format!(
-                    "❌ D3D11VA with device index '0' also failed: error {} (0x{:08x})",
-                    result2, result2 as u32
-                ));
-                logger::log(format!("FFmpeg error: {}", error_msg2));
-                logger::log("Possible causes for D3D11VA unavailability:");
-                logger::log("  1. FFmpeg compiled without D3D11VA support");
-                logger::log("  2. GPU drivers don't expose D3D11VA/DXVA2 capabilities");
-                logger::log("  3. Windows Media Feature Pack not installed (N/KN editions)");
-                logger::log("  4. Older GPU that doesn't support DXVA2");
-                logger::log("  5. System has no compatible D3D11 device");
-                return Err(format!(
-                    "D3D11VA hardware decoding unavailable. Falling back to software decoder.",
-                ));
-            }
-            logger::log("✅ D3D11VA hwdevice context created with device index '0'");
-        } else {
-            logger::log("✅ D3D11VA hwdevice context created with default device");
-        }
-
         if hw_device_ctx.is_null() {
-            logger::log("❌ FFmpeg hwdevice context creation returned null");
-            return Err("hwdevice context is null".into());
+            logger::log("❌ av_hwdevice_ctx_alloc returned null");
+            return Err("av_hwdevice_ctx_alloc failed".into());
         }
 
-        // Set D3D11_BIND_SHADER_RESOURCE flag on decode textures so we can
-        // create SRVs (Shader Resource Views) for NV12→BGRA pixel shader.
-        // The C++ code does this in prepareDecoderContextInGetFormat():
-        //   hw_device_ctx->texture_flags |= D3D11_BIND_SHADER_RESOURCE;
+        // Set D3D11_BIND_SHADER_RESOURCE BEFORE initialization (before
+        // FFmpeg creates its internal surface pool, per C++ pattern).
         unsafe {
-            // AVHWDeviceContext.hwctx is at offset 16 (after AVClass* + AVHWDeviceType + padding)
+            // AVHWDeviceContext.hwctx is at offset 16
             let hwctx_ptr = *((hw_device_ctx as *const u8).add(16) as *const *mut c_void);
             if !hwctx_ptr.is_null() {
                 // AVD3D11VADeviceContext.texture_flags is at offset 40
-                // (after 5 ID3D11* pointers: device, device_context, video_device, video_context, enumerator)
-                let texture_flags_ptr = (hwctx_ptr as *mut u8).add(40) as *mut u32;
-                *texture_flags_ptr |= 0x8; // D3D11_BIND_SHADER_RESOURCE
+                let flags = (hwctx_ptr as *mut u8).add(40) as *mut u32;
+                *flags |= 0x8; // D3D11_BIND_SHADER_RESOURCE
                 logger::log(format!(
-                    "✅ Set D3D11_BIND_SHADER_RESOURCE on decoder textures (texture_flags=0x{:08X})",
-                    *texture_flags_ptr
+                    "✅ Set D3D11_BIND_SHADER_RESOURCE (texture_flags=0x{:08X})",
+                    *flags
                 ));
             }
         }
+
+        // Step 2: Initialize the hwdevice context
+        logger::log("Initializing FFmpeg D3D11VA hwdevice context...");
+        let result = unsafe {
+            super::gamestream_sys::av_hwdevice_ctx_init(hw_device_ctx)
+        };
+
+        if result != 0 {
+            let mut errbuf = [0i8; 256];
+            unsafe {
+                super::gamestream_sys::av_strerror(result, errbuf.as_mut_ptr(), errbuf.len());
+            }
+            let error_msg = unsafe { std::ffi::CStr::from_ptr(errbuf.as_ptr()) }.to_string_lossy();
+            logger::log(format!("❌ av_hwdevice_ctx_init failed: {error_msg}"));
+            return Err(format!("av_hwdevice_ctx_init failed: {error_msg}"));
+        }
+
+        logger::log("✅ D3D11VA hwdevice context initialized");
 
         Ok(Self {
             hw_device_ctx: Some(hw_device_ctx),

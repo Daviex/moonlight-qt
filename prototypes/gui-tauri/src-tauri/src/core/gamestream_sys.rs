@@ -610,6 +610,8 @@ extern "C" {
     pub fn av_free(ptr: *mut c_void);
 
     // Hardware acceleration (D3D11VA) - Phase 2 integration
+    pub fn av_hwdevice_ctx_alloc(type_: c_int) -> *mut c_void;
+    pub fn av_hwdevice_ctx_init(ctx: *mut c_void) -> c_int;
     pub fn av_hwdevice_ctx_create(
         device_ctx: *mut *mut c_void,
         type_: c_int,
