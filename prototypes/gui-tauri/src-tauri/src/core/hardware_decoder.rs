@@ -635,6 +635,7 @@ pub struct D3D11HardwareDecoder {
     pub is_available: bool,
     // Keep allocated frames alive - do NOT free them
     // The D3D11 surfaces in frame.data[0] remain valid only while the frame is allocated
+    #[cfg(moonlight_common_c_linked)]
     allocated_frames: std::sync::Mutex<Vec<*mut super::gamestream_sys::AVFrame>>,
 }
 

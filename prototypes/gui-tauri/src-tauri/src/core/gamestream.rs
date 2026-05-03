@@ -5,6 +5,8 @@ use super::events::{BridgeEvent, BridgeEventKind};
 use super::gamestream_sys;
 #[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
 use super::hardware_decoder;
+#[cfg(target_os = "windows")]
+use super::d3d11_render::D3D11Renderer;
 use super::stream_input::{
     ButtonAction, ControllerCapabilities, ControllerState, ControllerType, KeyAction, KeyModifiers,
     MouseButton as StreamMouseButton, StreamInputSender,
@@ -799,6 +801,20 @@ impl NativeVideoRenderDiagnostics {
             self.max_update_us,
             average_render_us,
             self.max_render_us,
+        ));
+        self.last_log_at = Instant::now();
+    }
+
+    fn maybe_log_simple(&mut self, texture_width: usize, texture_height: usize) {
+        if self.last_log_at.elapsed() < NATIVE_VIDEO_DIAGNOSTIC_INTERVAL {
+            return;
+        }
+        let elapsed = self.started_at.elapsed().as_secs_f64().max(0.001);
+        let fps = self.displayed_frames as f64 / elapsed;
+        logger::log(format!(
+            "SDL3 video diagnostics: displayed={}; fps={:.1}; texture={}x{}; texture_recreates={}; last_frame={}",
+            self.displayed_frames, fps, texture_width, texture_height,
+            self.recreated_textures, self.last_frame_number,
         ));
         self.last_log_at = Instant::now();
     }
@@ -1826,18 +1842,50 @@ fn native_video_renderer_loop(
         .resizable()
         .build()
         .map_err(|error| error.to_string())?;
-    let mut canvas = window.into_canvas();
-    let texture_creator = canvas.texture_creator();
-    disable_sdl3_renderer_vsync(&canvas);
-    
-    // DO NOT create initial texture with codec_ctx width/height!
-    // They may be 0 until the first frame is decoded.
-    // Instead, we'll create the texture when the first frame arrives.
+
+    // Get raw window pointer before canvas potentially consumes it
+    let raw_sdl_window: *mut sdl3::sys::video::SDL_Window = window.raw();
+
+    // ── D3D11 native renderer (Windows only) ──
+    #[cfg(target_os = "windows")]
+    let mut d3d11_renderer: Option<D3D11Renderer> = {
+        let hwnd = get_sdl3_window_hwnd(window.raw());
+        match D3D11Renderer::create(hwnd, width as u32, height as u32) {
+            Ok(r) => {
+                logger::log("✅ D3D11 native renderer created");
+                Some(r)
+            }
+            Err(e) => {
+                logger::log(format!("⚠️  D3D11 renderer failed: {e}, using SDL3"));
+                None
+            }
+        }
+    };
+    #[cfg(not(target_os = "windows"))]
+    let mut d3d11_renderer: Option<D3D11Renderer> = None;
+
+    // ── SDL3 canvas (fallback for software decode or non-Windows) ──
+    // Note: window.into_canvas() consumes the window. We keep the
+    // SDL_Window pointer alive via the canvas's .window() method.
+    let mut canvas: Option<sdl3::render::WindowCanvas> = if d3d11_renderer.is_none() {
+        let c = window.into_canvas();
+        let raw_renderer = c.raw();
+        unsafe {
+            sdl3::sys::render::SDL_SetRenderVSync(raw_renderer, 0);
+        }
+        Some(c)
+    } else {
+        None
+    };
+    let texture_creator: Option<sdl3::render::TextureCreator<_>> = canvas.as_ref().map(|c| c.texture_creator());
+
     let mut video_texture: Option<Sdl3VideoTexture> = None;
-    
+
     sdl.mouse().show_cursor(false);
     sdl.mouse().capture(true);
-    sdl.mouse().set_relative_mouse_mode(canvas.window(), true);
+    unsafe {
+        sdl3::sys::mouse::SDL_SetWindowRelativeMouseMode(raw_sdl_window, true);
+    }
     logger::log("SDL3 native video renderer window created");
 
     let mut event_pump = sdl.event_pump().map_err(|error| error.to_string())?;
@@ -1850,18 +1898,23 @@ fn native_video_renderer_loop(
             break;
         }
         let mut pending_controller_axis_updates = Vec::new();
-        
-        // Process input events (use dummy dimensions if texture not created yet)
+
         let (event_width, event_height) = video_texture.as_ref()
             .map(|tex| (tex.width, tex.height))
             .unwrap_or((1920, 1080));
+
+        // Helper for output size (from D3D11 renderer or SDL3 canvas)
+        let output_size: Option<(u32, u32)> = d3d11_renderer.as_ref()
+            .map(|r| r.dimensions())
+            .or_else(|| canvas.as_ref().and_then(|c| c.output_size().ok()));
+
         for event in event_pump.poll_iter() {
-            if handle_sdl3_video_event(
+            if handle_sdl3_video_event_d3d11(
                 event,
                 &input_sender,
                 event_width,
                 event_height,
-                &mut canvas,
+                output_size.unwrap_or((width as u32, height as u32)),
                 &mut controllers,
                 &mut pending_controller_axis_updates,
             ) {
@@ -1873,130 +1926,114 @@ fn native_video_renderer_loop(
             &input_sender,
             pending_controller_axis_updates,
         );
-        
+
         match receive_latest_video_frame(&frame_slot) {
             Some(frame) => {
                 validate_decoded_video_frame(&frame)?;
                 let frame_width = frame.width() as usize;
                 let frame_height = frame.height() as usize;
                 let frame_format = frame.texture_format();
-                
-                // Initialize or recreate texture based on frame dimensions
-                let needs_texture_creation = match &video_texture {
-                    None => {
-                        logger::log(&format!(
-                            "First frame received: {}x{}, creating texture...",
-                            frame_width, frame_height
-                        ));
-                        true
-                    }
-                    Some(tex) => {
-                        frame_width != tex.width
-                            || frame_height != tex.height
-                            || frame_format != tex.format
-                    }
-                };
-                
-                if needs_texture_creation {
-                    // Create appropriate texture based on frame type
-                    #[cfg(target_os = "windows")]
-                    if let DecodedVideoFrame::D3D11Surface(gpu_frame) = &frame {
-                        video_texture = Some(create_sdl3_d3d11_texture(
-                            canvas.raw(),
-                            gpu_frame.surface_ptr,
-                            frame_width,
-                            frame_height,
-                        )?);
-                    } else {
-                        video_texture = Some(create_sdl3_video_texture(
-                            &texture_creator,
-                            frame_width,
-                            frame_height,
-                            frame_format,
-                        )?);
-                    }
-                    
-                    #[cfg(not(target_os = "windows"))]
-                    {
-                        video_texture = Some(create_sdl3_video_texture(
-                            &texture_creator,
-                            frame_width,
-                            frame_height,
-                            frame_format,
-                        )?);
-                    }
-                    
-                    diagnostics.recreated_textures =
-                        diagnostics.recreated_textures.saturating_add(1);
-                    logger::log(format!(
-                        "SDL3 video texture created; width={}; height={}; format={:?}; frame={}",
-                        frame_width, frame_height, frame_format, frame.frame_number()
-                    ));
-                }
-                
-                // Now we have a valid texture
-                if let Some(video_texture) = &mut video_texture {
-                    let update_start = Instant::now();
-                    update_sdl3_video_texture_wrapped(&video_texture, &frame)
-                        .map_err(|error| error.to_string())?;
-                    let update_us = update_start.elapsed().as_micros();
-                    
-                    // Phase 5e: Detect HDR and apply tone mapping
-                    #[cfg(target_os = "windows")]
-                    {
-                        if let DecodedVideoFrame::D3D11Surface(gpu_frame) = &frame {
-                            if gpu_frame.is_hdr {
-                                // HDR content detected - setup and execute tone mapping
-                                if let Ok(mut hdr_state) = HDR_RENDERER_STATE.get_or_init(|| Mutex::new(Some(HdrRendererState::default()))).lock() {
-                                    if let Some(state) = hdr_state.as_mut() {
-                                        if !state.hdr_enabled {
-                                            logger::log("🎬 HDR10 frame detected - enabling tone mapping shader");
-                                            state.hdr_enabled = true;
-                                            state.color_primaries = "BT.2020".to_string();
-                                            state.transfer_function = "SMPTE2084".to_string();
-                                            state.peak_brightness = 1000.0;
-                                            
-                                            // Enable DXGI HDR backbuffer
-                                            let _ = enable_dxgi_hdr_backbuffer(
-                                                video_texture.width as u32,
-                                                video_texture.height as u32,
-                                            );
-                                        }
-                                        
-                                        // Apply tone mapping to current frame
-                                        if state.shader_compiled {
-                                            let _ = apply_tone_mapping_to_frame();
-                                        }
-                                    }
-                                }
-                            }
+
+                // ── D3D11 hardware path ──
+                #[cfg(target_os = "windows")]
+                if let DecodedVideoFrame::D3D11Surface(gpu_frame) = &frame {
+                    if let Some(ref mut renderer) = d3d11_renderer {
+                        // Resize if needed
+                        let (rw, rh) = renderer.dimensions();
+                        if rw != frame_width as u32 || rh != frame_height as u32 {
+                            renderer.resize(frame_width as u32, frame_height as u32)?;
                         }
+                        // Open the shared decode texture on the render device
+                        // The surface_ptr points to an ID3D11Texture2D in NV12 format
+                        let nv12_tex: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D = unsafe {
+                            std::mem::transmute_copy(&gpu_frame.surface_ptr)
+                        };
+                        renderer.render_nv12_frame(
+                            &nv12_tex,
+                            frame_width as u32,
+                            frame_height as u32,
+                        )?;
+                        renderer.present()?;
+
+                        diagnostics.record_frame(
+                            frame.frame_number(),
+                            frame_format,
+                            0, // update: 0 (GPU-only, no CPU upload needed)
+                            0, // render: 0
+                            0, // frame_age: 0
+                            0,
+                        );
+                        diagnostics.maybe_log_simple(frame_width, frame_height);
+                        continue;
                     }
-                    
-                    let render_start = Instant::now();
-                    render_sdl3_video_frame_wrapped(
-                        &mut canvas,
-                        &video_texture,
-                    )?;
-                    let render_us = render_start.elapsed().as_micros();
-                    let frame_age_us = frame.decoded_at().elapsed().as_micros();
-                    diagnostics.record_frame(
-                        frame.frame_number(),
-                        frame_format,
-                        update_us,
-                        render_us,
-                        frame_age_us,
-                        0,
-                    );
-                    diagnostics.maybe_log(video_texture.width, video_texture.height, &canvas);
+                    // Fall through to SDL3 if D3D11 renderer is None
+                }
+
+                // ── SDL3 software path (fallback) ──
+                if let (Some(canvas_mut), Some(tc)) = (canvas.as_mut(), texture_creator.as_ref()) {
+                    let needs_texture_creation = match &video_texture {
+                        None => {
+                            logger::log(&format!(
+                                "First frame received: {}x{}, creating texture...",
+                                frame_width, frame_height
+                            ));
+                            true
+                        }
+                        Some(tex) => {
+                            frame_width != tex.width
+                                || frame_height != tex.height
+                                || frame_format != tex.format
+                        }
+                    };
+
+                    if needs_texture_creation {
+                        video_texture = Some(create_sdl3_video_texture(
+                            tc,
+                            frame_width,
+                            frame_height,
+                            frame_format,
+                        )?);
+                        diagnostics.recreated_textures =
+                            diagnostics.recreated_textures.saturating_add(1);
+                        logger::log(format!(
+                            "SDL3 video texture created; width={}; height={}; format={:?}; frame={}",
+                            frame_width, frame_height, frame_format, frame.frame_number()
+                        ));
+                    }
+
+                    if let Some(video_texture) = &mut video_texture {
+                        let update_start = Instant::now();
+                        update_sdl3_video_texture_wrapped(&video_texture, &frame)
+                            .map_err(|error| error.to_string())?;
+                        let update_us = update_start.elapsed().as_micros();
+
+                        let render_start = Instant::now();
+                        render_sdl3_video_frame_wrapped(
+                            canvas_mut,
+                            &video_texture,
+                        )?;
+                        let render_us = render_start.elapsed().as_micros();
+                        let frame_age_us = frame.decoded_at().elapsed().as_micros();
+                        diagnostics.record_frame(
+                            frame.frame_number(),
+                            frame_format,
+                            update_us,
+                            render_us,
+                            frame_age_us,
+                            0,
+                        );
+                        diagnostics.maybe_log(video_texture.width, video_texture.height, canvas_mut);
+                    }
                 }
             }
             None => {}
         }
     }
 
-    sdl.mouse().set_relative_mouse_mode(canvas.window(), false);
-    sdl.mouse().capture(false);
+    unsafe {
+        sdl3::sys::mouse::SDL_SetWindowRelativeMouseMode(raw_sdl_window, false);
+    }
+    unsafe { sdl3::sys::video::SDL_SetWindowMouseGrab(raw_sdl_window, false); }
     sdl.mouse().show_cursor(true);
     frame_slot.accepting_frames.store(false, Ordering::Release);
     frame_slot.available.notify_all();
@@ -2107,7 +2144,7 @@ fn create_sdl3_d3d11_texture<'a>(
         sdl3::sys::properties::SDL_SetNumberProperty(
             props,
             format_prop,
-            0x4E_56_31_32 as i64, // SDL_PIXELFORMAT_NV12
+            0x3231564Eu64 as i64, // SDL_PIXELFORMAT_NV12
         );
 
         // Set width
@@ -2134,17 +2171,30 @@ fn create_sdl3_d3d11_texture<'a>(
             5 as i64, // SDL_COLORSPACE_JPEG
         );
 
+        logger::log(&format!(
+            "Calling SDL_CreateTextureWithProperties; renderer={:p}, format=0x{:08X}, width={}, height={}",
+            renderer_raw, 0x3231564Eu32, width, height
+        ));
+
         // Create texture from properties
         let raw_texture = sdl3::sys::render::SDL_CreateTextureWithProperties(
             renderer_raw,
             props,
         );
+
+        logger::log(&format!(
+            "SDL_CreateTextureWithProperties returned; raw_texture={:p}",
+            raw_texture
+        ));
+
         sdl3::sys::properties::SDL_DestroyProperties(props);
 
         if raw_texture.is_null() {
+            let err = sdl3::get_error();
+            logger::log(&format!("SDL error: {}", err));
             return Err(format!(
                 "Failed to create D3D11 texture wrapper: {}",
-                sdl3::get_error()
+                err
             ));
         }
 
@@ -4765,6 +4815,129 @@ fn apply_libplacebo_tone_mapping() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Variant of handle_sdl3_video_event that takes explicit output_size
+/// instead of a canvas reference (for use with D3D11 renderer path).
+fn handle_sdl3_video_event_d3d11(
+    event: sdl3::event::Event,
+    input: &StreamInputSender,
+    reference_width: usize,
+    reference_height: usize,
+    output_size: (u32, u32),
+    controllers: &mut Option<Sdl3ControllerManager>,
+    pending_controller_axis_updates: &mut Vec<u32>,
+) -> bool {
+    match event {
+        sdl3::event::Event::Quit { .. }
+        | sdl3::event::Event::Window {
+            win_event: sdl3::event::WindowEvent::CloseRequested,
+            ..
+        } => return true,
+        sdl3::event::Event::MouseMotion {
+            x, y, xrel, yrel, ..
+        } => {
+            if xrel != 0.0 || yrel != 0.0 {
+                let _ = input.send_mouse_move(clamp_f32_to_i16(xrel), clamp_f32_to_i16(yrel));
+            } else {
+                send_sdl3_mouse_position_d3d11(input, x, y, reference_width, reference_height, output_size);
+            }
+        }
+        sdl3::event::Event::MouseButtonDown { mouse_btn, x, y, .. } => {
+            send_sdl3_mouse_position_d3d11(input, x, y, reference_width, reference_height, output_size);
+            send_sdl3_mouse_button(input, mouse_btn, ButtonAction::Press);
+        }
+        sdl3::event::Event::MouseButtonUp { mouse_btn, x, y, .. } => {
+            send_sdl3_mouse_position_d3d11(input, x, y, reference_width, reference_height, output_size);
+            send_sdl3_mouse_button(input, mouse_btn, ButtonAction::Release);
+        }
+        sdl3::event::Event::MouseWheel { x, y, .. } => {
+            let scroll_x = (x * 120.0).round();
+            let scroll_y = (y * 120.0).round();
+            if scroll_x != 0.0 {
+                let _ = input.send_high_res_horizontal_scroll(clamp_f32_to_i16(scroll_x));
+            }
+            if scroll_y != 0.0 {
+                let _ = input.send_high_res_scroll(clamp_f32_to_i16(scroll_y));
+            }
+        }
+        sdl3::event::Event::KeyDown { keycode, keymod, repeat, .. } => {
+            if !repeat {
+                if let Some(key_code) = keycode.and_then(sdl3_keycode_to_js_key_code) {
+                    let _ = input.send_keyboard(key_code, KeyAction::Down, sdl3_key_modifiers(keymod), true);
+                }
+            }
+        }
+        sdl3::event::Event::KeyUp { keycode, keymod, .. } => {
+            if let Some(key_code) = keycode.and_then(sdl3_keycode_to_js_key_code) {
+                let _ = input.send_keyboard(key_code, KeyAction::Up, sdl3_key_modifiers(keymod), true);
+            }
+        }
+        sdl3::event::Event::ControllerDeviceAdded { which, .. } => {
+            if let Some(controllers) = controllers.as_mut() {
+                controllers.open_controller(sdl3::sys::joystick::SDL_JoystickID(which), input);
+            }
+        }
+        sdl3::event::Event::ControllerDeviceRemoved { which, .. } => {
+            if let Some(controllers) = controllers.as_mut() {
+                controllers.remove_controller(which, input);
+            }
+        }
+        sdl3::event::Event::ControllerAxisMotion { which, axis, value, .. } => {
+            if let Some(controllers) = controllers.as_mut() {
+                if let Some(gamepad_id) = controllers.handle_axis(which, axis, value) {
+                    if !pending_controller_axis_updates.contains(&gamepad_id) {
+                        pending_controller_axis_updates.push(gamepad_id);
+                    }
+                }
+            }
+        }
+        sdl3::event::Event::ControllerButtonDown { which, button, .. } => {
+            if let Some(controllers) = controllers.as_mut() {
+                controllers.handle_button(which, button, true, input);
+            }
+        }
+        sdl3::event::Event::ControllerButtonUp { which, button, .. } => {
+            if let Some(controllers) = controllers.as_mut() {
+                controllers.handle_button(which, button, false, input);
+            }
+        }
+        _ => {}
+    }
+    false
+}
+
+fn send_sdl3_mouse_position_d3d11(
+    input: &StreamInputSender,
+    x: f32,
+    y: f32,
+    reference_width: usize,
+    reference_height: usize,
+    output_size: (u32, u32),
+) {
+    let (output_width, output_height) = output_size;
+    let video_region = scaled_video_region(
+        reference_width,
+        reference_height,
+        output_width as usize,
+        output_height as usize,
+    );
+    let x = clamp_f32_to_stream_i16(x - video_region.x, video_region.width);
+    let y = clamp_f32_to_stream_i16(y - video_region.y, video_region.height);
+    let _ = input.send_mouse_position(
+        x, y,
+        clamp_f32_to_i16(video_region.width),
+        clamp_f32_to_i16(video_region.height),
+    );
+}
+
+#[cfg(target_os = "windows")]
+fn get_sdl3_window_hwnd(window: *mut sdl3::sys::video::SDL_Window) -> *mut std::ffi::c_void {
+    unsafe {
+        let props = sdl3::sys::video::SDL_GetWindowProperties(window);
+        let prop_name = b"SDL.window.win32.hwnd\0".as_ptr() as *const i8;
+        sdl3::sys::properties::SDL_GetPointerProperty(props, prop_name, std::ptr::null_mut())
+    }
 }
 
 #[cfg(test)]

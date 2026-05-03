@@ -1,5 +1,6 @@
 pub mod apps;
 pub mod backend;
+pub mod d3d11_render;
 pub mod discovery;
 pub mod error;
 pub mod events;
