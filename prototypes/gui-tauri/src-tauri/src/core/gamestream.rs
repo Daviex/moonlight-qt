@@ -1594,13 +1594,32 @@ fn start_native_video_renderer(width: c_int, height: c_int) {
     let (stop_sender, stop_receiver) = mpsc::channel();
     let thread_frame_slot = Arc::clone(&frame_slot);
     let thread = std::thread::spawn(move || {
-        if let Err(error) =
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             native_video_renderer_loop(width, height, thread_frame_slot, stop_receiver)
-        {
-            emit_stream_event(
-                BridgeEventKind::Status,
-                format!("Native video renderer stopped: {error}."),
-            );
+        }));
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                logger::log(format!("Native video renderer error: {error}"));
+                emit_stream_event(
+                    BridgeEventKind::Status,
+                    format!("Native video renderer stopped: {error}."),
+                );
+            }
+            Err(panic) => {
+                let msg = if let Some(s) = panic.downcast_ref::<String>() {
+                    s.clone()
+                } else if let Some(s) = panic.downcast_ref::<&str>() {
+                    s.to_string()
+                } else {
+                    "unknown panic".to_string()
+                };
+                logger::log(format!("❌ Native video renderer PANICKED: {msg}"));
+                emit_stream_event(
+                    BridgeEventKind::Status,
+                    format!("Native video renderer crashed: {msg}"),
+                );
+            }
         }
     });
     if let Ok(mut slot) = VIDEO_RENDERER_STATE.get_or_init(|| Mutex::new(None)).lock() {
@@ -1899,7 +1918,9 @@ fn native_video_renderer_loop(
     }
     logger::log("SDL3 native video renderer window created");
 
+    logger::log("Creating SDL3 event pump...");
     let mut event_pump = sdl.event_pump().map_err(|error| error.to_string())?;
+    logger::log("SDL3 event pump created, entering render loop");
     let mut requested_stop = false;
     let mut diagnostics = NativeVideoRenderDiagnostics::new();
 
@@ -1938,6 +1959,7 @@ fn native_video_renderer_loop(
             pending_controller_axis_updates,
         );
 
+        logger::log("Waiting for video frame...");
         match receive_latest_video_frame(&frame_slot) {
             Some(frame) => {
                 validate_decoded_video_frame(&frame)?;
