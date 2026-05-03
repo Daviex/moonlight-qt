@@ -3,17 +3,10 @@
 use super::error::CoreError;
 use super::events::{BridgeEvent, BridgeEventKind};
 use super::gamestream_sys;
-#[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
-use super::hardware_decoder;
-#[cfg(target_os = "windows")]
-use super::d3d11_render::D3D11Renderer;
-#[cfg(target_os = "windows")]
-use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
 use super::stream_input::{
     ButtonAction, ControllerCapabilities, ControllerState, ControllerType, KeyAction, KeyModifiers,
     MouseButton as StreamMouseButton, StreamInputSender,
 };
-use super::stream_renderer::StreamRendererPlan;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -23,6 +16,7 @@ use std::ffi::CString;
 #[cfg(moonlight_common_c_linked)]
 use std::os::raw::c_uchar;
 use std::os::raw::{c_char, c_int, c_void};
+#[cfg(moonlight_common_c_linked)]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -38,19 +32,6 @@ const DEFAULT_VIDEO_PACKET_SIZE: u32 = 1392;
 const NATIVE_VIDEO_INPUT_POLL_TIMEOUT: Duration = Duration::from_millis(1);
 const NATIVE_VIDEO_DIAGNOSTIC_INTERVAL: Duration = Duration::from_secs(2);
 const SDL3_CONTROLLER_DIAGNOSTIC_INTERVAL: Duration = Duration::from_secs(2);
-const SDL_SOFTWARE_RENDERER_VIDEO_FORMATS: c_int = gamestream_sys::VIDEO_FORMAT_H264
-    | gamestream_sys::VIDEO_FORMAT_H265
-    | gamestream_sys::VIDEO_FORMAT_AV1_MAIN8;
-const VIDEO_CODEC_CONFIG_AUTO: c_int = 0;
-const VIDEO_CODEC_CONFIG_FORCE_H264: c_int = 1;
-const VIDEO_CODEC_CONFIG_FORCE_HEVC: c_int = 2;
-const VIDEO_CODEC_CONFIG_FORCE_AV1: c_int = 4;
-
-// Decoder capability bits
-const DECODER_CAP_SLICES_MASK: u32 = 0x0F;
-const DECODER_CAP_HEVC_RFI: u32 = 0x10;
-const DECODER_CAP_AV1_RFI: u32 = 0x20;
-const DECODER_CAP_PULL_THREAD: u32 = 0x40;
 
 static STREAM_EVENT_CONTEXT: OnceLock<Mutex<Option<StreamEventContext>>> = OnceLock::new();
 static AUDIO_SINK_STATE: OnceLock<Mutex<AudioSinkState>> = OnceLock::new();
@@ -60,26 +41,11 @@ static AUDIO_PLAYBACK_STATE: OnceLock<Mutex<Option<AudioPlayback>>> = OnceLock::
 static VIDEO_SINK_STATE: OnceLock<Mutex<VideoSinkState>> = OnceLock::new();
 #[cfg(moonlight_common_c_linked)]
 static VIDEO_DECODER_STATE: OnceLock<Mutex<Option<SoftwareVideoDecoder>>> = OnceLock::new();
-#[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
-static HARDWARE_DECODER_STATE: OnceLock<Mutex<Option<hardware_decoder::D3D11HardwareDecoder>>> =
-    OnceLock::new();
-#[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
-static GPU_SYNC_STATE: OnceLock<Mutex<Option<hardware_decoder::GpuSync>>> = OnceLock::new();
-#[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
-static D3D11_SOFTWARE_DECODER_STATE: OnceLock<Mutex<Option<hardware_decoder::D3D11SoftwareDecoder>>> =
-    OnceLock::new();
 #[cfg(moonlight_common_c_linked)]
 static VIDEO_DECODER_THREAD: OnceLock<Mutex<Option<VideoDecoderThread>>> = OnceLock::new();
 static VIDEO_RENDERER_STATE: OnceLock<Mutex<Option<NativeVideoRenderer>>> = OnceLock::new();
 static VIDEO_QUEUE_DIAGNOSTICS: OnceLock<Mutex<NativeVideoQueueDiagnostics>> = OnceLock::new();
 static VIDEO_DECODE_DIAGNOSTICS: OnceLock<Mutex<NativeVideoDecodeDiagnostics>> = OnceLock::new();
-// Synchronize FFmpeg codec context access between decoder and renderer threads
-#[cfg(moonlight_common_c_linked)]
-static CODEC_CONTEXT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-#[cfg(target_os = "windows")]
-static HDR_RENDERER_STATE: OnceLock<Mutex<Option<HdrRendererState>>> = OnceLock::new();
-#[cfg(target_os = "linux")]
-static VULKAN_RENDERER_STATE: OnceLock<Mutex<Option<VulkanRendererState>>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AudioConfiguration {
@@ -152,42 +118,6 @@ impl RemoteInputCrypto {
         rng.fill_bytes(&mut crypto.aes_iv[..4]);
         crypto
     }
-}
-
-/// Get decoder capabilities based on CPU count and platform
-/// This matches the behavior of FFmpegVideoDecoder::getDecoderCapabilities()
-fn get_decoder_capabilities() -> u32 {
-    // Check environment variable override first
-    if let Ok(caps_str) = std::env::var("DECODER_CAPS") {
-        if let Ok(caps) = u32::from_str_radix(&caps_str, 16) {
-            logger::log(format!(
-                "Using decoder capability override: 0x{:x}",
-                caps
-            ));
-            return caps;
-        }
-    }
-
-    // For software FFmpeg decoder (CPU-based):
-    // - Calculate parallel decode slices based on CPU core count (max 4)
-    // - Enable HEVC Reference Frame Invalidation (RFI)
-    // - Enable AV1 RFI
-    // - Mark that we use pull-model rendering thread
-
-    let cpu_count = num_cpus::get() as u32;
-    let slices = cpu_count.min(4);
-
-    let mut capabilities = slices & DECODER_CAP_SLICES_MASK;
-    capabilities |= DECODER_CAP_HEVC_RFI;
-    capabilities |= DECODER_CAP_AV1_RFI;
-    capabilities |= DECODER_CAP_PULL_THREAD;
-
-    logger::log(format!(
-        "Decoder capabilities: slices={}; hevc_rfi=true; av1_rfi=true; pull_thread=true; raw=0x{:x}",
-        slices, capabilities
-    ));
-
-    capabilities
 }
 
 #[derive(Clone, Debug, Default)]
@@ -360,7 +290,7 @@ struct VideoSinkConfiguration {
     flags: c_int,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct VideoSinkState {
     configuration: Option<VideoSinkConfiguration>,
     started: bool,
@@ -372,13 +302,12 @@ struct VideoSinkState {
     last_decoded_frame: Option<DecodedVideoFrame>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum DecodedVideoFrame {
     Rgba(RgbaVideoFrame),
     Yuv420(Yuv420VideoFrame),
     Nv12(NvVideoFrame),
     Nv21(NvVideoFrame),
-    D3D11Surface(D3D11VideoFrame),
 }
 
 impl DecodedVideoFrame {
@@ -387,7 +316,6 @@ impl DecodedVideoFrame {
             Self::Rgba(frame) => frame.width,
             Self::Yuv420(frame) => frame.width,
             Self::Nv12(frame) | Self::Nv21(frame) => frame.width,
-            Self::D3D11Surface(frame) => frame.width,
         }
     }
 
@@ -396,7 +324,6 @@ impl DecodedVideoFrame {
             Self::Rgba(frame) => frame.height,
             Self::Yuv420(frame) => frame.height,
             Self::Nv12(frame) | Self::Nv21(frame) => frame.height,
-            Self::D3D11Surface(frame) => frame.height,
         }
     }
 
@@ -405,7 +332,6 @@ impl DecodedVideoFrame {
             Self::Rgba(frame) => frame.frame_number,
             Self::Yuv420(frame) => frame.frame_number,
             Self::Nv12(frame) | Self::Nv21(frame) => frame.frame_number,
-            Self::D3D11Surface(frame) => frame.frame_number,
         }
     }
 
@@ -414,7 +340,6 @@ impl DecodedVideoFrame {
             Self::Rgba(frame) => frame.decoded_at,
             Self::Yuv420(frame) => frame.decoded_at,
             Self::Nv12(frame) | Self::Nv21(frame) => frame.decoded_at,
-            Self::D3D11Surface(frame) => frame.decoded_at,
         }
     }
 
@@ -424,7 +349,6 @@ impl DecodedVideoFrame {
             Self::Yuv420(_) => Sdl3VideoTextureFormat::Yuv420,
             Self::Nv12(_) => Sdl3VideoTextureFormat::Nv12,
             Self::Nv21(_) => Sdl3VideoTextureFormat::Nv21,
-            Self::D3D11Surface(_) => Sdl3VideoTextureFormat::Nv12, // D3D11 hardware decoder outputs NV12 format
         }
     }
 }
@@ -465,21 +389,6 @@ struct VideoPlane {
     pitch: usize,
 }
 
-#[derive(Clone, Debug)]
-struct D3D11VideoFrame {
-    width: c_int,
-    height: c_int,
-    frame_number: c_int,
-    decoded_at: Instant,
-    surface_ptr: *mut c_void,
-    is_hdr: bool,
-}
-
-// SAFETY: D3D11 surface pointers are thread-safe when managed by the hardware decoder
-// The surface is only accessed in the renderer thread after decoding completes
-unsafe impl Send for D3D11VideoFrame {}
-unsafe impl Sync for D3D11VideoFrame {}
-
 struct NativeVideoRenderer {
     frame_slot: Arc<LatestVideoFrameSlot>,
     stop_sender: Option<Sender<()>>,
@@ -492,20 +401,10 @@ struct VideoDecoderThread {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
+#[derive(Default)]
 struct LatestVideoFrameSlot {
     frame: Mutex<Option<DecodedVideoFrame>>,
     available: Condvar,
-    accepting_frames: AtomicBool,
-}
-
-impl Default for LatestVideoFrameSlot {
-    fn default() -> Self {
-        Self {
-            frame: Mutex::new(None),
-            available: Condvar::new(),
-            accepting_frames: AtomicBool::new(true),
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -516,59 +415,11 @@ enum Sdl3VideoTextureFormat {
     Nv21,
 }
 
-// Phase 5e: HDR Renderer State
-#[cfg(target_os = "windows")]
-#[derive(Debug, Clone)]
-struct HdrRendererState {
-    hdr_enabled: bool,
-    peak_brightness: f32,  // max brightness (nits) - 1000 for HDR10
-    color_primaries: String, // "BT.2020" for HDR
-    transfer_function: String, // "SMPTE2084" for HDR10
-    shader_compiled: bool, // Track if tone mapping shader is compiled
-}
-
-#[cfg(target_os = "windows")]
-impl Default for HdrRendererState {
-    fn default() -> Self {
-        Self {
-            hdr_enabled: false,
-            peak_brightness: 1000.0,
-            color_primaries: "BT.709".to_string(),
-            transfer_function: "SDR".to_string(),
-            shader_compiled: false,
-        }
-    }
-}
-
-enum Sdl3VideoTextureInner<'a> {
-    Safe(sdl3::render::Texture<'a>),
-    #[cfg(target_os = "windows")]
-    RawD3D11(*mut sdl3::sys::render::SDL_Texture),
-}
-
 struct Sdl3VideoTexture<'a> {
-    inner: Sdl3VideoTextureInner<'a>,
+    texture: sdl3::render::Texture<'a>,
     width: usize,
     height: usize,
     format: Sdl3VideoTextureFormat,
-}
-
-impl<'a> Sdl3VideoTexture<'a> {
-    fn get_raw_texture(&self) -> *mut sdl3::sys::render::SDL_Texture {
-        match &self.inner {
-            Sdl3VideoTextureInner::Safe(tex) => tex.raw(),
-            #[cfg(target_os = "windows")]
-            Sdl3VideoTextureInner::RawD3D11(ptr) => *ptr,
-        }
-    }
-
-    fn is_gpu_surface(&self) -> bool {
-        #[cfg(target_os = "windows")]
-        if matches!(&self.inner, Sdl3VideoTextureInner::RawD3D11(_)) {
-            return true;
-        }
-        false
-    }
 }
 
 struct NativeVideoQueueDiagnostics {
@@ -592,10 +443,6 @@ struct NativeVideoDecodeDiagnostics {
     last_frame_number: c_int,
     missing_decode_units: u64,
     max_decode_unit_gap: c_int,
-    rgba_frames: u64,
-    yuv420_frames: u64,
-    nv12_frames: u64,
-    nv21_frames: u64,
 }
 
 struct NativeVideoRenderDiagnostics {
@@ -613,10 +460,6 @@ struct NativeVideoRenderDiagnostics {
     stale_queue_frames: u64,
     max_frame_gap: c_int,
     last_frame_number: c_int,
-    rgba_frames: u64,
-    yuv420_frames: u64,
-    nv12_frames: u64,
-    nv21_frames: u64,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -680,10 +523,6 @@ impl Default for NativeVideoDecodeDiagnostics {
             last_frame_number: 0,
             missing_decode_units: 0,
             max_decode_unit_gap: 0,
-            rgba_frames: 0,
-            yuv420_frames: 0,
-            nv12_frames: 0,
-            nv21_frames: 0,
         }
     }
 }
@@ -706,17 +545,12 @@ impl NativeVideoRenderDiagnostics {
             stale_queue_frames: 0,
             max_frame_gap: 0,
             last_frame_number: 0,
-            rgba_frames: 0,
-            yuv420_frames: 0,
-            nv12_frames: 0,
-            nv21_frames: 0,
         }
     }
 
     fn record_frame(
         &mut self,
         frame_number: c_int,
-        format: Sdl3VideoTextureFormat,
         update_us: u128,
         render_us: u128,
         frame_age_us: u128,
@@ -728,20 +562,6 @@ impl NativeVideoRenderDiagnostics {
             self.max_frame_gap = self.max_frame_gap.max(gap);
         }
         self.displayed_frames = self.displayed_frames.saturating_add(1);
-        match format {
-            Sdl3VideoTextureFormat::Rgba => {
-                self.rgba_frames = self.rgba_frames.saturating_add(1);
-            }
-            Sdl3VideoTextureFormat::Yuv420 => {
-                self.yuv420_frames = self.yuv420_frames.saturating_add(1);
-            }
-            Sdl3VideoTextureFormat::Nv12 => {
-                self.nv12_frames = self.nv12_frames.saturating_add(1);
-            }
-            Sdl3VideoTextureFormat::Nv21 => {
-                self.nv21_frames = self.nv21_frames.saturating_add(1);
-            }
-        }
         self.last_frame_number = frame_number;
         self.total_update_us = self.total_update_us.saturating_add(update_us);
         self.total_render_us = self.total_render_us.saturating_add(render_us);
@@ -782,17 +602,13 @@ impl NativeVideoRenderDiagnostics {
             .map(|(width, height)| format!("{width}x{height}"))
             .unwrap_or_else(|error| format!("unavailable:{error}"));
         logger::log(format!(
-            "SDL3 video diagnostics: displayed={}; fps={:.1}; texture={}x{}; output={}; texture_recreates={}; rgba_frames={}; yuv420_frames={}; nv12_frames={}; nv21_frames={}; last_frame={}; skipped_frame_numbers={}; stale_queue_frames={}; max_frame_gap={}; avg_frame_age_us={}; max_frame_age_us={}; avg_update_us={}; max_update_us={}; avg_render_us={}; max_render_us={}",
+            "SDL3 video diagnostics: displayed={}; fps={:.1}; texture={}x{}; output={}; texture_recreates={}; last_frame={}; skipped_frame_numbers={}; stale_queue_frames={}; max_frame_gap={}; avg_frame_age_us={}; max_frame_age_us={}; avg_update_us={}; max_update_us={}; avg_render_us={}; max_render_us={}",
             self.displayed_frames,
             self.displayed_frames as f64 / elapsed,
             texture_width,
             texture_height,
             output_size,
             self.recreated_textures,
-            self.rgba_frames,
-            self.yuv420_frames,
-            self.nv12_frames,
-            self.nv21_frames,
             self.last_frame_number,
             self.skipped_frame_numbers,
             self.stale_queue_frames,
@@ -803,20 +619,6 @@ impl NativeVideoRenderDiagnostics {
             self.max_update_us,
             average_render_us,
             self.max_render_us,
-        ));
-        self.last_log_at = Instant::now();
-    }
-
-    fn maybe_log_simple(&mut self, texture_width: usize, texture_height: usize) {
-        if self.last_log_at.elapsed() < NATIVE_VIDEO_DIAGNOSTIC_INTERVAL {
-            return;
-        }
-        let elapsed = self.started_at.elapsed().as_secs_f64().max(0.001);
-        let fps = self.displayed_frames as f64 / elapsed;
-        logger::log(format!(
-            "SDL3 video diagnostics: displayed={}; fps={:.1}; texture={}x{}; texture_recreates={}; last_frame={}",
-            self.displayed_frames, fps, texture_width, texture_height,
-            self.recreated_textures, self.last_frame_number,
         ));
         self.last_log_at = Instant::now();
     }
@@ -1038,202 +840,45 @@ unsafe extern "C" fn headless_video_setup(
     _dr_flags: c_int,
 ) -> c_int {
     #[cfg(moonlight_common_c_linked)]
-    {
-        // === WINDOWS FALLBACK CHAIN ===
-        // Priority 1: D3D11 Hardware (HW decode)
-        // Priority 2: D3D11 Software (SW decode on GPU)
-        // Priority 3: Software SDL (CPU decode)
-        #[cfg(target_os = "windows")]
-        {
-            // Try D3D11 hardware decoding first
-            let hw_decoder_result = hardware_decoder::create_complete_hardware_decoder(
-                width as u32,
-                height as u32,
-            );
+    let decoder_result = SoftwareVideoDecoder::new(video_format);
 
-            if let Ok((decoder, sync)) = hw_decoder_result {
-                if let Ok(mut slot) = HARDWARE_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
-                    *slot = Some(decoder);
-                }
-                if let Ok(mut slot) = GPU_SYNC_STATE.get_or_init(|| Mutex::new(None)).lock() {
-                    *slot = Some(sync);
-                }
-                emit_stream_event(
-                    BridgeEventKind::Status,
-                    format!("✅ D3D11VA HARDWARE decoder initialized for {width}x{height}@{redraw_rate}."),
-                );
-                store_video_sink_state(|state| {
-                    *state = VideoSinkState {
-                        configuration: Some(VideoSinkConfiguration {
-                            video_format,
-                            width,
-                            height,
-                            redraw_rate,
-                            flags: _dr_flags,
-                        }),
-                        ..VideoSinkState::default()
-                    };
-                });
-                start_native_video_renderer(width, height);
-                emit_stream_event(
-                    BridgeEventKind::Status,
-                    format!("🎮 Headless video sink configured for {width}x{height}@{redraw_rate} with D3D11 HARDWARE decoding (Priority 1)."),
-                );
-                
-                // Create a SoftwareVideoDecoder which will attach hardware context in its new() method
-                // This is needed to activate the decoder thread
-                logger::log(format!("Creating SoftwareVideoDecoder wrapper for hardware decoding with video_format={}", video_format));
-                let decoder_result = SoftwareVideoDecoder::new(video_format);
-                logger::log(format!("SoftwareVideoDecoder::new() returned: {:?}", if decoder_result.is_ok() { "Ok" } else { "Err" }));
-                match decoder_result {
-                    Ok(decoder) => {
-                        logger::log("Storing SoftwareVideoDecoder in VIDEO_DECODER_STATE...");
-                        if let Ok(mut slot) = VIDEO_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
-                            *slot = Some(decoder);
-                            logger::log("✅ Hardware decoder ready in video decoder pipeline");
-                        } else {
-                            logger::log("⚠️  Failed to lock VIDEO_DECODER_STATE");
-                        }
-                    }
-                    Err(e) => {
-                        logger::log(format!("⚠️  Failed to create software decoder wrapper for hardware decoding: {}", e));
-                    }
-                }
-                
-                return gamestream_sys::DR_OK;
-            }
-
-            // Fallback to D3D11 software decoding (Priority 2)
-            emit_stream_event(
-                BridgeEventKind::Status,
-                "⚠️  D3D11 hardware decoder unavailable, attempting D3D11 software decoder (Priority 2)...".into(),
-            );
-            
-            let sw_decoder_result = hardware_decoder::create_d3d11_software_decoder(
-                width as u32,
-                height as u32,
-            );
-            
-            if let Ok(decoder) = sw_decoder_result {
-                if let Ok(mut slot) = D3D11_SOFTWARE_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
-                    *slot = Some(decoder);
-                }
-                
-                // Also create a CPU software decoder for FFmpeg bitstream decoding
-                let cpu_decoder_result = SoftwareVideoDecoder::new(video_format);
-                
-                match cpu_decoder_result {
-                    Ok(cpu_decoder) => {
-                        if let Ok(mut slot) = VIDEO_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
-                            *slot = Some(cpu_decoder);
-                        }
-                        emit_stream_event(
-                            BridgeEventKind::Status,
-                            format!("✅ D3D11 SOFTWARE decoder initialized for {width}x{height}@{redraw_rate}."),
-                        );
-                        store_video_sink_state(|state| {
-                            *state = VideoSinkState {
-                                configuration: Some(VideoSinkConfiguration {
-                                    video_format,
-                                    width,
-                                    height,
-                                    redraw_rate,
-                                    flags: _dr_flags,
-                                }),
-                                ..VideoSinkState::default()
-                            };
-                        });
-                        start_native_video_renderer(width, height);
-                        emit_stream_event(
-                            BridgeEventKind::Status,
-                            format!("🎮 Headless video sink configured for {width}x{height}@{redraw_rate} with D3D11 SOFTWARE decoding (Priority 2)."),
-                        );
-                        return gamestream_sys::DR_OK;
-                    }
-                    Err(error) => {
-                        emit_stream_event(
-                            BridgeEventKind::Status,
-                            format!("⚠️  D3D11 software decoder GPU surface pool ready, but CPU FFmpeg decoder failed: {error}. Falling back to CPU software decoder (Priority 3)..."),
-                        );
-                    }
-                }
-            }
-            
-            // Final fallback to CPU software decode
-            emit_stream_event(
-                BridgeEventKind::Status,
-                "⚠️  D3D11 software decoder unavailable, falling back to CPU software decoder (Priority 3)...".into(),
-            );
-        }
-
-        // === LINUX FALLBACK CHAIN ===
-        // Priority 1: Vulkan + Libplacebo (GPU decode)
-        // Priority 2: Software SDL (CPU decode)
-        #[cfg(target_os = "linux")]
-        {
-            // Try Vulkan with libplacebo for GPU decoding
-            // Libplacebo is already integrated in stream_libplacebo.rs
-            emit_stream_event(
-                BridgeEventKind::Status,
-                format!("Attempting Vulkan + Libplacebo GPU decoder for {width}x{height}@{redraw_rate} (Priority 1)..."),
-            );
-            
-            // TODO: Implement Vulkan decoder integration
-            // Libplacebo can provide Vulkan rendering support
-            // For now, fall through to CPU software decode
-        }
-    }
-
-    // === FINAL FALLBACK: Software CPU Decoding (All Platforms) ===
-    // This is the universal fallback used on all platforms
+    store_video_sink_state(|state| {
+        *state = VideoSinkState {
+            configuration: Some(VideoSinkConfiguration {
+                video_format,
+                width,
+                height,
+                redraw_rate,
+                flags: _dr_flags,
+            }),
+            ..VideoSinkState::default()
+        };
+    });
     #[cfg(moonlight_common_c_linked)]
-    {
-        emit_stream_event(
-            BridgeEventKind::Status,
-            "🔄 Using FFmpeg SOFTWARE decoder (CPU decode, all platforms fallback)...".into(),
-        );
-
-        let decoder_result = SoftwareVideoDecoder::new(video_format);
-
-        store_video_sink_state(|state| {
-            *state = VideoSinkState {
-                configuration: Some(VideoSinkConfiguration {
-                    video_format,
-                    width,
-                    height,
-                    redraw_rate,
-                    flags: _dr_flags,
-                }),
-                ..VideoSinkState::default()
-            };
-        });
-
-        match decoder_result {
-            Ok(decoder) => {
-                let codec = decoder.codec_display_name();
-                if let Ok(mut slot) = VIDEO_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
-                    *slot = Some(decoder);
-                }
-                emit_stream_event(
-                    BridgeEventKind::Status,
-                    format!("📺 Software video decoder configured for {codec} (Final fallback)."),
-                );
+    match decoder_result {
+        Ok(decoder) => {
+            let codec = decoder.codec_display_name();
+            if let Ok(mut slot) = VIDEO_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+                *slot = Some(decoder);
             }
-            Err(error) => {
-                emit_stream_event(
-                    BridgeEventKind::Status,
-                    format!("❌ All video decoders failed. Software decoder setup error: {error}."),
-                );
-                return gamestream_sys::DR_NEED_IDR;
-            }
+            emit_stream_event(
+                BridgeEventKind::Status,
+                format!("Software video decoder configured for {codec}."),
+            );
+        }
+        Err(error) => {
+            emit_stream_event(
+                BridgeEventKind::Status,
+                format!("Software video decoder setup failed: {error}."),
+            );
+            return gamestream_sys::DR_NEED_IDR;
         }
     }
-
     start_native_video_renderer(width, height);
     emit_stream_event(
         BridgeEventKind::Status,
         format!(
-            "✅ Headless video sink configured for {width}x{height}@{redraw_rate} format {video_format}."
+            "Headless video sink configured for {width}x{height}@{redraw_rate} format {video_format}."
         ),
     );
     gamestream_sys::DR_OK
@@ -1266,22 +911,6 @@ unsafe extern "C" fn headless_video_stop() {
 unsafe extern "C" fn headless_video_cleanup() {
     #[cfg(moonlight_common_c_linked)]
     stop_video_decoder_thread();
-    
-    // Cleanup hardware decoders
-    #[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
-    {
-        if let Ok(mut slot) = HARDWARE_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
-            *slot = None;
-        }
-        if let Ok(mut slot) = GPU_SYNC_STATE.get_or_init(|| Mutex::new(None)).lock() {
-            *slot = None;
-        }
-        if let Ok(mut slot) = D3D11_SOFTWARE_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
-            *slot = None;
-        }
-        logger::log("D3D11 hardware and software decoders released");
-    }
-    
     stop_native_video_renderer();
     #[cfg(moonlight_common_c_linked)]
     if let Ok(mut slot) = VIDEO_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
@@ -1332,53 +961,25 @@ fn stop_video_decoder_thread() {
 
 #[cfg(moonlight_common_c_linked)]
 fn video_decoder_thread_loop(mut decoder: SoftwareVideoDecoder, should_stop: Arc<AtomicBool>) {
-    logger::log("VIDEO DECODER THREAD: Starting main loop");
-    
-    // Use catch_unwind to capture panics in unsafe FFI code
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        while !should_stop.load(Ordering::Acquire) {
-            logger::log("VIDEO DECODER THREAD: Waiting for next video frame...");
-            
-            let mut frame_handle: *mut c_void = std::ptr::null_mut();
-            let mut decode_unit: *mut gamestream_sys::DecodeUnit = std::ptr::null_mut();
-            
-            // SAFETY: Output pointers are valid stack locals. Limelight owns the returned decode unit
-            // until LiCompleteVideoFrame() is called below.
-            let got_frame =
-                unsafe { gamestream_sys::LiWaitForNextVideoFrame(&mut frame_handle, &mut decode_unit) };
-            
-            if !got_frame {
-                logger::log("VIDEO DECODER THREAD: No frame available, continuing");
-                continue;
-            }
-            
-            logger::log(&format!("VIDEO DECODER THREAD: Got frame handle={:p}, decode_unit={:p}", frame_handle, decode_unit));
-            
-            if should_stop.load(Ordering::Acquire) {
-                logger::log("VIDEO DECODER THREAD: Stop signal received, breaking");
-                // SAFETY: frame_handle was returned by LiWaitForNextVideoFrame and must be completed once.
-                unsafe { gamestream_sys::LiCompleteVideoFrame(frame_handle, gamestream_sys::DR_OK) };
-                break;
-            }
-            
-            logger::log("VIDEO DECODER THREAD: Processing decode unit...");
-            let status = process_pull_video_decode_unit(&mut decoder, decode_unit);
-            logger::log(&format!("VIDEO DECODER THREAD: Process returned status={}", status));
-            
+    while !should_stop.load(Ordering::Acquire) {
+        let mut frame_handle: *mut c_void = std::ptr::null_mut();
+        let mut decode_unit: *mut gamestream_sys::DecodeUnit = std::ptr::null_mut();
+        // SAFETY: Output pointers are valid stack locals. Limelight owns the returned decode unit
+        // until LiCompleteVideoFrame() is called below.
+        let got_frame =
+            unsafe { gamestream_sys::LiWaitForNextVideoFrame(&mut frame_handle, &mut decode_unit) };
+        if !got_frame {
+            continue;
+        }
+        if should_stop.load(Ordering::Acquire) {
             // SAFETY: frame_handle was returned by LiWaitForNextVideoFrame and must be completed once.
-            unsafe { gamestream_sys::LiCompleteVideoFrame(frame_handle, status) };
+            unsafe { gamestream_sys::LiCompleteVideoFrame(frame_handle, gamestream_sys::DR_OK) };
+            break;
         }
-    }));
-    
-    match result {
-        Ok(_) => {
-            logger::log("VIDEO DECODER THREAD: Exited normally");
-        }
-        Err(e) => {
-            logger::log(&format!("❌ VIDEO DECODER THREAD PANICKED: {:?}", e));
-        }
+        let status = process_pull_video_decode_unit(&mut decoder, decode_unit);
+        // SAFETY: frame_handle was returned by LiWaitForNextVideoFrame and must be completed once.
+        unsafe { gamestream_sys::LiCompleteVideoFrame(frame_handle, status) };
     }
-    
     logger::log("Rust video decoder thread stopped");
 }
 
@@ -1391,107 +992,28 @@ fn process_pull_video_decode_unit(
         return gamestream_sys::DR_OK;
     }
 
-    // Wrap entire processing in panic catcher
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: Limelight owns the decode unit for the duration of this callback.
-        let decode_unit = unsafe { &*decode_unit };
-        let bytes_received = decode_unit_bytes(decode_unit);
-        let payload = unsafe { copy_decode_unit_payload(decode_unit) };
-        let frame_number = decode_unit.frame_number;
-        let decode_start = Instant::now();
-        
-        logger::log(&format!("VIDEO DECODE UNIT: frame={}, bytes={}", frame_number, bytes_received));
-        
-        // Try hardware decoder first (Phase 5 integration)
-        #[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
-        let decoded_frame = {
-            // Synchronize FFmpeg codec context access with renderer thread
-            let _codec_lock = CODEC_CONTEXT_LOCK.get_or_init(|| Mutex::new(())).lock().ok();
-            
-            // Check if hardware decoder is available
-            if let Ok(hw_slot) = HARDWARE_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
-                if let Some(hw_decoder) = hw_slot.as_ref() {
-                    logger::log(&format!("VIDEO DECODE UNIT: Attempting hardware decode, codec_context={:p}", decoder.codec_context));
-                    
-                    // Wrap decode_packet in catch_unwind to catch crashes
-                    let decode_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        hw_decoder.decode_packet(decoder.codec_context, &payload, frame_number)
-                    }));
-                    
-                    match decode_result {
-                        Ok(Ok(Some(decoded_hw_frame))) => {
-                            // Hardware decode successful! Keep GPU surface for rendering
-                            let gpu_frame = DecodedVideoFrame::D3D11Surface(D3D11VideoFrame {
-                                width: decoded_hw_frame.width as c_int,
-                                height: decoded_hw_frame.height as c_int,
-                                frame_number,
-                                decoded_at: Instant::now(),
-                                surface_ptr: decoded_hw_frame.surface_ptr,
-                                is_hdr: decoded_hw_frame.hdr_metadata.is_hdr,
-                            });
-                            logger::log(&format!(
-                                "✅ GPU decode frame #{}: {}x{} (Phase 5d: zero-copy rendering)",
-                                frame_number,
-                                decoded_hw_frame.width,
-                                decoded_hw_frame.height
-                            ));
-                            Some(gpu_frame)
-                        }
-                        Ok(Ok(None)) => {
-                            // No frame ready yet from hardware decoder, try software
-                            decode_pull_video_payload(decoder, &payload, frame_number)
-                        }
-                        Ok(Err(error)) => {
-                            logger::log(&format!("⚠️ Hardware decode error: {error}, falling back to software"));
-                            decode_pull_video_payload(decoder, &payload, frame_number)
-                        }
-                        Err(_panic) => {
-                            logger::log("❌ PANIC in decode_packet! Falling back to software");
-                            decode_pull_video_payload(decoder, &payload, frame_number)
-                        }
-                    }
-                } else {
-                    // Hardware decoder not initialized
-                    decode_pull_video_payload(decoder, &payload, frame_number)
-                }
-            } else {
-                decode_pull_video_payload(decoder, &payload, frame_number)
-            }
-        };
-        
-        // Fallback: Software decode (all platforms or if hardware unavailable)
-        #[cfg(not(all(moonlight_common_c_linked, target_os = "windows")))]
-        let decoded_frame = decode_pull_video_payload(decoder, &payload, frame_number);
-        
-        let decode_us = decode_start.elapsed().as_micros();
-        let decoded = decoded_frame.is_some();
-        let decoded_format = decoded_frame
-            .as_ref()
-            .map(DecodedVideoFrame::texture_format);
-        record_native_video_decode_diagnostics(
-            frame_number,
-            bytes_received,
-            decoded,
-            decoded_format,
-            decode_us,
-        );
-        let update = update_video_sink_after_decode(
-            frame_number,
-            bytes_received,
-            payload,
-            decoded_frame,
-        );
-        emit_video_sink_update_events(&update);
-        gamestream_sys::DR_OK
-    }));
-
-    match result {
-        Ok(ret_code) => ret_code,
-        Err(panic_info) => {
-            logger::log(&format!("❌ PANIC in video decode unit processing: {:?}", panic_info));
-            gamestream_sys::DR_NEED_IDR  // Error code for decode failures
-        }
-    }
+    // SAFETY: Limelight owns the decode unit for the duration of this callback.
+    let decode_unit = unsafe { &*decode_unit };
+    let bytes_received = decode_unit_bytes(decode_unit);
+    let payload = unsafe { copy_decode_unit_payload(decode_unit) };
+    let decode_start = Instant::now();
+    let decoded_frame = decode_pull_video_payload(decoder, &payload, decode_unit.frame_number);
+    let decode_us = decode_start.elapsed().as_micros();
+    let decoded = decoded_frame.is_some();
+    record_native_video_decode_diagnostics(
+        decode_unit.frame_number,
+        bytes_received,
+        decoded,
+        decode_us,
+    );
+    let update = update_video_sink_after_decode(
+        decode_unit.frame_number,
+        bytes_received,
+        payload,
+        decoded_frame,
+    );
+    emit_video_sink_update_events(&update);
+    gamestream_sys::DR_OK
 }
 
 #[cfg(moonlight_common_c_linked)]
@@ -1518,49 +1040,30 @@ fn update_video_sink_after_decode(
     payload: Vec<u8>,
     decoded_frame: Option<DecodedVideoFrame>,
 ) -> VideoSinkUpdate {
-    logger::log(&format!("update_video_sink_after_decode: Starting for frame {}", frame_number));
-    
     let mut update = VideoSinkUpdate {
         first_frame: false,
         first_decoded_frame: false,
         frame_number,
         bytes_received,
     };
-    
-    logger::log("update_video_sink_after_decode: Calling store_video_sink_state...");
     store_video_sink_state(|state| {
-        logger::log(&format!("update_video_sink_after_decode: Inside state closure, frames_received={}", state.frames_received));
         update.first_frame = state.frames_received == 0;
         state.frames_received = state.frames_received.saturating_add(1);
         state.bytes_received = state.bytes_received.saturating_add(bytes_received);
         state.last_frame_number = frame_number;
         state.last_frame_payload = payload;
-        
         if let Some(frame) = decoded_frame {
-            logger::log(&format!("update_video_sink_after_decode: Decoded frame available, decoded_frames={}", state.decoded_frames));
             update.first_decoded_frame = state.decoded_frames == 0;
             state.decoded_frames = state.decoded_frames.saturating_add(1);
-            
-            logger::log("update_video_sink_after_decode: Calling send_native_video_frame...");
-            let frame_clone = frame.clone();
-            send_native_video_frame(frame_clone);
-            logger::log("update_video_sink_after_decode: send_native_video_frame completed");
-            
+            send_native_video_frame(frame.clone());
             state.last_decoded_frame = Some(frame);
-            logger::log("update_video_sink_after_decode: Frame stored in state");
         }
     });
-    
-    logger::log("update_video_sink_after_decode: state_closure complete");
     update
 }
 
 fn emit_video_sink_update_events(update: &VideoSinkUpdate) {
-    logger::log(&format!("emit_video_sink_update_events: frame={}, first_frame={}, first_decoded={}", 
-        update.frame_number, update.first_frame, update.first_decoded_frame));
-        
     if update.first_frame {
-        logger::log("emit_video_sink_update_events: Emitting FIRST_FRAME event");
         emit_stream_event(
             BridgeEventKind::Status,
             format!(
@@ -1568,18 +1071,13 @@ fn emit_video_sink_update_events(update: &VideoSinkUpdate) {
                 update.frame_number, update.bytes_received
             ),
         );
-        logger::log("emit_video_sink_update_events: FIRST_FRAME event emitted");
     }
     if update.first_decoded_frame {
-        logger::log("emit_video_sink_update_events: Emitting FIRST_DECODED_FRAME event");
         emit_stream_event(
             BridgeEventKind::Status,
             "First decoded video frame is ready for native presentation.".into(),
         );
-        logger::log("emit_video_sink_update_events: FIRST_DECODED_FRAME event emitted");
     }
-    
-    logger::log("emit_video_sink_update_events: Complete");
 }
 
 fn start_native_video_renderer(width: c_int, height: c_int) {
@@ -1594,32 +1092,13 @@ fn start_native_video_renderer(width: c_int, height: c_int) {
     let (stop_sender, stop_receiver) = mpsc::channel();
     let thread_frame_slot = Arc::clone(&frame_slot);
     let thread = std::thread::spawn(move || {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if let Err(error) =
             native_video_renderer_loop(width, height, thread_frame_slot, stop_receiver)
-        }));
-        match result {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                logger::log(format!("Native video renderer error: {error}"));
-                emit_stream_event(
-                    BridgeEventKind::Status,
-                    format!("Native video renderer stopped: {error}."),
-                );
-            }
-            Err(panic) => {
-                let msg = if let Some(s) = panic.downcast_ref::<String>() {
-                    s.clone()
-                } else if let Some(s) = panic.downcast_ref::<&str>() {
-                    s.to_string()
-                } else {
-                    "unknown panic".to_string()
-                };
-                logger::log(format!("❌ Native video renderer PANICKED: {msg}"));
-                emit_stream_event(
-                    BridgeEventKind::Status,
-                    format!("Native video renderer crashed: {msg}"),
-                );
-            }
+        {
+            emit_stream_event(
+                BridgeEventKind::Status,
+                format!("Native video renderer stopped: {error}."),
+            );
         }
     });
     if let Ok(mut slot) = VIDEO_RENDERER_STATE.get_or_init(|| Mutex::new(None)).lock() {
@@ -1656,74 +1135,24 @@ fn stop_native_video_renderer() {
 }
 
 fn send_native_video_frame(frame: DecodedVideoFrame) {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        logger::log("send_native_video_frame: Starting");
-        
-        let frame_number = frame.frame_number();
-        logger::log(&format!("send_native_video_frame: Got frame number: {}", frame_number));
-        
-        if let Ok(slot) = VIDEO_RENDERER_STATE.get_or_init(|| Mutex::new(None)).lock() {
-            logger::log("send_native_video_frame: Got VIDEO_RENDERER_STATE lock");
-            
-            if let Some(renderer) = slot.as_ref() {
-                logger::log("send_native_video_frame: Renderer found");
-                
-                if !renderer.frame_slot.accepting_frames.load(Ordering::Acquire) {
-                    logger::log("send_native_video_frame: Renderer not accepting frames (disconnected)");
-                    record_native_video_queue_diagnostics(frame_number, VideoQueueResult::Disconnected);
-                    return;
-                }
-                
-                logger::log("send_native_video_frame: Attempting to lock frame slot...");
-                let Ok(mut pending_frame) = renderer.frame_slot.frame.lock() else {
-                    logger::log("send_native_video_frame: Failed to lock frame slot");
-                    record_native_video_queue_diagnostics(frame_number, VideoQueueResult::Disconnected);
-                    return;
-                };
-                
-                logger::log("send_native_video_frame: Frame slot locked");
-                
-                if !renderer.frame_slot.accepting_frames.load(Ordering::Acquire) {
-                    logger::log("send_native_video_frame: Renderer no longer accepting frames");
-                    record_native_video_queue_diagnostics(frame_number, VideoQueueResult::Disconnected);
-                    return;
-                }
-                
-                logger::log("send_native_video_frame: Replacing stale frame...");
-                let result = if pending_frame.replace(frame).is_some() {
-                    VideoQueueResult::ReplacedStale
-                } else {
-                    VideoQueueResult::Queued
-                };
-                
-                logger::log("send_native_video_frame: Notifying render thread...");
-                renderer.frame_slot.available.notify_one();
-                logger::log("send_native_video_frame: Notification sent");
-                
-                record_native_video_queue_diagnostics(frame_number, result);
-                logger::log(&format!("send_native_video_frame: Diagnostics recorded, result={:?}", 
-                    match result {
-                        VideoQueueResult::Queued => "Queued",
-                        VideoQueueResult::ReplacedStale => "ReplacedStale",
-                        VideoQueueResult::Disconnected => "Disconnected",
-                    }
-                ));
+    let frame_number = frame.frame_number();
+    if let Ok(slot) = VIDEO_RENDERER_STATE.get_or_init(|| Mutex::new(None)).lock() {
+        if let Some(renderer) = slot.as_ref() {
+            let Ok(mut pending_frame) = renderer.frame_slot.frame.lock() else {
+                record_native_video_queue_diagnostics(frame_number, VideoQueueResult::Disconnected);
+                return;
+            };
+            let result = if pending_frame.replace(frame).is_some() {
+                VideoQueueResult::ReplacedStale
             } else {
-                logger::log("send_native_video_frame: No renderer initialized");
-            }
-        } else {
-            logger::log("send_native_video_frame: Failed to lock VIDEO_RENDERER_STATE");
+                VideoQueueResult::Queued
+            };
+            renderer.frame_slot.available.notify_one();
+            record_native_video_queue_diagnostics(frame_number, result);
         }
-        
-        logger::log("send_native_video_frame: Complete");
-    }));
-    
-    if let Err(panic_info) = result {
-        logger::log(&format!("❌ PANIC in send_native_video_frame: {:?}", panic_info));
     }
 }
 
-#[derive(Copy, Clone)]
 enum VideoQueueResult {
     Queued,
     ReplacedStale,
@@ -1770,7 +1199,6 @@ fn record_native_video_decode_diagnostics(
     frame_number: c_int,
     bytes_received: u64,
     decoded: bool,
-    decoded_format: Option<Sdl3VideoTextureFormat>,
     decode_us: u128,
 ) {
     let Ok(mut diagnostics) = VIDEO_DECODE_DIAGNOSTICS
@@ -1793,21 +1221,6 @@ fn record_native_video_decode_diagnostics(
     if decoded {
         diagnostics.decoded_frames = diagnostics.decoded_frames.saturating_add(1);
     }
-    match decoded_format {
-        Some(Sdl3VideoTextureFormat::Rgba) => {
-            diagnostics.rgba_frames = diagnostics.rgba_frames.saturating_add(1);
-        }
-        Some(Sdl3VideoTextureFormat::Yuv420) => {
-            diagnostics.yuv420_frames = diagnostics.yuv420_frames.saturating_add(1);
-        }
-        Some(Sdl3VideoTextureFormat::Nv12) => {
-            diagnostics.nv12_frames = diagnostics.nv12_frames.saturating_add(1);
-        }
-        Some(Sdl3VideoTextureFormat::Nv21) => {
-            diagnostics.nv21_frames = diagnostics.nv21_frames.saturating_add(1);
-        }
-        None => {}
-    }
     if diagnostics.last_log_at.elapsed() >= NATIVE_VIDEO_DIAGNOSTIC_INTERVAL {
         let elapsed = diagnostics.started_at.elapsed().as_secs_f64().max(0.001);
         let average_decode_us = if diagnostics.decode_units == 0 {
@@ -1816,16 +1229,12 @@ fn record_native_video_decode_diagnostics(
             diagnostics.total_decode_us / diagnostics.decode_units as u128
         };
         logger::log(format!(
-            "FFmpeg software decode diagnostics: units={}; decoded={}; decode_ratio_pct={:.1}; unit_fps={:.1}; decoded_fps={:.1}; rgba_frames={}; yuv420_frames={}; nv12_frames={}; nv21_frames={}; missing_units={}; max_unit_gap={}; avg_decode_us={}; max_decode_us={}; mb_received={:.1}; last_frame={}",
+            "FFmpeg software decode diagnostics: units={}; decoded={}; decode_ratio_pct={:.1}; unit_fps={:.1}; decoded_fps={:.1}; missing_units={}; max_unit_gap={}; avg_decode_us={}; max_decode_us={}; mb_received={:.1}; last_frame={}",
             diagnostics.decode_units,
             diagnostics.decoded_frames,
             diagnostics.decoded_frames as f64 * 100.0 / diagnostics.decode_units.max(1) as f64,
             diagnostics.decode_units as f64 / elapsed,
             diagnostics.decoded_frames as f64 / elapsed,
-            diagnostics.rgba_frames,
-            diagnostics.yuv420_frames,
-            diagnostics.nv12_frames,
-            diagnostics.nv21_frames,
             diagnostics.missing_decode_units,
             diagnostics.max_decode_unit_gap,
             average_decode_us,
@@ -1863,67 +1272,21 @@ fn native_video_renderer_loop(
         .resizable()
         .build()
         .map_err(|error| error.to_string())?;
-
-    // Get raw window pointer before canvas potentially consumes it
-    let raw_sdl_window: *mut sdl3::sys::video::SDL_Window = window.raw();
-
-    // ── D3D11 native renderer using decoder's device (Windows only) ──
-    #[cfg(target_os = "windows")]
-    let mut d3d11_renderer: Option<D3D11Renderer> = {
-        let hwnd = get_sdl3_window_hwnd(window.raw());
-        // Try to share the hardware decoder's D3D11 device
-        #[cfg(moonlight_common_c_linked)]
-        let hw_device = HARDWARE_DECODER_STATE
-            .get()
-            .and_then(|s| s.lock().ok())
-            .and_then(|slot| {
-                slot.as_ref().and_then(|decoder| {
-                    decoder.device.as_ref().map(|d| (d.device.clone(), d.context.clone()))
-                })
-            });
-        #[cfg(not(moonlight_common_c_linked))]
-        let hw_device: Option<(Option<windows::Win32::Graphics::Direct3D11::ID3D11Device>, Option<windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext>)> = None;
-        let result = if let Some((ref dev_opt, ref ctx_opt)) = hw_device {
-            logger::log("Using shared D3D11 device from hardware decoder");
-            D3D11Renderer::create_with_device(hwnd, width as u32, height as u32, dev_opt.as_ref(), ctx_opt.as_ref())
-        } else {
-            D3D11Renderer::create(hwnd, width as u32, height as u32)
-        };
-        match result {
-            Ok(r) => { logger::log("✅ D3D11 native renderer created"); Some(r) }
-            Err(e) => { logger::log(format!("⚠️  D3D11 renderer failed: {e}, using SDL3")); None }
-        }
-    };
-    #[cfg(not(target_os = "windows"))]
-    let mut d3d11_renderer: Option<D3D11Renderer> = None;
-
-    // ── SDL3 canvas (fallback for software decode or non-Windows) ──
-    // Note: window.into_canvas() consumes the window. We keep the
-    // SDL_Window pointer alive via the canvas's .window() method.
-    let mut canvas: Option<sdl3::render::WindowCanvas> = if d3d11_renderer.is_none() {
-        let c = window.into_canvas();
-        let raw_renderer = c.raw();
-        unsafe {
-            sdl3::sys::render::SDL_SetRenderVSync(raw_renderer, 0);
-        }
-        Some(c)
-    } else {
-        None
-    };
-    let texture_creator: Option<sdl3::render::TextureCreator<_>> = canvas.as_ref().map(|c| c.texture_creator());
-
-    let mut video_texture: Option<Sdl3VideoTexture> = None;
-
+    let mut canvas = window.into_canvas();
+    let texture_creator = canvas.texture_creator();
+    disable_sdl3_renderer_vsync(&canvas);
+    let mut video_texture = create_sdl3_video_texture(
+        &texture_creator,
+        width,
+        height,
+        Sdl3VideoTextureFormat::Rgba,
+    )?;
     sdl.mouse().show_cursor(false);
     sdl.mouse().capture(true);
-    unsafe {
-        sdl3::sys::mouse::SDL_SetWindowRelativeMouseMode(raw_sdl_window, true);
-    }
+    sdl.mouse().set_relative_mouse_mode(canvas.window(), true);
     logger::log("SDL3 native video renderer window created");
 
-    logger::log("Creating SDL3 event pump...");
     let mut event_pump = sdl.event_pump().map_err(|error| error.to_string())?;
-    logger::log("SDL3 event pump created, entering render loop");
     let mut requested_stop = false;
     let mut diagnostics = NativeVideoRenderDiagnostics::new();
 
@@ -1933,23 +1296,13 @@ fn native_video_renderer_loop(
             break;
         }
         let mut pending_controller_axis_updates = Vec::new();
-
-        let (event_width, event_height) = video_texture.as_ref()
-            .map(|tex| (tex.width, tex.height))
-            .unwrap_or((1920, 1080));
-
-        // Helper for output size (from D3D11 renderer or SDL3 canvas)
-        let output_size: Option<(u32, u32)> = d3d11_renderer.as_ref()
-            .map(|r| r.dimensions())
-            .or_else(|| canvas.as_ref().and_then(|c| c.output_size().ok()));
-
         for event in event_pump.poll_iter() {
-            if handle_sdl3_video_event_d3d11(
+            if handle_sdl3_video_event(
                 event,
                 &input_sender,
-                event_width,
-                event_height,
-                output_size.unwrap_or((width as u32, height as u32)),
+                video_texture.width,
+                video_texture.height,
+                &mut canvas,
                 &mut controllers,
                 &mut pending_controller_axis_updates,
             ) {
@@ -1961,109 +1314,61 @@ fn native_video_renderer_loop(
             &input_sender,
             pending_controller_axis_updates,
         );
-
         match receive_latest_video_frame(&frame_slot) {
             Some(frame) => {
                 validate_decoded_video_frame(&frame)?;
                 let frame_width = frame.width() as usize;
                 let frame_height = frame.height() as usize;
                 let frame_format = frame.texture_format();
-
-                // ── D3D11 hardware path (shared device, GPU-direct) ──
-                #[cfg(target_os = "windows")]
-                if let DecodedVideoFrame::D3D11Surface(gpu_frame) = &frame {
-                    if let Some(ref mut renderer) = d3d11_renderer {
-                        let (rw, rh) = renderer.dimensions();
-                        if rw != frame_width as u32 || rh != frame_height as u32 {
-                            renderer.resize(frame_width as u32, frame_height as u32)?;
-                        }
-                        // Must use the SAME device: decode texture is on decoder's device,
-                        // and our renderer uses the same device (passed via create_with_device).
-                        let nv12_tex: ID3D11Texture2D = unsafe {
-                            let raw: ID3D11Texture2D = std::mem::transmute(gpu_frame.surface_ptr);
-                            let cloned = raw.clone();
-                            std::mem::forget(raw);
-                            cloned
-                        };
-                        logger::log("render_nv12_frame...");
-                        renderer.render_nv12_frame(&nv12_tex, frame_width as u32, frame_height as u32)?;
-                        logger::log("present...");
-                        renderer.present()?;
-
-                        diagnostics.record_frame(frame.frame_number(), frame_format, 0, 0, 0, 0);
-                        diagnostics.maybe_log_simple(frame_width, frame_height);
-                        continue;
-                    }
+                if frame_width != video_texture.width
+                    || frame_height != video_texture.height
+                    || frame_format != video_texture.format
+                {
+                    video_texture = create_sdl3_video_texture(
+                        &texture_creator,
+                        frame_width,
+                        frame_height,
+                        frame_format,
+                    )?;
+                    diagnostics.recreated_textures =
+                        diagnostics.recreated_textures.saturating_add(1);
+                    logger::log(format!(
+                        "SDL3 video texture recreated; width={}; height={}; format={:?}; frame={}",
+                        video_texture.width,
+                        video_texture.height,
+                        video_texture.format,
+                        frame.frame_number()
+                    ));
                 }
-
-                // ── SDL3 software path (fallback) ──
-                if let (Some(canvas_mut), Some(tc)) = (canvas.as_mut(), texture_creator.as_ref()) {
-                    let needs_texture_creation = match &video_texture {
-                        None => {
-                            logger::log(&format!(
-                                "First frame received: {}x{}, creating texture...",
-                                frame_width, frame_height
-                            ));
-                            true
-                        }
-                        Some(tex) => {
-                            frame_width != tex.width
-                                || frame_height != tex.height
-                                || frame_format != tex.format
-                        }
-                    };
-
-                    if needs_texture_creation {
-                        video_texture = Some(create_sdl3_video_texture(
-                            tc,
-                            frame_width,
-                            frame_height,
-                            frame_format,
-                        )?);
-                        diagnostics.recreated_textures =
-                            diagnostics.recreated_textures.saturating_add(1);
-                        logger::log(format!(
-                            "SDL3 video texture created; width={}; height={}; format={:?}; frame={}",
-                            frame_width, frame_height, frame_format, frame.frame_number()
-                        ));
-                    }
-
-                    if let Some(video_texture) = &mut video_texture {
-                        let update_start = Instant::now();
-                        update_sdl3_video_texture_wrapped(&video_texture, &frame)
-                            .map_err(|error| error.to_string())?;
-                        let update_us = update_start.elapsed().as_micros();
-
-                        let render_start = Instant::now();
-                        render_sdl3_video_frame_wrapped(
-                            canvas_mut,
-                            &video_texture,
-                        )?;
-                        let render_us = render_start.elapsed().as_micros();
-                        let frame_age_us = frame.decoded_at().elapsed().as_micros();
-                        diagnostics.record_frame(
-                            frame.frame_number(),
-                            frame_format,
-                            update_us,
-                            render_us,
-                            frame_age_us,
-                            0,
-                        );
-                        diagnostics.maybe_log(video_texture.width, video_texture.height, canvas_mut);
-                    }
-                }
+                let update_start = Instant::now();
+                update_sdl3_video_texture(&mut video_texture.texture, &frame)
+                    .map_err(|error| error.to_string())?;
+                let update_us = update_start.elapsed().as_micros();
+                let render_start = Instant::now();
+                render_sdl3_video_frame(
+                    &mut canvas,
+                    &video_texture.texture,
+                    video_texture.width,
+                    video_texture.height,
+                )?;
+                let render_us = render_start.elapsed().as_micros();
+                let frame_age_us = frame.decoded_at().elapsed().as_micros();
+                diagnostics.record_frame(
+                    frame.frame_number(),
+                    update_us,
+                    render_us,
+                    frame_age_us,
+                    0,
+                );
+                diagnostics.maybe_log(video_texture.width, video_texture.height, &canvas);
             }
             None => {}
         }
     }
 
-    unsafe {
-        sdl3::sys::mouse::SDL_SetWindowRelativeMouseMode(raw_sdl_window, false);
-    }
-    unsafe { sdl3::sys::video::SDL_SetWindowMouseGrab(raw_sdl_window, false); }
+    sdl.mouse().set_relative_mouse_mode(canvas.window(), false);
+    sdl.mouse().capture(false);
     sdl.mouse().show_cursor(true);
-    frame_slot.accepting_frames.store(false, Ordering::Release);
-    frame_slot.available.notify_all();
     if !requested_stop {
         emit_stream_event(
             BridgeEventKind::SessionChanged,
@@ -2080,25 +1385,18 @@ fn native_video_renderer_loop(
 
 fn receive_latest_video_frame(frame_slot: &LatestVideoFrameSlot) -> Option<DecodedVideoFrame> {
     let Ok(mut pending_frame) = frame_slot.frame.lock() else {
-        logger::log("receive_latest_video_frame: lock failed");
         return None;
     };
     if pending_frame.is_none() {
-        logger::log("receive_latest_video_frame: waiting for frame...");
         let Ok((next_pending_frame, _)) = frame_slot
             .available
             .wait_timeout(pending_frame, NATIVE_VIDEO_INPUT_POLL_TIMEOUT)
         else {
-            logger::log("receive_latest_video_frame: condvar poisoned");
             return None;
         };
         pending_frame = next_pending_frame;
     }
-    let frame = pending_frame.take();
-    if frame.is_some() {
-        logger::log("receive_latest_video_frame: got a frame!");
-    }
-    frame
+    pending_frame.take()
 }
 
 fn create_sdl3_video_texture<'a>(
@@ -2117,133 +1415,11 @@ fn create_sdl3_video_texture<'a>(
         .create_texture_streaming(pixel_format, width as u32, height as u32)
         .map_err(|error| error.to_string())?;
     Ok(Sdl3VideoTexture {
-        inner: Sdl3VideoTextureInner::Safe(texture),
+        texture,
         width,
         height,
         format,
     })
-}
-
-#[cfg(target_os = "windows")]
-fn create_sdl3_d3d11_texture<'a>(
-    renderer_raw: *mut sdl3::sys::render::SDL_Renderer,
-    d3d11_texture_ptr: *mut c_void,
-    width: usize,
-    height: usize,
-) -> Result<Sdl3VideoTexture<'a>, String> {
-    // Phase 5d: Direct D3D11→SDL3 GPU Texture Sharing
-    // Use sdl3::sys to wrap D3D11 texture with SDL_CreateTextureWithProperties
-    
-    logger::log(&format!(
-        "create_sdl3_d3d11_texture called with: ptr={:p}, width={}, height={}",
-        d3d11_texture_ptr, width, height
-    ));
-    
-    if d3d11_texture_ptr.is_null() {
-        return Err("D3D11 texture pointer is null".into());
-    }
-    
-    if width == 0 || height == 0 {
-        logger::log(&format!(
-            "❌ INVALID DIMENSIONS PASSED TO SDL3: {}x{}",
-            width, height
-        ));
-        return Err(format!(
-            "Invalid dimensions: {}x{} (must be > 0)",
-            width, height
-        ));
-    }
-
-    unsafe {
-        // Create property structure
-        let props = sdl3::sys::properties::SDL_CreateProperties();
-
-        // SDL3 property names must match the public headers exactly.
-        let prop_name = b"SDL.texture.create.d3d11.texture\0".as_ptr() as *const i8;
-        sdl3::sys::properties::SDL_SetPointerProperty(
-            props,
-            prop_name,
-            d3d11_texture_ptr,
-        );
-
-        let access_prop = b"SDL.texture.create.access\0".as_ptr() as *const i8;
-        sdl3::sys::properties::SDL_SetNumberProperty(
-            props,
-            access_prop,
-            0, // SDL_TEXTUREACCESS_STATIC
-        );
-
-        // Set pixel format to NV12 (hardware decoder output format)
-        let format_prop = b"SDL.texture.create.format\0".as_ptr() as *const i8;
-        sdl3::sys::properties::SDL_SetNumberProperty(
-            props,
-            format_prop,
-            0x3231564Eu64 as i64, // SDL_PIXELFORMAT_NV12
-        );
-
-        // Set width
-        let width_prop = b"SDL.texture.create.width\0".as_ptr() as *const i8;
-        sdl3::sys::properties::SDL_SetNumberProperty(
-            props,
-            width_prop,
-            width as i64,
-        );
-
-        // Set height
-        let height_prop = b"SDL.texture.create.height\0".as_ptr() as *const i8;
-        sdl3::sys::properties::SDL_SetNumberProperty(
-            props,
-            height_prop,
-            height as i64,
-        );
-
-        // Set colorspace to JPEG (YUV BT.601)
-        let colorspace_prop = b"SDL.texture.create.colorspace\0".as_ptr() as *const i8;
-        sdl3::sys::properties::SDL_SetNumberProperty(
-            props,
-            colorspace_prop,
-            5 as i64, // SDL_COLORSPACE_JPEG
-        );
-
-        logger::log(&format!(
-            "Calling SDL_CreateTextureWithProperties; renderer={:p}, format=0x{:08X}, width={}, height={}",
-            renderer_raw, 0x3231564Eu32, width, height
-        ));
-
-        // Create texture from properties
-        let raw_texture = sdl3::sys::render::SDL_CreateTextureWithProperties(
-            renderer_raw,
-            props,
-        );
-
-        logger::log(&format!(
-            "SDL_CreateTextureWithProperties returned; raw_texture={:p}",
-            raw_texture
-        ));
-
-        sdl3::sys::properties::SDL_DestroyProperties(props);
-
-        if raw_texture.is_null() {
-            let err = sdl3::get_error();
-            logger::log(&format!("SDL error: {}", err));
-            return Err(format!(
-                "Failed to create D3D11 texture wrapper: {}",
-                err
-            ));
-        }
-
-        logger::log(&format!(
-            "✅ D3D11 GPU texture wrapped in SDL3: {}x{} (zero-copy GPU rendering)",
-            width, height
-        ));
-
-        Ok(Sdl3VideoTexture {
-            inner: Sdl3VideoTextureInner::RawD3D11(raw_texture),
-            width,
-            height,
-            format: Sdl3VideoTextureFormat::Nv12,
-        })
-    }
 }
 
 fn update_sdl3_video_texture(
@@ -2267,12 +1443,6 @@ fn update_sdl3_video_texture(
             .map_err(|error| error.to_string()),
         DecodedVideoFrame::Nv12(frame) | DecodedVideoFrame::Nv21(frame) => {
             update_sdl3_nv_texture(texture, &frame.y, &frame.uv)
-        }
-        DecodedVideoFrame::D3D11Surface(_) => {
-            // Phase 5d: GPU texture already on GPU
-            // SDL3 wraps the D3D11 texture directly - no data update needed
-            // Texture was created with the D3D11 pointer, renderer uses it directly
-            Ok(())
         }
     }
 }
@@ -2678,99 +1848,6 @@ fn sdl3_controller_mapping_candidates() -> Vec<std::path::PathBuf> {
     candidates
 }
 
-fn update_sdl3_video_texture_wrapped(
-    texture: &Sdl3VideoTexture,
-    frame: &DecodedVideoFrame,
-) -> Result<(), String> {
-    // For D3D11 GPU surfaces, texture is already on GPU - no update needed
-    if texture.is_gpu_surface() {
-        logger::log("GPU texture update skipped (already on GPU)");
-        return Ok(());
-    }
-    
-    // For CPU textures, update with frame data
-    match frame {
-        DecodedVideoFrame::Rgba(frame) => {
-            unsafe {
-                sdl3::sys::render::SDL_UpdateTexture(
-                    texture.get_raw_texture(),
-                    std::ptr::null(),
-                    frame.pixels.as_ptr() as *const c_void,
-                    (frame.width as usize * 4) as i32,
-                )
-            };
-            Ok(())
-        }
-        DecodedVideoFrame::Yuv420(frame) => {
-            unsafe {
-                sdl3::sys::render::SDL_UpdateYUVTexture(
-                    texture.get_raw_texture(),
-                    std::ptr::null(),
-                    frame.y.pixels.as_ptr(),
-                    frame.y.pitch as i32,
-                    frame.u.pixels.as_ptr(),
-                    frame.u.pitch as i32,
-                    frame.v.pixels.as_ptr(),
-                    frame.v.pitch as i32,
-                )
-            };
-            Ok(())
-        }
-        DecodedVideoFrame::Nv12(frame) | DecodedVideoFrame::Nv21(frame) => {
-            let y_pitch = c_int::try_from(frame.y.pitch).map_err(|_| "NV12 Y pitch overflows int")?;
-            let uv_pitch = c_int::try_from(frame.uv.pitch).map_err(|_| "NV12 UV pitch overflows int")?;
-            unsafe {
-                sdl3::sys::render::SDL_UpdateNVTexture(
-                    texture.get_raw_texture(),
-                    std::ptr::null(),
-                    frame.y.pixels.as_ptr(),
-                    y_pitch,
-                    frame.uv.pixels.as_ptr(),
-                    uv_pitch,
-                )
-            };
-            Ok(())
-        }
-        DecodedVideoFrame::D3D11Surface(_) => Ok(()),
-    }
-}
-
-fn render_sdl3_video_frame_wrapped(
-    canvas: &mut sdl3::render::WindowCanvas,
-    texture: &Sdl3VideoTexture,
-) -> Result<(), String> {
-    let (output_width, output_height) = canvas.output_size().map_err(|error| error.to_string())?;
-    let video_region = scaled_video_region(
-        texture.width,
-        texture.height,
-        output_width as usize,
-        output_height as usize,
-    );
-    canvas.clear();
-    
-    let raw_canvas = canvas.raw();
-    let raw_texture = texture.get_raw_texture();
-    
-    unsafe {
-        sdl3::sys::render::SDL_RenderTexture(
-            raw_canvas,
-            raw_texture,
-            std::ptr::null(),
-            &mut sdl3::sys::rect::SDL_FRect {
-                x: video_region.x,
-                y: video_region.y,
-                w: video_region.width,
-                h: video_region.height,
-            },
-        );
-    }
-    
-    if !canvas.present() {
-        return Err(sdl3::get_error().to_string());
-    }
-    Ok(())
-}
-
 fn render_sdl3_video_frame(
     canvas: &mut sdl3::render::WindowCanvas,
     texture: &sdl3::render::Texture,
@@ -3148,11 +2225,6 @@ fn validate_decoded_video_frame(frame: &DecodedVideoFrame) -> Result<(), String>
             validate_video_plane(&frame.y, frame.height as usize, "Y")?;
             validate_video_plane(&frame.uv, frame.height as usize / 2, "UV")?;
         }
-        DecodedVideoFrame::D3D11Surface(frame) => {
-            if frame.surface_ptr.is_null() {
-                return Err("D3D11 GPU surface pointer is null".into());
-            }
-        }
     }
     Ok(())
 }
@@ -3255,23 +2327,6 @@ impl SoftwareVideoDecoder {
             return Err("FFmpeg decoder context allocation failed".into());
         }
         configure_ffmpeg_decoder_threading(codec_context);
-
-        // Try to attach hardware decoder if available (Windows D3D11VA)
-        #[cfg(all(moonlight_common_c_linked, target_os = "windows"))]
-        {
-            if let Ok(slot) = HARDWARE_DECODER_STATE.get_or_init(|| Mutex::new(None)).lock() {
-                if let Some(ref hw_decoder) = *slot {
-                    if let Err(e) = hw_decoder.attach_to_codec_context(codec_context as *mut c_void) {
-                        logger::log(format!(
-                            "⚠️  Failed to attach hardware decoder to codec context: {}",
-                            e
-                        ));
-                    } else {
-                        logger::log("✅ Hardware decoder attached to codec context");
-                    }
-                }
-            }
-        }
 
         // SAFETY: codec_context is newly allocated and options may be NULL.
         let open_result =
@@ -4212,229 +3267,37 @@ impl StreamConfiguration {
             ..gamestream_sys::StreamConfiguration::default()
         }
     }
-
-    pub fn from_settings_for_renderer(
-        settings: &crate::core::types::StreamingSettings,
-        renderer: &StreamRendererPlan,
-    ) -> Self {
-        stream_configuration_from_settings(settings, renderer.supports_hdr_formats())
-    }
-
-    pub fn preferred_for_server(mut self, server_codec_modes: c_int) -> Self {
-        // First, find and log the preferred codec
-        let Some(preferred_format) =
-            preferred_available_video_format(self.supported_video_formats, server_codec_modes)
-        else {
-            logger::log(format!(
-                "No preferred codec match found; keeping supported formats=0x{:x}; server_modes=0x{server_codec_modes:x}",
-                self.supported_video_formats
-            ));
-            return self;
-        };
-        
-        if preferred_format != self.supported_video_formats {
-            logger::log(format!(
-                "Selected preferred stream codec; requested_formats=0x{:x}; server_modes=0x{server_codec_modes:x}; selected=0x{preferred_format:x}",
-                self.supported_video_formats
-            ));
-        }
-        
-        // Filter to server-supported formats while preserving the full bitmask of what's available.
-        // This preserves HDR format information for hdr_query_parameters().
-        let supported_by_server = self.supported_video_formats & server_codec_modes;
-        if supported_by_server != 0 && supported_by_server != self.supported_video_formats {
-            self.supported_video_formats = supported_by_server;
-        }
-        
-        self
-    }
-    
-    pub fn prefer_hdr_codecs_if_requested(mut self, enable_hdr: bool) -> Self {
-        if !enable_hdr {
-            return self;
-        }
-
-        const HDR_10BIT_CODECS: &[c_int] = &[
-            gamestream_sys::VIDEO_FORMAT_AV1_HIGH10_444,
-            gamestream_sys::VIDEO_FORMAT_AV1_MAIN10,
-            gamestream_sys::VIDEO_FORMAT_HEVC_REXT10_444,
-            gamestream_sys::VIDEO_FORMAT_H265_MAIN10,
-        ];
-
-        // Find the first (highest priority) 10-bit codec available
-        if let Some(&preferred) = HDR_10BIT_CODECS
-            .iter()
-            .find(|&&codec| self.supported_video_formats & codec != 0)
-        {
-            logger::log(format!(
-                "HDR enabled; locking to 10-bit codec 0x{:x} (was 0x{:x})",
-                preferred, self.supported_video_formats
-            ));
-            self.supported_video_formats = preferred;
-        }
-
-        self
-    }
 }
 
 impl From<&crate::core::types::StreamingSettings> for StreamConfiguration {
     fn from(settings: &crate::core::types::StreamingSettings) -> Self {
-        stream_configuration_from_settings(settings, false)
-    }
-}
+        let packet_size = if settings.packet_size == 0 {
+            DEFAULT_VIDEO_PACKET_SIZE
+        } else {
+            settings.packet_size
+        };
+        let streaming_remotely = if settings.packet_size == 0 {
+            StreamingRemotely::Auto
+        } else {
+            StreamingRemotely::Local
+        };
 
-fn stream_configuration_from_settings(
-    settings: &crate::core::types::StreamingSettings,
-    supports_hdr_formats: bool,
-) -> StreamConfiguration {
-    let packet_size = if settings.packet_size == 0 {
-        DEFAULT_VIDEO_PACKET_SIZE
-    } else {
-        settings.packet_size
-    };
-    let streaming_remotely = if settings.packet_size == 0 {
-        StreamingRemotely::Auto
-    } else {
-        StreamingRemotely::Local
-    };
-    let requested_formats = requested_video_formats_for_settings(settings, supports_hdr_formats);
-    let supported_video_formats = if supports_hdr_formats {
-        requested_formats
-    } else {
-        sdl_software_renderer_video_formats(requested_formats, settings.enable_hdr)
-    };
-
-    StreamConfiguration {
-        width: settings.width,
-        height: settings.height,
-        fps: settings.fps,
-        bitrate_kbps: settings.bitrate_kbps,
-        packet_size,
-        streaming_remotely,
-        audio_configuration: AudioConfiguration::from_raw(settings.audio_config),
-        supported_video_formats,
-        remote_input_crypto: RemoteInputCrypto::default(),
-    }
-    .prefer_hdr_codecs_if_requested(settings.enable_hdr)
-}
-
-fn requested_video_formats_for_settings(
-    settings: &crate::core::types::StreamingSettings,
-    supports_hdr_formats: bool,
-) -> c_int {
-    match settings.video_codec_config {
-        VIDEO_CODEC_CONFIG_FORCE_H264 => gamestream_sys::VIDEO_FORMAT_H264,
-        VIDEO_CODEC_CONFIG_FORCE_HEVC => {
-            hevc_video_formats_for_renderer(settings, supports_hdr_formats)
-        }
-        VIDEO_CODEC_CONFIG_FORCE_AV1 => {
-            // Match native intent: forced AV1 may fall back to HEVC before H.264 if AV1 is unavailable.
-            av1_video_formats_for_renderer(settings, supports_hdr_formats)
-                | hevc_video_formats_for_renderer(settings, supports_hdr_formats)
-        }
-        VIDEO_CODEC_CONFIG_AUTO => automatic_video_formats_for_renderer(supports_hdr_formats),
-        raw_formats => raw_formats,
-    }
-}
-
-fn automatic_video_formats_for_renderer(supports_hdr_formats: bool) -> c_int {
-    if supports_hdr_formats {
-        gamestream_sys::VIDEO_FORMAT_AV1_HIGH10_444
-            | gamestream_sys::VIDEO_FORMAT_AV1_MAIN10
-            | gamestream_sys::VIDEO_FORMAT_AV1_HIGH8_444
-            | gamestream_sys::VIDEO_FORMAT_AV1_MAIN8
-            | gamestream_sys::VIDEO_FORMAT_HEVC_REXT10_444
-            | gamestream_sys::VIDEO_FORMAT_H265_MAIN10
-            | gamestream_sys::VIDEO_FORMAT_HEVC_REXT8_444
-            | gamestream_sys::VIDEO_FORMAT_H265
-            | gamestream_sys::VIDEO_FORMAT_H264_HIGH8_444
-            | gamestream_sys::VIDEO_FORMAT_H264
-    } else {
-        SDL_SOFTWARE_RENDERER_VIDEO_FORMATS
-    }
-}
-
-fn av1_video_formats_for_renderer(
-    settings: &crate::core::types::StreamingSettings,
-    supports_hdr_formats: bool,
-) -> c_int {
-    let mut formats = gamestream_sys::VIDEO_FORMAT_AV1_MAIN8;
-    if supports_hdr_formats && settings.enable_yuv444 {
-        formats |= gamestream_sys::VIDEO_FORMAT_AV1_HIGH8_444;
-    }
-    if supports_hdr_formats && settings.enable_hdr {
-        formats |= gamestream_sys::VIDEO_FORMAT_AV1_MAIN10;
-        if settings.enable_yuv444 {
-            formats |= gamestream_sys::VIDEO_FORMAT_AV1_HIGH10_444;
+        Self {
+            width: settings.width,
+            height: settings.height,
+            fps: settings.fps,
+            bitrate_kbps: settings.bitrate_kbps,
+            packet_size,
+            streaming_remotely,
+            audio_configuration: AudioConfiguration::from_raw(settings.audio_config),
+            supported_video_formats: if settings.video_codec_config == 0 {
+                gamestream_sys::VIDEO_FORMAT_H264
+            } else {
+                settings.video_codec_config
+            },
+            remote_input_crypto: RemoteInputCrypto::default(),
         }
     }
-    formats
-}
-
-fn hevc_video_formats_for_renderer(
-    settings: &crate::core::types::StreamingSettings,
-    supports_hdr_formats: bool,
-) -> c_int {
-    let mut formats = gamestream_sys::VIDEO_FORMAT_H265;
-    if supports_hdr_formats && settings.enable_yuv444 {
-        formats |= gamestream_sys::VIDEO_FORMAT_HEVC_REXT8_444;
-    }
-    if supports_hdr_formats && settings.enable_hdr {
-        formats |= gamestream_sys::VIDEO_FORMAT_H265_MAIN10;
-        if settings.enable_yuv444 {
-            formats |= gamestream_sys::VIDEO_FORMAT_HEVC_REXT10_444;
-        }
-    }
-    formats
-}
-
-fn sdl_software_renderer_video_formats(requested_formats: c_int, hdr_requested: bool) -> c_int {
-    let requested_formats = if requested_formats == 0 {
-        gamestream_sys::VIDEO_FORMAT_H264
-    } else {
-        requested_formats
-    };
-    let filtered_formats = requested_formats & SDL_SOFTWARE_RENDERER_VIDEO_FORMATS;
-    let supported_formats = if filtered_formats == 0 {
-        gamestream_sys::VIDEO_FORMAT_H264
-    } else {
-        filtered_formats
-    };
-    if supported_formats != requested_formats || hdr_requested {
-        logger::log(format!(
-            "SDL software renderer filtered requested video formats; requested=0x{requested_formats:x}; supported=0x{supported_formats:x}; hdr_requested={hdr_requested}; reason=no 10-bit/HDR/YUV444 presenter yet"
-        ));
-    }
-    supported_formats
-}
-
-fn preferred_available_video_format(
-    requested_formats: c_int,
-    server_codec_modes: c_int,
-) -> Option<c_int> {
-    const PREFERRED_FORMATS: [c_int; 10] = [
-        gamestream_sys::VIDEO_FORMAT_AV1_HIGH10_444,
-        gamestream_sys::VIDEO_FORMAT_AV1_MAIN10,
-        gamestream_sys::VIDEO_FORMAT_AV1_HIGH8_444,
-        gamestream_sys::VIDEO_FORMAT_AV1_MAIN8,
-        gamestream_sys::VIDEO_FORMAT_HEVC_REXT10_444,
-        gamestream_sys::VIDEO_FORMAT_H265_MAIN10,
-        gamestream_sys::VIDEO_FORMAT_HEVC_REXT8_444,
-        gamestream_sys::VIDEO_FORMAT_H265,
-        gamestream_sys::VIDEO_FORMAT_H264_HIGH8_444,
-        gamestream_sys::VIDEO_FORMAT_H264,
-    ];
-    let available_formats = requested_formats & server_codec_modes;
-    PREFERRED_FORMATS
-        .iter()
-        .copied()
-        .find(|format| available_formats & *format != 0)
-        .or_else(|| {
-            PREFERRED_FORMATS
-                .iter()
-                .copied()
-                .find(|format| requested_formats & *format != 0)
-        })
 }
 
 impl RawSessionConfiguration {
@@ -4494,9 +3357,6 @@ fn start_gamestream_session(
     session: &mut RawSessionConfiguration,
     callbacks: &mut StreamCallbacks,
 ) -> Result<(), CoreError> {
-    // Detect and log decoder capabilities
-    let _decoder_caps = get_decoder_capabilities();
-    
     let (connection_callbacks, video_callbacks, audio_callbacks) = callbacks.as_raw_parts();
     // SAFETY: RawSessionConfiguration owns the C strings referenced by SERVER_INFORMATION,
     // and StreamCallbacks owns the callback structs passed to Limelight for this call.
@@ -4596,384 +3456,6 @@ fn bytes_to_c_chars(bytes: [u8; 16]) -> [c_char; 16] {
     bytes.map(|value| value as c_char)
 }
 
-
-// Phase 5e: HDR Rendering support
-#[cfg(target_os = "windows")]
-fn setup_hdr_rendering() -> Result<(), String> {
-    // Initialize HDR renderer state
-    if let Ok(mut state) = HDR_RENDERER_STATE.get_or_init(|| Mutex::new(Some(HdrRendererState::default()))).lock() {
-        if let Some(hdr) = state.as_mut() {
-            hdr.hdr_enabled = false; // Will be set when HDR frame detected
-            hdr.shader_compiled = false;
-            logger::log("✓ HDR rendering framework initialized");
-        }
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn compile_hdr_shader() -> Result<(), String> {
-    // Phase 5e: Compile HLSL tone mapping shader at runtime
-    // In production, would use D3DCompile with shader source
-    // For now, mark shader as compiled and ready
-    
-    if let Ok(mut state) = HDR_RENDERER_STATE.get_or_init(|| Mutex::new(Some(HdrRendererState::default()))).lock() {
-        if let Some(hdr) = state.as_mut() {
-            if hdr.shader_compiled {
-                return Ok(());
-            }
-            
-            let shader_source = create_tone_mapping_shader();
-            logger::log(format!("🎬 Tone mapping shader loaded ({} bytes)", shader_source.len()));
-            logger::log("   HLSL: ST.2084 (PQ) transfer function, sRGB ↔ linear conversion, Rec.2020 primaries");
-            
-            hdr.shader_compiled = true;
-            logger::log("✓ Tone mapping shader ready for execution");
-        }
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn enable_dxgi_hdr_backbuffer(output_width: u32, output_height: u32) -> Result<(), String> {
-    // Phase 5e: DXGI HDR backbuffer setup
-    // Configure DXGI swapchain for HDR output
-    
-    logger::log(format!(
-        "🎬 Configuring DXGI HDR backbuffer: {}x{} with DXGI_FORMAT_R10G10B10A2_UNORM",
-        output_width, output_height
-    ));
-    
-    // Compile shader first
-    compile_hdr_shader()?;
-    
-    // In production, would:
-    // 1. Get DXGI swapchain from SDL3 window
-    // 2. Get IDXGIOutput for color space enumeration
-    // 3. Check DXGI_FORMAT_R10G10B10A2_UNORM support
-    // 4. Recreate swapchain with HDR format and color space
-    // 5. Get DXGI backbuffer texture and create render target view
-    
-    if let Ok(mut state) = HDR_RENDERER_STATE.get_or_init(|| Mutex::new(Some(HdrRendererState::default()))).lock() {
-        if let Some(hdr) = state.as_mut() {
-            hdr.hdr_enabled = true;
-            hdr.peak_brightness = 1000.0;
-            logger::log(format!(
-                "✓ DXGI HDR backbuffer ready: {} nits, {}",
-                hdr.peak_brightness as u32,
-                hdr.color_primaries
-            ));
-        }
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn apply_tone_mapping_to_frame() -> Result<(), String> {
-    // Phase 5e: Apply tone mapping shader to current frame
-    // Render pipeline:
-    // 1. Bind tone mapping pixel shader
-    // 2. Set constant buffer with peak brightness
-    // 3. Bind SDR input texture (from decoder)
-    // 4. Render to intermediate HDR texture
-    // 5. Render tone-mapped texture to DXGI HDR backbuffer
-    
-    if let Ok(state) = HDR_RENDERER_STATE.get_or_init(|| Mutex::new(Some(HdrRendererState::default()))).lock() {
-        if let Some(hdr) = state.as_ref() {
-            if hdr.hdr_enabled && hdr.shader_compiled {
-                logger::log(format!(
-                    "📊 Tone mapping: {} {} {}nits",
-                    hdr.color_primaries,
-                    hdr.transfer_function,
-                    hdr.peak_brightness as u32
-                ));
-                // In production, would execute D3D11 rendering commands here
-            }
-        }
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn get_hdr_state() -> Result<HdrRendererState, String> {
-    if let Ok(state) = HDR_RENDERER_STATE.get_or_init(|| Mutex::new(Some(HdrRendererState::default()))).lock() {
-        if let Some(hdr) = state.as_ref() {
-            return Ok(hdr.clone());
-        }
-    }
-    Ok(HdrRendererState::default())
-}
-
-// Phase 5e: Tone mapping shader for converting SDR to HDR
-#[cfg(target_os = "windows")]
-fn create_tone_mapping_shader() -> String {
-    // HLSL shader for HDR10 tone mapping using ST.2084 (PQ) transfer function
-    // This shader converts SDR video to HDR color space using Rec.2020 primaries
-    r#"
-Texture2D inputTexture : register(t0);
-SamplerState inputSampler : register(s0);
-
-cbuffer HDRConstants : register(b0) {
-    float4 colorGamut;  // Peak brightness + color primaries
-    float3 padding;
-};
-
-float3 LinearToSRGB(float3 lin) {
-    return pow(lin, 1.0 / 2.2);
-}
-
-float3 SRGBToLinear(float3 srgb) {
-    return pow(srgb, 2.2);
-}
-
-float3 Rec2020ToRec709(float3 col) {
-    // Transform from Rec.2020 back to Rec.709 if needed for SDR output
-    float3x3 transform = float3x3(
-        1.6605, -0.5876, -0.0729,
-        -0.1246, 1.1329, -0.0083,
-        -0.0182, -0.1006, 1.1187
-    );
-    return mul(col, transform);
-}
-
-float LinearToST2084(float linear) {
-    // ST.2084 (PQ) OECF for HDR10 - maps linear to [0,1] 
-    const float m1 = 0.1593017578125;
-    const float m2 = 78.84375;
-    const float c1 = 0.8359375;
-    const float c2 = 18.8515625;
-    const float c3 = 18.6875;
-    
-    float lm1 = pow(linear, m1);
-    float num = c1 + c2 * lm1;
-    float den = 1.0 + c3 * lm1;
-    return pow(num / den, m2);
-}
-
-float4 main(float2 uv : TEXCOORD0) : SV_TARGET {
-    float4 sdrSample = inputTexture.Sample(inputSampler, uv);
-    
-    // Convert from SDR (sRGB) to linear
-    float3 linear = SRGBToLinear(sdrSample.rgb);
-    
-    // Scale up to HDR range (0-100 nits typical SDR, map to 0-1000 nits HDR)
-    float3 hdr = linear * 10.0;
-    
-    // Apply ST.2084 transfer function
-    float r = LinearToST2084(hdr.r);
-    float g = LinearToST2084(hdr.g);
-    float b = LinearToST2084(hdr.b);
-    
-    return float4(r, g, b, sdrSample.a);
-}
-"#.to_string()
-}
-
-// Phase 5f: Linux Vulkan/Libplacebo preparation (architecture mirror)
-#[cfg(target_os = "linux")]
-#[derive(Debug, Clone)]
-struct VulkanRendererState {
-    vulkan_enabled: bool,
-    libplacebo_available: bool,
-    transfer_function: String,
-    color_primaries: String,
-}
-
-#[cfg(target_os = "linux")]
-impl Default for VulkanRendererState {
-    fn default() -> Self {
-        Self {
-            vulkan_enabled: false,
-            libplacebo_available: false,
-            transfer_function: "SDR".to_string(),
-            color_primaries: "BT.709".to_string(),
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn setup_vulkan_rendering() -> Result<(), String> {
-    // Phase 5f: Initialize Vulkan renderer state for Linux
-    if let Ok(mut state) = VULKAN_RENDERER_STATE.get_or_init(|| Mutex::new(Some(VulkanRendererState::default()))).lock() {
-        if let Some(vulkan) = state.as_mut() {
-            vulkan.vulkan_enabled = true;
-            vulkan.libplacebo_available = true; // Will be checked against actual libplacebo availability
-            logger::log("✓ Vulkan rendering framework initialized (Libplacebo tone mapping ready)");
-        }
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn enable_vulkan_hdr_decoding() -> Result<(), String> {
-    // Phase 5f: Setup FFmpeg Vulkan hwcontext for GPU decoding
-    // Architecture mirrors Windows D3D11 exactly:
-    // 1. Create FFmpeg hwcontext with AV_HWDEVICE_TYPE_VULKAN
-    // 2. Configure VkImage surface pool (mirrors GpuSurfacePool)
-    // 3. Set up Libplacebo for tone mapping (ST.2084 equivalent via GLSL)
-    // 4. Render to HDR-capable output (WAYLAND/X11 with HDR support)
-    
-    logger::log("🎬 Enabling Vulkan hardware decoding with Libplacebo tone mapping");
-    logger::log("   Architecture: FFmpeg Vulkan hwcontext → VkImage pool → Libplacebo GLSL → SDL3");
-    
-    if let Ok(mut state) = VULKAN_RENDERER_STATE.get_or_init(|| Mutex::new(Some(VulkanRendererState::default()))).lock() {
-        if let Some(vulkan) = state.as_mut() {
-            vulkan.transfer_function = "SMPTE2084".to_string();
-            vulkan.color_primaries = "BT.2020".to_string();
-            logger::log("✓ Vulkan HDR decoding configured (identical pattern to Windows D3D11)");
-            logger::log("   Peak brightness: 1000 nits (HDR10)");
-            logger::log("   Color primaries: BT.2020 (Rec. 2020)");
-            logger::log("   Transfer function: SMPTE2084 (via Libplacebo)");
-        }
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn apply_libplacebo_tone_mapping() -> Result<(), String> {
-    // Phase 5f: Apply Libplacebo tone mapping to Vulkan frame
-    // Libplacebo (from Flatpak KDE SDK) provides:
-    // - Tone mapping GLSL shader (SDR → HDR via ST.2084)
-    // - Color space conversion shader (Rec.709 → Rec.2020)
-    // - VkImage render target support
-    // - HDR metadata parsing
-    
-    if let Ok(state) = VULKAN_RENDERER_STATE.get_or_init(|| Mutex::new(Some(VulkanRendererState::default()))).lock() {
-        if let Some(vulkan) = state.as_ref() {
-            logger::log(format!(
-                "📊 Libplacebo rendering: {} {}",
-                vulkan.color_primaries,
-                vulkan.transfer_function
-            ));
-            // In production, would execute Libplacebo render pass here
-        }
-    }
-    Ok(())
-}
-
-/// Variant of handle_sdl3_video_event that takes explicit output_size
-/// instead of a canvas reference (for use with D3D11 renderer path).
-fn handle_sdl3_video_event_d3d11(
-    event: sdl3::event::Event,
-    input: &StreamInputSender,
-    reference_width: usize,
-    reference_height: usize,
-    output_size: (u32, u32),
-    controllers: &mut Option<Sdl3ControllerManager>,
-    pending_controller_axis_updates: &mut Vec<u32>,
-) -> bool {
-    match event {
-        sdl3::event::Event::Quit { .. }
-        | sdl3::event::Event::Window {
-            win_event: sdl3::event::WindowEvent::CloseRequested,
-            ..
-        } => return true,
-        sdl3::event::Event::MouseMotion {
-            x, y, xrel, yrel, ..
-        } => {
-            if xrel != 0.0 || yrel != 0.0 {
-                let _ = input.send_mouse_move(clamp_f32_to_i16(xrel), clamp_f32_to_i16(yrel));
-            } else {
-                send_sdl3_mouse_position_d3d11(input, x, y, reference_width, reference_height, output_size);
-            }
-        }
-        sdl3::event::Event::MouseButtonDown { mouse_btn, x, y, .. } => {
-            send_sdl3_mouse_position_d3d11(input, x, y, reference_width, reference_height, output_size);
-            send_sdl3_mouse_button(input, mouse_btn, ButtonAction::Press);
-        }
-        sdl3::event::Event::MouseButtonUp { mouse_btn, x, y, .. } => {
-            send_sdl3_mouse_position_d3d11(input, x, y, reference_width, reference_height, output_size);
-            send_sdl3_mouse_button(input, mouse_btn, ButtonAction::Release);
-        }
-        sdl3::event::Event::MouseWheel { x, y, .. } => {
-            let scroll_x = (x * 120.0).round();
-            let scroll_y = (y * 120.0).round();
-            if scroll_x != 0.0 {
-                let _ = input.send_high_res_horizontal_scroll(clamp_f32_to_i16(scroll_x));
-            }
-            if scroll_y != 0.0 {
-                let _ = input.send_high_res_scroll(clamp_f32_to_i16(scroll_y));
-            }
-        }
-        sdl3::event::Event::KeyDown { keycode, keymod, repeat, .. } => {
-            if !repeat {
-                if let Some(key_code) = keycode.and_then(sdl3_keycode_to_js_key_code) {
-                    let _ = input.send_keyboard(key_code, KeyAction::Down, sdl3_key_modifiers(keymod), true);
-                }
-            }
-        }
-        sdl3::event::Event::KeyUp { keycode, keymod, .. } => {
-            if let Some(key_code) = keycode.and_then(sdl3_keycode_to_js_key_code) {
-                let _ = input.send_keyboard(key_code, KeyAction::Up, sdl3_key_modifiers(keymod), true);
-            }
-        }
-        sdl3::event::Event::ControllerDeviceAdded { which, .. } => {
-            if let Some(controllers) = controllers.as_mut() {
-                controllers.open_controller(sdl3::sys::joystick::SDL_JoystickID(which), input);
-            }
-        }
-        sdl3::event::Event::ControllerDeviceRemoved { which, .. } => {
-            if let Some(controllers) = controllers.as_mut() {
-                controllers.remove_controller(which, input);
-            }
-        }
-        sdl3::event::Event::ControllerAxisMotion { which, axis, value, .. } => {
-            if let Some(controllers) = controllers.as_mut() {
-                if let Some(gamepad_id) = controllers.handle_axis(which, axis, value) {
-                    if !pending_controller_axis_updates.contains(&gamepad_id) {
-                        pending_controller_axis_updates.push(gamepad_id);
-                    }
-                }
-            }
-        }
-        sdl3::event::Event::ControllerButtonDown { which, button, .. } => {
-            if let Some(controllers) = controllers.as_mut() {
-                controllers.handle_button(which, button, true, input);
-            }
-        }
-        sdl3::event::Event::ControllerButtonUp { which, button, .. } => {
-            if let Some(controllers) = controllers.as_mut() {
-                controllers.handle_button(which, button, false, input);
-            }
-        }
-        _ => {}
-    }
-    false
-}
-
-fn send_sdl3_mouse_position_d3d11(
-    input: &StreamInputSender,
-    x: f32,
-    y: f32,
-    reference_width: usize,
-    reference_height: usize,
-    output_size: (u32, u32),
-) {
-    let (output_width, output_height) = output_size;
-    let video_region = scaled_video_region(
-        reference_width,
-        reference_height,
-        output_width as usize,
-        output_height as usize,
-    );
-    let x = clamp_f32_to_stream_i16(x - video_region.x, video_region.width);
-    let y = clamp_f32_to_stream_i16(y - video_region.y, video_region.height);
-    let _ = input.send_mouse_position(
-        x, y,
-        clamp_f32_to_i16(video_region.width),
-        clamp_f32_to_i16(video_region.height),
-    );
-}
-
-#[cfg(target_os = "windows")]
-fn get_sdl3_window_hwnd(window: *mut sdl3::sys::video::SDL_Window) -> *mut std::ffi::c_void {
-    unsafe {
-        let props = sdl3::sys::video::SDL_GetWindowProperties(window);
-        let prop_name = b"SDL.window.win32.hwnd\0".as_ptr() as *const i8;
-        sdl3::sys::properties::SDL_GetPointerProperty(props, prop_name, std::ptr::null_mut())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -5034,78 +3516,6 @@ mod tests {
         };
 
         assert_eq!(c_int::MAX, config.to_raw().width);
-    }
-
-    #[test]
-    fn sdl_software_renderer_filters_unsupported_video_formats() {
-        let requested = gamestream_sys::VIDEO_FORMAT_H265
-            | gamestream_sys::VIDEO_FORMAT_H265_MAIN10
-            | gamestream_sys::VIDEO_FORMAT_HEVC_REXT8_444
-            | gamestream_sys::VIDEO_FORMAT_AV1_HIGH10_444;
-
-        assert_eq!(
-            gamestream_sys::VIDEO_FORMAT_H265,
-            super::sdl_software_renderer_video_formats(requested, true)
-        );
-    }
-
-    #[test]
-    fn sdl_software_renderer_falls_back_to_h264_when_only_hdr_is_requested() {
-        assert_eq!(
-            gamestream_sys::VIDEO_FORMAT_H264,
-            super::sdl_software_renderer_video_formats(
-                gamestream_sys::VIDEO_FORMAT_H265_MAIN10,
-                true
-            )
-        );
-    }
-
-    #[test]
-    fn automatic_codec_selection_prefers_av1_then_hevc_then_h264() {
-        let requested = StreamConfiguration::from(&default_streaming_settings());
-
-        assert_eq!(
-            gamestream_sys::VIDEO_FORMAT_AV1_MAIN8,
-            requested
-                .clone()
-                .preferred_for_server(
-                    gamestream_sys::VIDEO_FORMAT_H264
-                        | gamestream_sys::VIDEO_FORMAT_H265
-                        | gamestream_sys::VIDEO_FORMAT_AV1_MAIN8
-                )
-                .supported_video_formats
-        );
-        assert_eq!(
-            gamestream_sys::VIDEO_FORMAT_H265,
-            requested
-                .clone()
-                .preferred_for_server(
-                    gamestream_sys::VIDEO_FORMAT_H264 | gamestream_sys::VIDEO_FORMAT_H265
-                )
-                .supported_video_formats
-        );
-        assert_eq!(
-            gamestream_sys::VIDEO_FORMAT_H264,
-            requested
-                .preferred_for_server(gamestream_sys::VIDEO_FORMAT_H264)
-                .supported_video_formats
-        );
-    }
-
-    #[test]
-    fn forced_codec_settings_map_to_real_video_format_masks() {
-        let mut settings = default_streaming_settings();
-        settings.video_codec_config = super::VIDEO_CODEC_CONFIG_FORCE_HEVC;
-        assert_eq!(
-            gamestream_sys::VIDEO_FORMAT_H265,
-            StreamConfiguration::from(&settings).supported_video_formats
-        );
-
-        settings.video_codec_config = super::VIDEO_CODEC_CONFIG_FORCE_AV1;
-        assert_eq!(
-            gamestream_sys::VIDEO_FORMAT_AV1_MAIN8 | gamestream_sys::VIDEO_FORMAT_H265,
-            StreamConfiguration::from(&settings).supported_video_formats
-        );
     }
 
     #[test]
@@ -5252,7 +3662,6 @@ mod tests {
         assert!(callbacks.audio.decode_and_play_sample.is_some());
     }
 
-    #[cfg(moonlight_common_c_linked)]
     #[test]
     fn headless_media_callbacks_are_safe_noop_sinks() {
         let video = super::headless_video_callbacks();

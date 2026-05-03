@@ -455,10 +455,6 @@ impl RustBackend {
         let server_info = request_context
             .fetch_server_info()
             .map_err(|error| error.to_string())?;
-        let stream_config = plan
-            .stream_config
-            .clone()
-            .preferred_for_server(server_info.server_codec_mode_support);
         let app_id = plan
             .app_id
             .parse::<u32>()
@@ -484,12 +480,16 @@ impl RustBackend {
             persist_game_controllers_on_disconnect: !self.settings.multi_controller,
         };
         let start_session = match request_kind {
-            StreamStartRequestKind::Launch => request_context.launch_app(&request, &stream_config),
-            StreamStartRequestKind::Resume => request_context.resume_app(&request, &stream_config),
+            StreamStartRequestKind::Launch => {
+                request_context.launch_app(&request, &plan.stream_config)
+            }
+            StreamStartRequestKind::Resume => {
+                request_context.resume_app(&request, &plan.stream_config)
+            }
         }
         .map_err(|error| error.to_string())?;
 
-        plan.prepare_session(&server_info, &start_session, &stream_config)
+        plan.prepare_session(&server_info, &start_session)
             .map(Some)
             .map_err(|error| error.to_string())
     }
