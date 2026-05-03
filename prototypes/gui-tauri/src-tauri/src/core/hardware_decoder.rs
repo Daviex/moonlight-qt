@@ -245,9 +245,9 @@ impl Clone for GpuSurfacePool {
 /// Windows D3D11 device for hardware video decoding
 #[cfg(target_os = "windows")]
 pub struct D3D11Device {
-    device: Option<windows::Win32::Graphics::Direct3D11::ID3D11Device>,
-    context: Option<windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext>,
-    feature_level: D3D_FEATURE_LEVEL,
+    pub(crate) device: Option<windows::Win32::Graphics::Direct3D11::ID3D11Device>,
+    pub(crate) context: Option<windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext>,
+    pub(crate) feature_level: D3D_FEATURE_LEVEL,
 }
 
 #[cfg(target_os = "windows")]
@@ -629,7 +629,7 @@ impl Drop for D3D11HwContext {
 
 /// D3D11 Hardware Decoder with Surface Pools (Phase 3)
 pub struct D3D11HardwareDecoder {
-    device: Option<D3D11Device>,
+    pub(crate) device: Option<D3D11Device>,
     hw_context: Option<D3D11HwContext>,
     surface_pool: Option<GpuSurfacePool>,
     pub is_available: bool,
@@ -639,8 +639,8 @@ pub struct D3D11HardwareDecoder {
     allocated_frames: std::sync::Mutex<Vec<*mut super::gamestream_sys::AVFrame>>,
 }
 
-unsafe impl Send for D3D11HardwareDecoder {}
-unsafe impl Sync for D3D11HardwareDecoder {}
+    unsafe impl Send for D3D11HardwareDecoder {}
+    unsafe impl Sync for D3D11HardwareDecoder {}
 
 impl D3D11HardwareDecoder {
     /// Check if D3D11VA hardware decoding is available on this system

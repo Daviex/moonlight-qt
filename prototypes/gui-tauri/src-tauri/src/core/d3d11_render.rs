@@ -59,36 +59,51 @@ pub struct D3D11Renderer {
 
 #[cfg(target_os = "windows")]
 impl D3D11Renderer {
-    pub fn create(hwnd: *mut std::ffi::c_void, width: u32, height: u32) -> Result<Self, String> {
+    /// Create a D3D11 renderer with an optional external device+context.
+    pub fn create_with_device(
+        hwnd: *mut std::ffi::c_void,
+        width: u32,
+        height: u32,
+        external_device: Option<&ID3D11Device>,
+        external_context: Option<&ID3D11DeviceContext>,
+    ) -> Result<Self, String> {
+        let (device, context) = match (external_device, external_context) {
+            (Some(dev), Some(ctx)) => (dev.clone(), ctx.clone()),
+            _ => {
+                // Create new device
+                let feature_levels = [D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0];
+                let mut device: Option<ID3D11Device> = None;
+                let mut context: Option<ID3D11DeviceContext> = None;
+                let mut fl = D3D_FEATURE_LEVEL_11_0;
+                unsafe {
+                    D3D11CreateDevice(
+                        None, D3D_DRIVER_TYPE_HARDWARE, HMODULE::default(),
+                        D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+                        Some(&feature_levels), 7,
+                        Some(&mut device as *mut Option<ID3D11Device>),
+                        Some(&mut fl as *mut D3D_FEATURE_LEVEL),
+                        Some(&mut context as *mut Option<ID3D11DeviceContext>),
+                    )
+                }.map_err(|e| format!("D3D11CreateDevice: {e:?}"))?;
+                (device.ok_or("device null")?, context.ok_or("context null")?)
+            }
+        };
+
         logger::log(format!("D3D11 renderer: {}x{} HWND={:p}", width, height, hwnd));
+        Self::finish_create(device, context, hwnd, width, height)
+    }
 
-        // ── D3D11 device ──
-        let feature_levels = [
-            D3D_FEATURE_LEVEL_11_1,
-            D3D_FEATURE_LEVEL_11_0,
-        ];
-        let mut device: Option<ID3D11Device> = None;
-        let mut context: Option<ID3D11DeviceContext> = None;
-        let mut feature_level = D3D_FEATURE_LEVEL_11_0;
+    pub fn create(hwnd: *mut std::ffi::c_void, width: u32, height: u32) -> Result<Self, String> {
+        Self::create_with_device(hwnd, width, height, None, None)
+    }
 
-        unsafe {
-            D3D11CreateDevice(
-                None,
-                D3D_DRIVER_TYPE_HARDWARE,
-                HMODULE::default(),
-                D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
-                Some(&feature_levels),
-                7, // D3D11_SDK_VERSION
-                Some(&mut device as *mut Option<ID3D11Device>),
-                Some(&mut feature_level as *mut D3D_FEATURE_LEVEL),
-                Some(&mut context as *mut Option<ID3D11DeviceContext>),
-            )
-        }
-        .map_err(|e| format!("D3D11CreateDevice: {e:?}"))?;
-
-        let device = device.ok_or("D3D11 device null")?;
-        let context = context.ok_or("D3D11 context null")?;
-        logger::log(format!("D3D11 device ready, FL {feature_level:?}"));
+    fn finish_create(
+        device: ID3D11Device,
+        context: ID3D11DeviceContext,
+        hwnd: *mut std::ffi::c_void,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, String> {
 
         // ── Swapchain ──
         let dxgi: IDXGIFactory2 = unsafe {

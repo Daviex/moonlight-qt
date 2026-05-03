@@ -7,6 +7,8 @@ use super::gamestream_sys;
 use super::hardware_decoder;
 #[cfg(target_os = "windows")]
 use super::d3d11_render::D3D11Renderer;
+#[cfg(target_os = "windows")]
+use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
 use super::stream_input::{
     ButtonAction, ControllerCapabilities, ControllerState, ControllerType, KeyAction, KeyModifiers,
     MouseButton as StreamMouseButton, StreamInputSender,
@@ -1846,19 +1848,28 @@ fn native_video_renderer_loop(
     // Get raw window pointer before canvas potentially consumes it
     let raw_sdl_window: *mut sdl3::sys::video::SDL_Window = window.raw();
 
-    // ── D3D11 native renderer (Windows only) ──
+    // ── D3D11 native renderer using decoder's device (Windows only) ──
     #[cfg(target_os = "windows")]
     let mut d3d11_renderer: Option<D3D11Renderer> = {
         let hwnd = get_sdl3_window_hwnd(window.raw());
-        match D3D11Renderer::create(hwnd, width as u32, height as u32) {
-            Ok(r) => {
-                logger::log("✅ D3D11 native renderer created");
-                Some(r)
-            }
-            Err(e) => {
-                logger::log(format!("⚠️  D3D11 renderer failed: {e}, using SDL3"));
-                None
-            }
+        // Try to share the hardware decoder's D3D11 device
+        let hw_device = HARDWARE_DECODER_STATE
+            .get()
+            .and_then(|s| s.lock().ok())
+            .and_then(|slot| {
+                slot.as_ref().and_then(|decoder| {
+                    decoder.device.as_ref().map(|d| (d.device.clone(), d.context.clone()))
+                })
+            });
+        let result = if let Some((ref dev_opt, ref ctx_opt)) = hw_device {
+            logger::log("Using shared D3D11 device from hardware decoder");
+            D3D11Renderer::create_with_device(hwnd, width as u32, height as u32, dev_opt.as_ref(), ctx_opt.as_ref())
+        } else {
+            D3D11Renderer::create(hwnd, width as u32, height as u32)
+        };
+        match result {
+            Ok(r) => { logger::log("✅ D3D11 native renderer created"); Some(r) }
+            Err(e) => { logger::log(format!("⚠️  D3D11 renderer failed: {e}, using SDL3")); None }
         }
     };
     #[cfg(not(target_os = "windows"))]
@@ -1943,10 +1954,13 @@ fn native_video_renderer_loop(
                         if rw != frame_width as u32 || rh != frame_height as u32 {
                             renderer.resize(frame_width as u32, frame_height as u32)?;
                         }
-                        // Open the shared decode texture on the render device
-                        // The surface_ptr points to an ID3D11Texture2D in NV12 format
+                        // The surface_ptr is a raw ID3D11Texture2D COM pointer from FFmpeg
+                        // transmute interprets the pointer value as the COM interface type
                         let nv12_tex: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D = unsafe {
-                            std::mem::transmute_copy(&gpu_frame.surface_ptr)
+                            let raw: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D = std::mem::transmute(gpu_frame.surface_ptr);
+                            let cloned = raw.clone();
+                            std::mem::forget(raw);
+                            cloned
                         };
                         renderer.render_nv12_frame(
                             &nv12_tex,
