@@ -514,6 +514,25 @@ impl D3D11HwContext {
             return Err("hwdevice context is null".into());
         }
 
+        // Set D3D11_BIND_SHADER_RESOURCE flag on decode textures so we can
+        // create SRVs (Shader Resource Views) for NV12→BGRA pixel shader.
+        // The C++ code does this in prepareDecoderContextInGetFormat():
+        //   hw_device_ctx->texture_flags |= D3D11_BIND_SHADER_RESOURCE;
+        unsafe {
+            // AVHWDeviceContext.hwctx is at offset 16 (after AVClass* + AVHWDeviceType + padding)
+            let hwctx_ptr = *((hw_device_ctx as *const u8).add(16) as *const *mut c_void);
+            if !hwctx_ptr.is_null() {
+                // AVD3D11VADeviceContext.texture_flags is at offset 40
+                // (after 5 ID3D11* pointers: device, device_context, video_device, video_context, enumerator)
+                let texture_flags_ptr = (hwctx_ptr as *mut u8).add(40) as *mut u32;
+                *texture_flags_ptr |= 0x8; // D3D11_BIND_SHADER_RESOURCE
+                logger::log(format!(
+                    "✅ Set D3D11_BIND_SHADER_RESOURCE on decoder textures (texture_flags=0x{:08X})",
+                    *texture_flags_ptr
+                ));
+            }
+        }
+
         Ok(Self {
             hw_device_ctx: Some(hw_device_ctx),
         })

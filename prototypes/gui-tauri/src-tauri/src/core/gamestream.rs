@@ -1969,42 +1969,31 @@ fn native_video_renderer_loop(
                 let frame_height = frame.height() as usize;
                 let frame_format = frame.texture_format();
 
-                // ── D3D11 hardware path ──
+                // ── D3D11 hardware path (shared device, GPU-direct) ──
                 #[cfg(target_os = "windows")]
                 if let DecodedVideoFrame::D3D11Surface(gpu_frame) = &frame {
                     if let Some(ref mut renderer) = d3d11_renderer {
-                        // Resize if needed
                         let (rw, rh) = renderer.dimensions();
                         if rw != frame_width as u32 || rh != frame_height as u32 {
                             renderer.resize(frame_width as u32, frame_height as u32)?;
                         }
-                        // The surface_ptr is a raw ID3D11Texture2D COM pointer from FFmpeg
-                        // transmute interprets the pointer value as the COM interface type
-                        let nv12_tex: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D = unsafe {
-                            let raw: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D = std::mem::transmute(gpu_frame.surface_ptr);
+                        // Must use the SAME device: decode texture is on decoder's device,
+                        // and our renderer uses the same device (passed via create_with_device).
+                        let nv12_tex: ID3D11Texture2D = unsafe {
+                            let raw: ID3D11Texture2D = std::mem::transmute(gpu_frame.surface_ptr);
                             let cloned = raw.clone();
                             std::mem::forget(raw);
                             cloned
                         };
-                        renderer.render_nv12_frame(
-                            &nv12_tex,
-                            frame_width as u32,
-                            frame_height as u32,
-                        )?;
+                        logger::log("render_nv12_frame...");
+                        renderer.render_nv12_frame(&nv12_tex, frame_width as u32, frame_height as u32)?;
+                        logger::log("present...");
                         renderer.present()?;
 
-                        diagnostics.record_frame(
-                            frame.frame_number(),
-                            frame_format,
-                            0, // update: 0 (GPU-only, no CPU upload needed)
-                            0, // render: 0
-                            0, // frame_age: 0
-                            0,
-                        );
+                        diagnostics.record_frame(frame.frame_number(), frame_format, 0, 0, 0, 0);
                         diagnostics.maybe_log_simple(frame_width, frame_height);
                         continue;
                     }
-                    // Fall through to SDL3 if D3D11 renderer is None
                 }
 
                 // ── SDL3 software path (fallback) ──
