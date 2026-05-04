@@ -18,9 +18,8 @@
 // Determines the maximum motion amount before allowing movement
 #define MOUSE_EMULATION_DEADZONE 2
 
-// Haptic capabilities (in addition to those from SDL_GetHapticFeatures())
+// Haptic capabilities
 #define ML_HAPTIC_GC_RUMBLE         (1U << 16)
-#define ML_HAPTIC_SIMPLE_RUMBLE     (1U << 17)
 #define ML_HAPTIC_GC_TRIGGER_RUMBLE (1U << 18)
 
 const int SdlInputHandler::k_ButtonMap[] = {
@@ -112,7 +111,7 @@ void SdlInputHandler::sendGamepadState(GamepadState* state)
                                rsY);
 }
 
-void SdlInputHandler::sendGamepadBatteryState(GamepadState* state, SDL_JoystickPowerLevel level, int percent)
+void SdlInputHandler::sendGamepadBatteryState(GamepadState* state, SDL_PowerState level, int percent)
 {
     uint8_t batteryPercentage;
     uint8_t batteryState;
@@ -122,16 +121,18 @@ void SdlInputHandler::sendGamepadBatteryState(GamepadState* state, SDL_JoystickP
     // We also cannot tell the percentage of charge exactly in any case.
     switch (level)
     {
-    case SDL_JOYSTICK_POWER_UNKNOWN:
+    case SDL_POWERSTATE_ERROR:
+    case SDL_POWERSTATE_UNKNOWN:
         batteryState = LI_BATTERY_STATE_UNKNOWN;
         batteryPercentage = LI_BATTERY_PERCENTAGE_UNKNOWN;
         break;
-    case SDL_JOYSTICK_POWER_WIRED:
+    case SDL_POWERSTATE_NO_BATTERY:
+    case SDL_POWERSTATE_CHARGING:
+    case SDL_POWERSTATE_CHARGED:
         batteryState = LI_BATTERY_STATE_CHARGING;
         batteryPercentage = LI_BATTERY_PERCENTAGE_UNKNOWN;
         break;
-    case SDL_JOYSTICK_POWER_EMPTY:
-        // EMPTY/LOW/MEDIUM/FULL all map to SDL_POWERSTATE_ON_BATTERY in SDL3
+    case SDL_POWERSTATE_ON_BATTERY:
         batteryState = LI_BATTERY_STATE_DISCHARGING;
         batteryPercentage = (percent >= 0) ? (uint8_t)percent : 50;
         break;
@@ -390,8 +391,6 @@ void SdlInputHandler::handleControllerButtonEvent(SDL_GamepadButtonEvent* event)
     }
 }
 
-#if SDL_VERSION_ATLEAST(2, 0, 14)
-
 void SdlInputHandler::handleControllerSensorEvent(SDL_GamepadSensorEvent* event)
 {
     GamepadState* state = findStateForGamepad(event->which);
@@ -452,10 +451,6 @@ void SdlInputHandler::handleControllerTouchpadEvent(SDL_GamepadTouchpadEvent* ev
     LiSendControllerTouchEvent((uint8_t)state->index, eventType, event->finger, event->x, event->y, event->pressure);
 }
 
-#endif
-
-#if SDL_VERSION_ATLEAST(2, 24, 0)
-
 void SdlInputHandler::handleJoystickBatteryEvent(SDL_JoyBatteryEvent* event)
 {
     GamepadState* state = findStateForGamepad(event->which);
@@ -463,10 +458,8 @@ void SdlInputHandler::handleJoystickBatteryEvent(SDL_JoyBatteryEvent* event)
         return;
     }
 
-    sendGamepadBatteryState(state, (SDL_JoystickPowerLevel)event->state, event->percent);
+    sendGamepadBatteryState(state, event->state, event->percent);
 }
-
-#endif
 
 void SdlInputHandler::handleControllerDeviceEvent(SDL_GamepadDeviceEvent* event)
 {
@@ -539,12 +532,10 @@ void SdlInputHandler::handleControllerDeviceEvent(SDL_GamepadDeviceEvent* event)
         if (m_MultiController) {
             state->index = i;
 
-#if SDL_VERSION_ATLEAST(2, 0, 12)
             // This will change indicators on the controller to show the assigned
             // player index. For Xbox 360 controllers, that means updating the LED
             // ring to light up the corresponding quadrant for this player.
             SDL_SetGamepadPlayerIndex(controller, state->index);
-#endif
         }
         else {
             // Always player 1 in single controller mode
@@ -555,45 +546,8 @@ void SdlInputHandler::handleControllerDeviceEvent(SDL_GamepadDeviceEvent* event)
         state->jsId = SDL_GetJoystickID(SDL_GetGamepadJoystick(state->controller));
 
         hapticCaps = 0;
-#if SDL_VERSION_ATLEAST(2, 0, 18)
         hapticCaps |= SDL_RumbleGamepad(controller, 0, 0, 1) ? ML_HAPTIC_GC_RUMBLE : 0;
         hapticCaps |= SDL_RumbleGamepadTriggers(controller, 0, 0, 1) ? ML_HAPTIC_GC_TRIGGER_RUMBLE : 0;
-#elif SDL_VERSION_ATLEAST(2, 0, 9)
-        // Perform a tiny rumbles to see if haptics are supported.
-        // NB: We cannot use zeros for rumble intensity or SDL will not actually call the JS driver
-        // and we'll get a (potentially false) success value returned.
-        hapticCaps |= SDL_RumbleGamepad(controller, 1, 1, 1) ? ML_HAPTIC_GC_RUMBLE : 0;
-#if SDL_VERSION_ATLEAST(2, 0, 14)
-        hapticCaps |= SDL_RumbleGamepadTriggers(controller, 1, 1, 1) ? ML_HAPTIC_GC_TRIGGER_RUMBLE : 0;
-#endif
-#else
-        state->haptic = SDL_OpenHapticFromJoystick(SDL_GetGamepadJoystick(state->controller));
-        state->hapticEffectId = -1;
-        state->hapticMethod = GAMEPAD_HAPTIC_METHOD_NONE;
-        if (state->haptic != nullptr) {
-            // Query for supported haptic effects
-            hapticCaps = SDL_GetHapticFeatures(state->haptic);
-            hapticCaps |= SDL_HapticRumbleSupported(state->haptic) ?
-                            ML_HAPTIC_SIMPLE_RUMBLE : 0;
-
-            if ((SDL_GetHapticFeatures(state->haptic) & SDL_HAPTIC_LEFTRIGHT) == 0) {
-                if (SDL_HapticRumbleSupported(state->haptic)) {
-                    if (SDL_InitHapticRumble(state->haptic)) {
-                        state->hapticMethod = GAMEPAD_HAPTIC_METHOD_SIMPLERUMBLE;
-                    }
-                }
-                if (state->hapticMethod == GAMEPAD_HAPTIC_METHOD_NONE) {
-                    SDL_CloseHaptic(state->haptic);
-                    state->haptic = nullptr;
-                }
-            } else {
-                state->hapticMethod = GAMEPAD_HAPTIC_METHOD_LEFTRIGHT;
-            }
-        }
-        else {
-            hapticCaps = 0;
-        }
-#endif
 
         mapping = SDL_GetGamepadMapping(state->controller);
         name = SDL_GetGamepadName(state->controller);
@@ -627,26 +581,6 @@ void SdlInputHandler::handleControllerDeviceEvent(SDL_GamepadDeviceEvent* event)
 
         int powerPercent = -1;
         SDL_PowerState pwr = SDL_GetGamepadPowerInfo(state->controller, &powerPercent);
-        SDL_JoystickPowerLevel powerLevel;
-        switch (pwr) {
-        case SDL_POWERSTATE_NO_BATTERY:
-        case SDL_POWERSTATE_CHARGING:
-            powerLevel = SDL_JOYSTICK_POWER_WIRED;
-            break;
-        case SDL_POWERSTATE_ON_BATTERY:
-            powerLevel = SDL_JOYSTICK_POWER_MEDIUM;
-            break;
-        case SDL_POWERSTATE_CHARGED:
-            powerLevel = SDL_JOYSTICK_POWER_FULL;
-            break;
-        default:
-            powerLevel = SDL_JOYSTICK_POWER_UNKNOWN;
-            break;
-        }
-
-#if SDL_VERSION_ATLEAST(2, 0, 14)
-        // On SDL 2.0.14 and later, we can provide enhanced controller information to the host PC
-        // for it to use as a hint for the type of controller to emulate.
         uint32_t supportedButtonFlags = 0;
         for (int i = 0; i < (int)SDL_arraysize(k_ButtonMap); i++) {
             if (SDL_GamepadHasButton(state->controller, (SDL_GamepadButton)i)) {
@@ -675,9 +609,7 @@ void SdlInputHandler::handleControllerDeviceEvent(SDL_GamepadDeviceEvent* event)
         if (SDL_GamepadHasSensor(state->controller, SDL_SENSOR_GYRO)) {
             capabilities |= LI_CCAP_GYRO;
         }
-        if (powerLevel != SDL_JOYSTICK_POWER_UNKNOWN || SDL_VERSION_ATLEAST(2, 24, 0)) {
-            capabilities |= LI_CCAP_BATTERY_STATE;
-        }
+        capabilities |= LI_CCAP_BATTERY_STATE;
         if (gamepadType == SDL_GAMEPAD_TYPE_PS4 || gamepadType == SDL_GAMEPAD_TYPE_PS5 || gamepadType == SDL_GAMEPAD_TYPE_PS3) {
             capabilities |= LI_CCAP_RGB_LED;
         }
@@ -694,11 +626,9 @@ void SdlInputHandler::handleControllerDeviceEvent(SDL_GamepadDeviceEvent* event)
             type = LI_CTYPE_PS;
             break;
         case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO:
-#if SDL_VERSION_ATLEAST(2, 24, 0)
         case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
         case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT:
         case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR:
-#endif
             type = LI_CTYPE_NINTENDO;
             break;
         default:
@@ -713,16 +643,8 @@ void SdlInputHandler::handleControllerDeviceEvent(SDL_GamepadDeviceEvent* event)
             type == LI_CTYPE_PS;
 
         LiSendControllerArrivalEvent(state->index, m_GamepadMask, type, supportedButtonFlags, capabilities);
-#else
 
-        // Send an empty event to tell the PC we've arrived
-        sendGamepadState(state);
-#endif
-
-        // Send a power level if it's known at this time
-        if (powerLevel != SDL_JOYSTICK_POWER_UNKNOWN) {
-            sendGamepadBatteryState(state, powerLevel, powerPercent);
-        }
+        sendGamepadBatteryState(state, pwr, powerPercent);
     }
     else if (event->type == SDL_EVENT_GAMEPAD_REMOVED) {
         state = findStateForGamepad(event->which);
@@ -733,13 +655,6 @@ void SdlInputHandler::handleControllerDeviceEvent(SDL_GamepadDeviceEvent* event)
             }
 
             SDL_CloseGamepad(state->controller);
-
-#if !SDL_VERSION_ATLEAST(2, 0, 9)
-            if (state->haptic != nullptr) {
-                SDL_CloseHaptic(state->haptic);
-            }
-#endif
-
             // Remove this from the gamepad mask in MC-mode
             if (m_MultiController) {
                 SDL_assert(m_GamepadMask & (1 << state->index));
@@ -798,55 +713,9 @@ void SdlInputHandler::rumble(unsigned short controllerNumber, unsigned short low
         return;
     }
 
-#if SDL_VERSION_ATLEAST(2, 0, 9)
     if (m_GamepadState[controllerNumber].controller != nullptr) {
         SDL_RumbleGamepad(m_GamepadState[controllerNumber].controller, lowFreqMotor, highFreqMotor, 30000);
     }
-#else
-    // Check if the controller supports haptics (and if the controller exists at all)
-    SDL_Haptic* haptic = m_GamepadState[controllerNumber].haptic;
-    if (haptic == nullptr) {
-        return;
-    }
-
-    // Stop the last effect we played
-    if (m_GamepadState[controllerNumber].hapticMethod == GAMEPAD_HAPTIC_METHOD_LEFTRIGHT) {
-        if (m_GamepadState[controllerNumber].hapticEffectId >= 0) {
-            SDL_DestroyHapticEffect(haptic, m_GamepadState[controllerNumber].hapticEffectId);
-        }
-    } else if (m_GamepadState[controllerNumber].hapticMethod == GAMEPAD_HAPTIC_METHOD_SIMPLERUMBLE) {
-        SDL_StopHapticRumble(haptic);
-    }
-
-    // If this callback is telling us to stop both motors, don't bother queuing a new effect
-    if (lowFreqMotor == 0 && highFreqMotor == 0) {
-        return;
-    }
-
-    if (m_GamepadState[controllerNumber].hapticMethod == GAMEPAD_HAPTIC_METHOD_LEFTRIGHT) {
-        SDL_HapticEffect effect;
-        SDL_memset(&effect, 0, sizeof(effect));
-        effect.type = SDL_HAPTIC_LEFTRIGHT;
-
-        // The effect should last until we are instructed to stop or change it
-        effect.leftright.length = SDL_HAPTIC_INFINITY;
-
-        // SDL haptics range from 0-32767 but XInput uses 0-65535, so divide by 2 to correct for SDL's scaling
-        effect.leftright.large_magnitude = lowFreqMotor / 2;
-        effect.leftright.small_magnitude = highFreqMotor / 2;
-
-        // Play the new effect
-        m_GamepadState[controllerNumber].hapticEffectId = SDL_CreateHapticEffect(haptic, &effect);
-        if (m_GamepadState[controllerNumber].hapticEffectId >= 0) {
-            SDL_RunHapticEffect(haptic, m_GamepadState[controllerNumber].hapticEffectId, 1);
-        }
-    } else if (m_GamepadState[controllerNumber].hapticMethod == GAMEPAD_HAPTIC_METHOD_SIMPLERUMBLE) {
-        SDL_PlayHapticRumble(haptic,
-                             std::min(1.0, (GAMEPAD_HAPTIC_SIMPLE_HIFREQ_MOTOR_WEIGHT*highFreqMotor +
-                                            GAMEPAD_HAPTIC_SIMPLE_LOWFREQ_MOTOR_WEIGHT*lowFreqMotor) / 65535.0),
-                             SDL_HAPTIC_INFINITY);
-    }
-#endif
 }
 
 void SdlInputHandler::rumbleTriggers(uint16_t controllerNumber, uint16_t leftTrigger, uint16_t rightTrigger)
@@ -856,11 +725,9 @@ void SdlInputHandler::rumbleTriggers(uint16_t controllerNumber, uint16_t leftTri
         return;
     }
 
-#if SDL_VERSION_ATLEAST(2, 0, 14)
     if (m_GamepadState[controllerNumber].controller != nullptr) {
         SDL_RumbleGamepadTriggers(m_GamepadState[controllerNumber].controller, leftTrigger, rightTrigger, 30000);
     }
-#endif
 }
 
 void SdlInputHandler::setMotionEventState(uint16_t controllerNumber, uint8_t motionType, uint16_t reportRateHz)
@@ -870,7 +737,6 @@ void SdlInputHandler::setMotionEventState(uint16_t controllerNumber, uint8_t mot
         return;
     }
 
-#if SDL_VERSION_ATLEAST(2, 0, 14)
     if (m_GamepadState[controllerNumber].controller != nullptr) {
         uint8_t reportPeriodMs = reportRateHz ? (1000 / reportRateHz) : 0;
 
@@ -886,7 +752,6 @@ void SdlInputHandler::setMotionEventState(uint16_t controllerNumber, uint8_t mot
             break;
         }
     }
-#endif
 }
 
 void SdlInputHandler::setControllerLED(uint16_t controllerNumber, uint8_t r, uint8_t g, uint8_t b)
@@ -896,16 +761,13 @@ void SdlInputHandler::setControllerLED(uint16_t controllerNumber, uint8_t r, uin
         return;
     }
 
-#if SDL_VERSION_ATLEAST(2, 0, 14)
     if (m_GamepadState[controllerNumber].controller != nullptr) {
         SDL_SetGamepadLED(m_GamepadState[controllerNumber].controller, r, g, b);
     }
-#endif
 }
 
 void SdlInputHandler::setAdaptiveTriggers(uint16_t controllerNumber, DualSenseOutputReport *report){
 
-#if SDL_VERSION_ATLEAST(2, 0, 16)
     // Make sure the controller number is within our supported count
     if (controllerNumber < MAX_GAMEPADS &&
         // and we have a valid controller
@@ -914,7 +776,6 @@ void SdlInputHandler::setAdaptiveTriggers(uint16_t controllerNumber, DualSenseOu
         SDL_GetGamepadType(m_GamepadState[controllerNumber].controller) == SDL_GAMEPAD_TYPE_PS5) {
         SDL_SendGamepadEffect(m_GamepadState[controllerNumber].controller, report, sizeof(*report));
     }
-#endif
 
     SDL_free(report);
 }

@@ -96,7 +96,7 @@ bool SdlRenderer::isRenderThreadSupported()
 bool SdlRenderer::isPixelFormatSupported(int videoFormat, AVPixelFormat pixelFormat)
 {
     if (videoFormat & (VIDEO_FORMAT_MASK_10BIT | VIDEO_FORMAT_MASK_YUV444)) {
-        // SDL2 can't natively handle textures with these formats, but we can perform
+        // SDL can't natively handle textures with these formats, but we can perform
         // conversion on the CPU using swscale then upload them as an RGB texture.
         const AVPixFmtDescriptor* formatDesc = av_pix_fmt_desc_get(pixelFormat);
         if (!formatDesc) {
@@ -149,7 +149,7 @@ bool SdlRenderer::initialize(PDECODER_PARAMETERS params)
     }
 
     // In SDL3, we determine the platform by checking the video driver name
-    // instead of SDL_SysWMinfo, which was removed.
+    // SDL3 exposes native window handles through window properties.
     bool useVsync = false;
     const char* videoDriver = SDL_GetCurrentVideoDriver();
     if (videoDriver != nullptr) {
@@ -440,17 +440,14 @@ ReadbackRetry:
                              frame->linesize[2]);
     }
     else if (!m_NeedsYuvToRgbConversion) {
-#if SDL_VERSION_ATLEAST(2, 0, 15)
         // SDL_UpdateNVTexture is not supported on all renderer backends,
-        // (notably not DX9), so we must have a fallback in case it's not
-        // supported and for earlier versions of SDL.
-        if (SDL_UpdateNVTexture(m_Texture,
-                                nullptr,
-                                frame->data[0],
-                                frame->linesize[0],
-                                frame->data[1],
-                                frame->linesize[1]) != 0)
-#endif
+        // so we must have a fallback in case it's not supported.
+        if (!SDL_UpdateNVTexture(m_Texture,
+                                 nullptr,
+                                 frame->data[0],
+                                 frame->linesize[0],
+                                 frame->data[1],
+                                 frame->linesize[1]))
         {
             char* pixels;
             int texturePitch;

@@ -94,9 +94,9 @@ VAAPIRenderer::openDisplay(SDL_Window* window)
     VADisplay display;
     SDL_PropertiesID props = SDL_GetWindowProperties(window);
 
-    m_WindowSystem = SDL_SYSWM_UNKNOWN;
+    m_WindowSystem = WindowSystem::Unknown;
     if (SDL_HasProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER)) {
-        m_WindowSystem = SDL_SYSWM_X11;
+        m_WindowSystem = WindowSystem::X11;
 #ifdef HAVE_LIBVA_X11
         m_XWindow = (Window)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
 
@@ -125,7 +125,7 @@ VAAPIRenderer::openDisplay(SDL_Window* window)
 #endif
     }
     else if (SDL_HasProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER)) {
-        m_WindowSystem = SDL_SYSWM_WAYLAND;
+        m_WindowSystem = WindowSystem::Wayland;
 #ifdef HAVE_LIBVA_WAYLAND
         display = vaGetDisplayWl(SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr));
         if (display == nullptr) {
@@ -139,9 +139,9 @@ VAAPIRenderer::openDisplay(SDL_Window* window)
         return nullptr;
 #endif
     }
-#if defined(SDL_VIDEO_DRIVER_KMSDRM) && defined(HAVE_LIBVA_DRM) && SDL_VERSION_ATLEAST(2, 0, 15)
+#if defined(SDL_VIDEO_DRIVER_KMSDRM) && defined(HAVE_LIBVA_DRM)
     else if (SDL_HasProperty(props, SDL_PROP_WINDOW_KMSDRM_DRM_FD_NUMBER)) {
-        m_WindowSystem = SDL_SYSWM_KMSDRM;
+        m_WindowSystem = WindowSystem::KmsDrm;
         // It's possible to enter this function several times as we're probing VA drivers.
         // Make sure to only duplicate the DRM FD the first time through.
         if (m_DrmFd < 0) {
@@ -317,7 +317,7 @@ VAAPIRenderer::initialize(PDECODER_PARAMETERS params)
                     status = tryVaInitialize(vaDeviceContext, params, &major, &minor);
                 }
 
-                if (status != VA_STATUS_SUCCESS && (m_WindowSystem != SDL_SYSWM_X11 || m_DecoderSelectionPass > 0)) {
+                if (status != VA_STATUS_SUCCESS && (m_WindowSystem != WindowSystem::X11 || m_DecoderSelectionPass > 0)) {
                     // The unofficial nvidia VAAPI driver over NVDEC/CUDA works well on Wayland,
                     // but we'd rather use CUDA for XWayland and VDPAU for regular X11.
                     // NB: Remember to update the VA-API NVDEC condition below when modifying this!
@@ -443,7 +443,7 @@ VAAPIRenderer::initialize(PDECODER_PARAMETERS params)
         // - EGL is broken in their driver, so we're stuck using the slow copy path in SDL renderer
         if (
 #if !defined(HAVE_LIBPLACEBO_VULKAN) && !defined(HAVE_CUDA)
-            m_WindowSystem == SDL_SYSWM_X11 &&
+            m_WindowSystem == WindowSystem::X11 &&
 #endif
             vendorStr.contains("VA-API NVDEC", Qt::CaseInsensitive)) {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
@@ -594,7 +594,7 @@ VAAPIRenderer::isDirectRenderingSupported()
     }
 
     // We only support direct rendering on X11 with VAEntrypointVideoProc support
-    if (m_WindowSystem != SDL_SYSWM_X11 || m_BlacklistedForDirectRendering) {
+    if (m_WindowSystem != WindowSystem::X11 || m_BlacklistedForDirectRendering) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Using indirect rendering due to WM or blacklist");
         m_DirectRenderingSupported = false;
@@ -650,13 +650,13 @@ QString VAAPIRenderer::getRendererDebugInfo()
 {
     const char* windowSystem = "other";
     switch (m_WindowSystem) {
-    case SDL_SYSWM_X11:
+    case WindowSystem::X11:
         windowSystem = "X11";
         break;
-    case SDL_SYSWM_WAYLAND:
+    case WindowSystem::Wayland:
         windowSystem = "Wayland";
         break;
-    case SDL_SYSWM_KMSDRM:
+    case WindowSystem::KmsDrm:
         windowSystem = "KMSDRM";
         break;
     default:
@@ -862,7 +862,7 @@ VAAPIRenderer::renderFrame(AVFrame* frame)
 
     StreamUtils::scaleSourceToDestinationSurface(&src, &dst);
 
-    if (m_WindowSystem == SDL_SYSWM_X11) {
+    if (m_WindowSystem == WindowSystem::X11) {
 #ifdef HAVE_LIBVA_X11
         unsigned int flags = 0;
 
@@ -998,7 +998,7 @@ VAAPIRenderer::renderFrame(AVFrame* frame)
         SDL_UnlockMutex(m_OverlayMutex);
 #endif
     }
-    else if (m_WindowSystem == SDL_SYSWM_WAYLAND) {
+    else if (m_WindowSystem == WindowSystem::Wayland) {
         // We don't support direct rendering on Wayland, so we should
         // never get called there. Many common Wayland compositors don't
         // support YUV surfaces, so direct rendering would fail.

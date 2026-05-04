@@ -30,8 +30,6 @@ ApplicationWindow {
         if (SystemProperties.usesMaterial3Theme) {
             Material.background = "#303030"
         }
-
-        SdlGamepadKeyNavigation.enable()
     }
 
     Component.onCompleted: {
@@ -59,7 +57,6 @@ ApplicationWindow {
             // Hardware acceleration and unmapped gamepads are checked asynchronously
             SystemProperties.hasHardwareAccelerationChanged.connect(hasHardwareAccelerationChanged)
             SystemProperties.unmappedGamepadsChanged.connect(hasUnmappedGamepadsChanged)
-            SystemProperties.startAsyncLoad()
         }
     }
 
@@ -116,6 +113,7 @@ ApplicationWindow {
             // the initial view and pushing it to the StackView
             doEarlyInit()
             push(initialView)
+            deferredStartupTasks.start()
         }
 
         onCurrentItemChanged: {
@@ -166,6 +164,19 @@ ApplicationWindow {
             if (!active && pollingActive) {
                 ComputerManager.stopPollingAsync()
                 pollingActive = false
+            }
+        }
+    }
+
+    Timer {
+        id: deferredStartupTasks
+        interval: 0
+        repeat: false
+        onTriggered: {
+            SdlGamepadKeyNavigation.enable()
+
+            if (runConfigChecks) {
+                SystemProperties.startAsyncLoad()
             }
         }
     }

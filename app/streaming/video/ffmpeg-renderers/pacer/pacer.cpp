@@ -118,11 +118,7 @@ int Pacer::vsyncThread(void *context)
 {
     Pacer* me = reinterpret_cast<Pacer*>(context);
 
-#if SDL_VERSION_ATLEAST(2, 0, 9)
     SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_TIME_CRITICAL);
-#else
-    SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_HIGH);
-#endif
 
     bool async = me->m_VsyncSource->isAsync();
     while (!me->m_Stopping) {
@@ -288,7 +284,7 @@ bool Pacer::initialize(SDL_Window* window, int maxVideoFps, bool enablePacing)
                     "Frame pacing: target %d Hz with %d FPS stream, %d ms timer slack, %d ms queue history",
                     m_DisplayFps, m_MaxVideoFps, m_TimerSlackMillis, QUEUE_HISTORY_WINDOW_MS);
 
-        // SDL3: detect platform via video driver string instead of SDL_GetWindowWMInfo()
+        // Detect platform via video driver string.
         const char* videoDriver = SDL_GetCurrentVideoDriver();
     #ifdef Q_OS_WIN32
         if (SDL_strcmp(videoDriver, "windows") == 0) {

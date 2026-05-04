@@ -1,6 +1,10 @@
 QT += core quick network quickcontrols2 svg
 CONFIG += c++17
 
+CONFIG(debug, debug|release) {
+    CONFIG += qml_debug
+}
+
 unix:!macx {
     TARGET = moonlight
 } else {

@@ -419,8 +419,6 @@ void configureSignalHandlers()
 
 int main(int argc, char *argv[])
 {
-    SDL_SetMainReady();
-
     // Set the app version for the QCommandLineParser's showVersion() command
     QCoreApplication::setApplicationVersion(VERSION_STR);
 
@@ -476,14 +474,7 @@ int main(int argc, char *argv[])
     s_LoggerTime.start();
 
     // Register our logger with all libraries
-#if SDL_VERSION_ATLEAST(3, 0, 0)
     SDL_SetLogOutputFunction(sdlLogToDiskHandler, nullptr);
-#else
-    SDL_LogOutputFunction oldSdlLogFn;
-    void* oldSdlLogUserdata;
-    SDL_GetLogOutputFunction(&oldSdlLogFn, &oldSdlLogUserdata);
-    SDL_SetLogOutputFunction(sdlLogToDiskHandler, nullptr);
-#endif
     qInstallMessageHandler(qtLogToDiskHandler);
 #ifdef HAVE_FFMPEG
     av_log_set_callback(ffmpegLogToDiskHandler);
@@ -772,16 +763,14 @@ int main(int argc, char *argv[])
         break;
     }
 
-    SDL_version compileVersion;
-    SDL_VERSION(&compileVersion);
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "Compiled with SDL %d.%d.%d",
-                compileVersion.major, compileVersion.minor, compileVersion.patch);
+                SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_MICRO_VERSION);
 
     int sdlVer = SDL_GetVersion();
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "Running with SDL %d.%d.%d",
-                SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_MICRO_VERSION);
+                SDL_VERSIONNUM_MAJOR(sdlVer), SDL_VERSIONNUM_MINOR(sdlVer), SDL_VERSIONNUM_MICRO(sdlVer));
 
     // Apply the initial translation based on user preference
     StreamingPreferences::get()->retranslate();
@@ -833,17 +822,6 @@ int main(int argc, char *argv[])
     // Move the mouse to the bottom right so it's invisible when using
     // gamepad-only navigation.
     QCursor().setPos(0xFFFF, 0xFFFF);
-#elif !SDL_VERSION_ATLEAST(2, 0, 11) && defined(Q_OS_LINUX) && (defined(__arm__) || defined(__aarch64__))
-    if (qgetenv("SDL_VIDEO_GL_DRIVER").isEmpty() && QGuiApplication::platformName() == "eglfs") {
-        // Look for Raspberry Pi GLES libraries. SDL 2.0.10 and earlier needs some help finding
-        // the correct libraries for the KMSDRM backend if not compiled with the RPI backend enabled.
-        if (SDL_LoadObject("libbrcmGLESv2.so") != nullptr) {
-            qputenv("SDL_VIDEO_GL_DRIVER", "libbrcmGLESv2.so");
-        }
-        else if (SDL_LoadObject("/opt/vc/lib/libbrcmGLESv2.so") != nullptr) {
-            qputenv("SDL_VIDEO_GL_DRIVER", "/opt/vc/lib/libbrcmGLESv2.so");
-        }
-    }
 #endif
 
 #ifndef Q_OS_DARWIN
@@ -987,11 +965,7 @@ int main(int argc, char *argv[])
     }
 
     // Restore the default logger for all libraries before shutting down ours
-#if SDL_VERSION_ATLEAST(3, 0, 0)
     SDL_SetLogOutputFunction(SDL_GetDefaultLogOutputFunction(), nullptr);
-#else
-    SDL_SetLogOutputFunction(oldSdlLogFn, oldSdlLogUserdata);
-#endif
     qInstallMessageHandler(nullptr);
 #ifdef HAVE_FFMPEG
     av_log_set_callback(av_log_default_callback);

@@ -47,7 +47,7 @@ bool DxVsyncSource::initialize(SDL_Window* window, int)
         return false;
     }
 
-    // SDL3 property-based native handle access (replaces SDL_GetWindowWMInfo)
+    // Property-based native handle access.
     m_Window = (HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
     SDL_assert(m_Window != NULL);
 

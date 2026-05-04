@@ -29,7 +29,7 @@ WaylandVsyncSource::~WaylandVsyncSource()
 
 bool WaylandVsyncSource::initialize(SDL_Window* window, int)
 {
-    // SDL3 property-based native Wayland object access (replaces SDL_GetWindowWMInfo)
+    // Property-based native Wayland object access.
     m_Display = (struct wl_display*)SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, NULL);
     m_Surface = (struct wl_surface*)SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, NULL);
     SDL_assert(m_Display != NULL);

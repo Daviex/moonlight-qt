@@ -20,12 +20,6 @@
 #undef HAVE_LIBVA_DRM
 #endif
 
-// Avoid KMSDRM if SDL is too old for FD sharing
-#if defined(HAVE_LIBVA_DRM) && defined(SDL_VIDEO_DRIVER_KMSDRM) && !SDL_VERSION_ATLEAST(2, 0, 15)
-#warning Unable to use libva-drm because SDL is not version 2.0.16 or later
-#undef HAVE_LIBVA_DRM
-#endif
-
 // Avoid KMSDRM if built without libdrm
 #if defined(HAVE_LIBVA_DRM) && !defined(HAVE_DRM)
 #warning Unable to use libva-drm without libdrm available
@@ -82,6 +76,13 @@ public:
 #endif
 
 private:
+    enum class WindowSystem {
+        Unknown,
+        X11,
+        Wayland,
+        KmsDrm,
+    };
+
     VADisplay openDisplay(SDL_Window* window);
     VAStatus tryVaInitialize(AVVAAPIDeviceContext* vaDeviceContext, PDECODER_PARAMETERS params, int* major, int* minor);
     void renderOverlay(VADisplay display, VASurfaceID surface, Overlay::OverlayType type);
@@ -95,7 +96,7 @@ private:
 #endif
 
     int m_DecoderSelectionPass;
-    int m_WindowSystem;
+    WindowSystem m_WindowSystem;
     AVBufferRef* m_HwContext;
     bool m_BlacklistedForDirectRendering;
     bool m_HasRfiLatencyBug;

@@ -44,13 +44,6 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
     // Allow gamepad input when the app doesn't have focus if requested
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, prefs.backgroundGamepad ? "1" : "0");
 
-#if !SDL_VERSION_ATLEAST(2, 0, 15)
-    // For older versions of SDL (2.0.14 and earlier), use SDL_HINT_GRAB_KEYBOARD
-    SDL_SetHintWithPriority(SDL_HINT_GRAB_KEYBOARD,
-                            m_CaptureSystemKeysMode != StreamingPreferences::CSK_OFF ? "1" : "0",
-                            SDL_HINT_OVERRIDE);
-#endif
-
     // Opt-out of SDL's built-in Alt+Tab handling while keyboard grab is enabled
     SDL_SetHint(SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED, "0");
 
@@ -179,15 +172,6 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
                      SDL_GetError());
     }
 
-#if !SDL_VERSION_ATLEAST(2, 0, 9)
-    SDL_assert(!SDL_WasInit(SDL_INIT_HAPTIC));
-    if (!SDL_InitSubSystem(SDL_INIT_HAPTIC)) {
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "!SDL_InitSubSystem(SDL_INIT_HAPTIC) failed: %s",
-                     SDL_GetError());
-    }
-#endif
-
     // Initialize the gamepad mask with currently attached gamepads to avoid
     // causing gamepads to unexpectedly disappear and reappear on the host
     // during stream startup as we detect currently attached gamepads one at a time.
@@ -206,11 +190,6 @@ SdlInputHandler::~SdlInputHandler()
             Session::get()->notifyMouseEmulationMode(false);
             SDL_RemoveTimer(m_GamepadState[i].mouseEmulationTimer);
         }
-#if !SDL_VERSION_ATLEAST(2, 0, 9)
-        if (m_GamepadState[i].haptic != nullptr) {
-            SDL_CloseHaptic(m_GamepadState[i].haptic);
-        }
-#endif
         if (m_GamepadState[i].controller != nullptr) {
             SDL_CloseGamepad(m_GamepadState[i].controller);
         }
@@ -220,11 +199,6 @@ SdlInputHandler::~SdlInputHandler()
     SDL_RemoveTimer(m_LeftButtonReleaseTimer);
     SDL_RemoveTimer(m_RightButtonReleaseTimer);
     SDL_RemoveTimer(m_DragTimer);
-
-#if !SDL_VERSION_ATLEAST(2, 0, 9)
-    SDL_QuitSubSystem(SDL_INIT_HAPTIC);
-    SDL_assert(!SDL_WasInit(SDL_INIT_HAPTIC));
-#endif
 
     SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
     SDL_assert(!SDL_WasInit(SDL_INIT_GAMEPAD));
@@ -336,11 +310,7 @@ void SdlInputHandler::updateKeyboardGrabState()
     // Don't close the window on Alt+F4 when keyboard grab is enabled
     SDL_SetHint(SDL_HINT_WINDOWS_CLOSE_ON_ALT_F4, shouldGrab ? "1" : "0");
 
-#if SDL_VERSION_ATLEAST(2, 0, 15)
-    // On SDL 2.0.15+, we can get keyboard-only grab on Win32, X11, and Wayland.
-    // SDL 2.0.18 adds keyboard grab on macOS (if built with non-AppStore APIs).
     SDL_SetWindowKeyboardGrab(m_Window, shouldGrab ? true : false);
-#endif
 }
 
 bool SdlInputHandler::isSystemKeyCaptureActive()
@@ -355,11 +325,7 @@ bool SdlInputHandler::isSystemKeyCaptureActive()
 
     Uint32 windowFlags = SDL_GetWindowFlags(m_Window);
     if (!(windowFlags & SDL_WINDOW_INPUT_FOCUS)
-#if SDL_VERSION_ATLEAST(2, 0, 15)
             || !(windowFlags & SDL_WINDOW_KEYBOARD_GRABBED)
-#else
-            || !(windowFlags & SDL_WINDOW_MOUSE_GRABBED)
-#endif
             )
     {
         return false;
@@ -429,20 +395,11 @@ void SdlInputHandler::setCaptureActive(bool active)
 
 void SdlInputHandler::handleTouchFingerEvent(SDL_TouchFingerEvent* event)
 {
-#if SDL_VERSION_ATLEAST(2, 0, 10)
     if (SDL_GetTouchDeviceType(event->touchID) != SDL_TOUCH_DEVICE_DIRECT) {
         // Ignore anything that isn't a touchscreen. We may get callbacks
         // for trackpads, but we want to handle those in the mouse path.
         return;
     }
-#elif defined(Q_OS_DARWIN)
-    // SDL2 sends touch events from trackpads by default on
-    // macOS. This totally screws our actual mouse handling,
-    // so we must explicitly ignore touch events on macOS
-    // until SDL 2.0.10 where we have SDL_GetTouchDeviceType()
-    // to tell them apart.
-    return;
-#endif
 
     if (m_AbsoluteTouchMode) {
         handleAbsoluteFingerEvent(event);

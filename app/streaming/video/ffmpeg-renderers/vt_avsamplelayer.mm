@@ -128,9 +128,9 @@ public:
         return kCVReturnSuccess;
     }
 
-    bool initializeVsyncCallback(SDL_SysWMinfo* info)
+    bool initializeVsyncCallback(NSWindow* window)
     {
-        NSScreen* screen = [info->info.cocoa.window screen];
+        NSScreen* screen = [window screen];
         CVReturn status;
         if (screen == nullptr) {
             // Window not visible on any display, so use a
@@ -334,22 +334,19 @@ public:
 
         // If we're using direct rendering, set up the AVSampleBufferDisplayLayer
         if (m_DirectRendering && !params->testOnly) {
-            SDL_SysWMinfo info;
-
-            SDL_VERSION(&info.version);
-
-            if (!SDL_GetWindowWMInfo(params->window, &info)) {
+            NSWindow* window = (__bridge NSWindow*)SDL_GetPointerProperty(SDL_GetWindowProperties(params->window),
+                                                                          SDL_PROP_WINDOW_COCOA_WINDOW_POINTER,
+                                                                          nullptr);
+            if (!window) {
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                            "SDL_GetWindowWMInfo() failed: %s",
+                            "SDL_PROP_WINDOW_COCOA_WINDOW_POINTER unavailable: %s",
                             SDL_GetError());
                 return false;
             }
 
-            SDL_assert(info.subsystem == SDL_SYSWM_COCOA);
-
             // SDL adds its own content view to listen for events.
             // We need to add a subview for our display layer.
-            NSView* contentView = info.info.cocoa.window.contentView;
+            NSView* contentView = window.contentView;
             m_StreamView = [[VTView alloc] initWithFrame:contentView.bounds];
 
             m_DisplayLayer = [[AVSampleBufferDisplayLayer alloc] init];
@@ -390,7 +387,7 @@ public:
             [contentView addSubview: m_StreamView];
 
             if (params->enableFramePacing) {
-                if (!initializeVsyncCallback(&info)) {
+                if (!initializeVsyncCallback(window)) {
                     return false;
                 }
             }

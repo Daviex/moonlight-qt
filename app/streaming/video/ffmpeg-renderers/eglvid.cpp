@@ -397,21 +397,6 @@ bool EGLRenderer::initialize(PDECODER_PARAMETERS params)
 {
     m_Window = params->window;
 
-    // It's not safe to attempt to opportunistically create a GLES2
-    // renderer prior to 2.0.10. If GLES2 isn't available, SDL will
-    // attempt to dereference a null pointer and crash Moonlight.
-    // https://bugzilla.libsdl.org/show_bug.cgi?id=4350
-    // https://hg.libsdl.org/SDL/rev/84618d571795
-    //
-    // SDL_HINT_VIDEO_FORCE_EGL isn't supported until SDL 2.0.12
-    // and we need to use EGL to avoid triggering a crash in Mesa.
-    // https://gitlab.freedesktop.org/mesa/mesa/issues/1011
-    if (!SDL_VERSION_ATLEAST(2, 0, 12)) {
-        EGL_LOG(Error, "Not supported until SDL 2.0.12");
-        m_InitFailureReason = InitFailureReason::NoSoftwareSupport;
-        return false;
-    }
-
     // This renderer doesn't support HDR, so pick a different one.
     // HACK: This avoids a deadlock in SDL_CreateRenderer() if
     // Vulkan was used before and SDL is trying to load EGL.
@@ -573,7 +558,7 @@ bool EGLRenderer::initialize(PDECODER_PARAMETERS params)
     // SwapBuffers until the compositor consumes the frame. This will
     // needlessly increases latency, so we should avoid it.
     //
-    // HACK: In SDL 2.0.22+ on GNOME systems with fractional DPI scaling,
+    // HACK: On GNOME systems with fractional DPI scaling,
     // the Wayland viewport can be stale when using Super+Left/Right/Up
     // to resize the window. This seems to happen significantly more often
     // with vsync enabled, so this also mitigates that problem too.
@@ -584,7 +569,7 @@ bool EGLRenderer::initialize(PDECODER_PARAMETERS params)
             ) {
         SDL_GL_SetSwapInterval(1);
 
-#if SDL_VERSION_ATLEAST(2, 0, 15) && defined(SDL_VIDEO_DRIVER_KMSDRM)
+#if defined(SDL_VIDEO_DRIVER_KMSDRM)
         // We don't use the fence to reduce latency on KMSDRM
         // because it can have severe performance impacts when
         // running on slow GPUs where the frame time exceeds

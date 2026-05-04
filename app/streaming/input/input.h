@@ -10,19 +10,12 @@ struct GamepadState {
     SDL_JoystickID jsId;
     short index;
 
-#if !SDL_VERSION_ATLEAST(2, 0, 9)
-    SDL_Haptic* haptic;
-    int hapticMethod;
-    int hapticEffectId;
-#endif
-
     SDL_TimerID mouseEmulationTimer;
     Uint64 lastStartDownTime;
 
     bool clickpadButtonEmulationEnabled;
     bool emulatedClickpadButtonDown;
 
-#if SDL_VERSION_ATLEAST(2, 0, 14)
     uint8_t gyroReportPeriodMs;
     float lastGyroEventData[SDL_arraysize(SDL_GamepadSensorEvent::data)];
     Uint64 lastGyroEventTime;
@@ -30,7 +23,6 @@ struct GamepadState {
     uint8_t accelReportPeriodMs;
     float lastAccelEventData[SDL_arraysize(SDL_GamepadSensorEvent::data)];
     Uint64 lastAccelEventTime;
-#endif
 
     int buttons;
     short lsX, lsY;
@@ -74,13 +66,6 @@ struct DualSenseOutputReport{
 
 #define MAX_FINGERS 2
 
-#define GAMEPAD_HAPTIC_METHOD_NONE 0
-#define GAMEPAD_HAPTIC_METHOD_LEFTRIGHT 1
-#define GAMEPAD_HAPTIC_METHOD_SIMPLERUMBLE 2
-
-#define GAMEPAD_HAPTIC_SIMPLE_HIFREQ_MOTOR_WEIGHT 0.33
-#define GAMEPAD_HAPTIC_SIMPLE_LOWFREQ_MOTOR_WEIGHT 0.8
-
 class SdlInputHandler
 {
 public:
@@ -104,15 +89,11 @@ public:
 
     void handleControllerDeviceEvent(SDL_GamepadDeviceEvent* event);
 
-#if SDL_VERSION_ATLEAST(2, 0, 14)
     void handleControllerSensorEvent(SDL_GamepadSensorEvent* event);
 
     void handleControllerTouchpadEvent(SDL_GamepadTouchpadEvent* event);
-#endif
 
-#if SDL_VERSION_ATLEAST(2, 24, 0)
     void handleJoystickBatteryEvent(SDL_JoyBatteryEvent* event);
-#endif
 
     void handleJoystickArrivalEvent(SDL_JoyDeviceEvent* event);
 
@@ -175,7 +156,7 @@ private:
 
     void sendGamepadState(GamepadState* state);
 
-    void sendGamepadBatteryState(GamepadState* state, SDL_JoystickPowerLevel level, int percent);
+    void sendGamepadBatteryState(GamepadState* state, SDL_PowerState level, int percent);
 
     void handleAbsoluteFingerEvent(SDL_TouchFingerEvent* event);
 

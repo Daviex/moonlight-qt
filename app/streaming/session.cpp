@@ -973,17 +973,6 @@ bool Session::initialize(QQuickWindow* qtWindow)
         break;
     }
 
-#if !SDL_VERSION_ATLEAST(2, 0, 11)
-    // HACK: Using a full-screen window breaks mouse capture on the Pi's LXDE
-    // GUI environment. Force the session to use windowed mode (which won't
-    // really matter anyway because the MMAL renderer always draws full-screen).
-    if (qgetenv("DESKTOP_SESSION") == "LXDE-pi") {
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "Forcing windowed mode on LXDE-Pi");
-        m_FullScreenFlag = 0;
-    }
-#endif
-
     // Check for validation errors/warnings and emit
     // signals for them, if appropriate
     bool ret = validateLaunch(testWindow);
@@ -2022,16 +2011,7 @@ void Session::exec()
     // because we want to suspend all Qt processing until the stream is over.
     SDL_Event event;
     for (;;) {
-#if SDL_VERSION_ATLEAST(2, 0, 18) && !defined(STEAM_LINK)
-        // SDL 2.0.18 has a proper wait event implementation that uses platform
-        // support to block on events rather than polling on Windows, macOS, X11,
-        // and Wayland. It will fall back to 1 ms polling if a joystick is
-        // connected, so we don't use it for STEAM_LINK to ensure we only poll
-        // every 10 ms.
-        //
-        // NB: This behavior was introduced in SDL 2.0.16, but had a few critical
-        // issues that could cause indefinite timeouts, delayed joystick detection,
-        // and other problems.
+#ifndef STEAM_LINK
         if (!SDL_WaitEventTimeout(&event, 1000)) {
             presence.runCallbacks();
             continue;
@@ -2141,17 +2121,9 @@ void Session::exec()
                 // Check that the window display hasn't changed. If it has, we want
                 // to recreate the decoder to allow it to adapt to the new display.
                 // This will allow Pacer to pull the new display refresh rate.
-#if SDL_VERSION_ATLEAST(2, 0, 18)
-                // On SDL 2.0.18+, there's an event for this specific situation
                 if (event.window.type != SDL_EVENT_WINDOW_DISPLAY_CHANGED) {
                     break;
                 }
-#else
-                // Prior to SDL 2.0.18, we must check the display index for each window event
-                if (SDL_GetDisplayForWindow(m_Window) == currentDisplayIndex) {
-                    break;
-                }
-#endif
             }
 #ifdef Q_OS_WIN32
             // We can get a resize event after being minimized. Recreating the renderer at that time can cause
@@ -2287,7 +2259,7 @@ void Session::exec()
                     goto DispatchDeferredCleanup;
                 }
 
-                // As of SDL 2.0.12, SDL_RecreateWindow() doesn't carry over mouse capture
+                // Window recreation doesn't carry over mouse capture
                 // or mouse hiding state to the new window. By capturing after the decoder
                 // is set up, this ensures the window re-creation is already done.
                 if (needsPostDecoderCreationCapture) {
@@ -2333,7 +2305,6 @@ void Session::exec()
             presence.runCallbacks();
             m_InputHandler->handleControllerButtonEvent(&event.gbutton);
             break;
-#if SDL_VERSION_ATLEAST(2, 0, 14)
         case SDL_EVENT_GAMEPAD_SENSOR_UPDATE:
             m_InputHandler->handleControllerSensorEvent(&event.gsensor);
             break;
@@ -2342,12 +2313,9 @@ void Session::exec()
         case SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION:
             m_InputHandler->handleControllerTouchpadEvent(&event.gtouchpad);
             break;
-#endif
-#if SDL_VERSION_ATLEAST(2, 24, 0)
         case SDL_EVENT_JOYSTICK_BATTERY_UPDATED:
             m_InputHandler->handleJoystickBatteryEvent(&event.jbattery);
             break;
-#endif
         case SDL_EVENT_GAMEPAD_ADDED:
         case SDL_EVENT_GAMEPAD_REMOVED:
             m_InputHandler->handleControllerDeviceEvent(&event.gdevice);
