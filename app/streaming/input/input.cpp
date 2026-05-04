@@ -20,6 +20,8 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
       m_PointerRegionLockActive(false),
       m_PointerRegionLockToggledByUser(false),
       m_FakeCaptureActive(false),
+      m_RelativeMouseDeltaRemainderX(0),
+      m_RelativeMouseDeltaRemainderY(0),
       m_CaptureSystemKeysMode(prefs.captureSysKeysMode),
       m_MouseCursorCapturedVisibilityState(0),
       m_LongPressTimer(0),

@@ -80,7 +80,7 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
     }
 
     // Batch all pending mouse motion events to save CPU time
-    Sint32 x = event->x, y = event->y, xrel = event->xrel, yrel = event->yrel;
+    float x = event->x, y = event->y, xrel = event->xrel, yrel = event->yrel;
     SDL_Event nextEvent;
     while (SDL_PeepEvents(&nextEvent, 1, SDL_GETEVENT, SDL_EVENT_MOUSE_MOTION, SDL_EVENT_MOUSE_MOTION) > 0) {
         event = &nextEvent.motion;
@@ -115,11 +115,11 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
         // Use the stream and window sizes to determine the video region
         StreamUtils::scaleSourceToDestinationSurface(&src, &dst);
 
-        mouseInVideoRegion = isMouseInVideoRegion(x, y, windowWidth, windowHeight);
+        mouseInVideoRegion = isMouseInVideoRegion((int)x, (int)y, windowWidth, windowHeight);
 
         // Clamp motion to the video region
-        x = qMin(qMax(x - dst.x, 0), dst.w);
-        y = qMin(qMax(y - dst.y, 0), dst.h);
+        x = qMin(qMax(x - dst.x, 0.0f), (float)dst.w);
+        y = qMin(qMax(y - dst.y, 0.0f), (float)dst.h);
 
         // Send the mouse position update if one of the following is true:
         // a) it is in the video region now
@@ -134,7 +134,7 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
             }
         }
         if (mouseInVideoRegion || m_MouseWasInVideoRegion || m_PendingMouseButtonsAllUpOnVideoRegionLeave) {
-            LiSendMousePositionEvent((short)x, (short)y, dst.w, dst.h);
+            LiSendMousePositionEvent((short)qRound(x), (short)qRound(y), dst.w, dst.h);
         }
 
         // Adjust the cursor visibility if applicable
@@ -154,7 +154,16 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
         m_MouseWasInVideoRegion = mouseInVideoRegion;
     }
     else {
-        LiSendMouseMoveEvent(xrel, yrel);
+        m_RelativeMouseDeltaRemainderX += xrel;
+        m_RelativeMouseDeltaRemainderY += yrel;
+
+        int sendX = qRound(m_RelativeMouseDeltaRemainderX);
+        int sendY = qRound(m_RelativeMouseDeltaRemainderY);
+        if (sendX != 0 || sendY != 0) {
+            m_RelativeMouseDeltaRemainderX -= sendX;
+            m_RelativeMouseDeltaRemainderY -= sendY;
+            LiSendMouseMoveEvent((short)sendX, (short)sendY);
+        }
     }
 }
 

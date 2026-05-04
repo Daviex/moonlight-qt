@@ -218,6 +218,8 @@ private:
     GamepadState m_GamepadState[MAX_GAMEPADS];
     QSet<short> m_KeysDown;
     bool m_FakeCaptureActive;
+    float m_RelativeMouseDeltaRemainderX;
+    float m_RelativeMouseDeltaRemainderY;
     QString m_OldIgnoreDevices;
     QString m_OldIgnoreDevicesExcept;
     QStringList m_IgnoreDeviceGuids;
