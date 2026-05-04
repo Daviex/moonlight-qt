@@ -23,7 +23,7 @@ OverlayManager::OverlayManager() :
     if (TTF_Init() != 0) {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "TTF_Init() failed: %s",
-                    TTF_GetError());
+                    SDL_GetError());
         return;
     }
 }
@@ -32,7 +32,7 @@ OverlayManager::~OverlayManager()
 {
     for (int i = 0; i < OverlayType::OverlayMax; i++) {
         if (m_Overlays[i].surface != nullptr) {
-            SDL_FreeSurface(m_Overlays[i].surface);
+            SDL_DestroySurface(m_Overlays[i].surface);
         }
         if (m_Overlays[i].font != nullptr) {
             TTF_CloseFont(m_Overlays[i].font);
@@ -80,7 +80,7 @@ SDL_Surface* OverlayManager::getUpdatedOverlaySurface(OverlayType type)
 {
     // If a new surface is available, return it. If not, return nullptr.
     // Caller must free the surface on success.
-    return (SDL_Surface*)SDL_AtomicSetPtr((void**)&m_Overlays[type].surface, nullptr);
+    return (SDL_Surface*)SDL_SetAtomicPointer((void**)&m_Overlays[type].surface, nullptr);
 }
 
 void OverlayManager::setOverlayTextUpdated(OverlayType type)
@@ -133,13 +133,13 @@ void OverlayManager::notifyOverlayUpdated(OverlayType type)
         }
 
         // m_FontData must stay around until the font is closed
-        m_Overlays[type].font = TTF_OpenFontRW(SDL_RWFromConstMem(m_FontData.constData(), m_FontData.size()),
+        m_Overlays[type].font = TTF_OpenFontIO(SDL_IOFromConstMem(m_FontData.constData(), m_FontData.size()),
                                                1,
                                                m_Overlays[type].fontSize);
         if (m_Overlays[type].font == nullptr) {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "TTF_OpenFont() failed: %s",
-                        TTF_GetError());
+                        SDL_GetError());
 
             // Can't proceed without a font
             return;
@@ -147,7 +147,7 @@ void OverlayManager::notifyOverlayUpdated(OverlayType type)
     }
 
     // Exchange the old surface with the new one
-    SDL_Surface* oldSurface = (SDL_Surface*)SDL_AtomicSetPtr(
+    SDL_Surface* oldSurface = (SDL_Surface*)SDL_SetAtomicPointer(
         (void**)&m_Overlays[type].surface,
         m_Overlays[type].enabled ?
             // The _Wrapped variant is required for line breaks to work
@@ -162,6 +162,6 @@ void OverlayManager::notifyOverlayUpdated(OverlayType type)
 
     // Free the old surface
     if (oldSurface != nullptr) {
-        SDL_FreeSurface(oldSurface);
+        SDL_DestroySurface(oldSurface);
     }
 }

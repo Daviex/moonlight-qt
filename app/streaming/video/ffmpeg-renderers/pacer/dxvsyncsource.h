@@ -2,7 +2,10 @@
 
 #include "pacer.h"
 
-#include <SDL_syswm.h>
+// SDL_syswm.h removed in SDL3; native handles via SDL properties
+#if defined(Q_OS_WIN32)
+#include <Windows.h>
+#endif
 
 // from <D3dkmthk.h>
 typedef LONG NTSTATUS;

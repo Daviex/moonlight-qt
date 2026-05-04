@@ -37,9 +37,9 @@ void SdlGamepadKeyNavigation::enable()
     // arrival events. Additionally, there's a race condition between
     // our QML objects being destroyed and SDL being deinitialized that
     // this solves too.
-    if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) {
+    if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD)) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) failed: %s",
+                     "SDL_InitSubSystem(SDL_INIT_GAMEPAD) failed: %s",
                      SDL_GetError());
         return;
     }
@@ -52,22 +52,24 @@ void SdlGamepadKeyNavigation::enable()
     // overlapping lifetimes of SdlGamepadKeyNavigation instances, so we
     // will attach ourselves.
     //
-    // NB: We use SDL_JoystickUpdate() instead of SDL_PumpEvents() because
+    // NB: We use SDL_UpdateJoysticks() instead of SDL_PumpEvents() because
     // the latter can do a bit more work that we want (like handling video
     // events that we intentionally do not want to process yet).
-    SDL_JoystickUpdate();
-    SDL_FlushEvent(SDL_CONTROLLERDEVICEADDED);
+    SDL_UpdateJoysticks();
+    SDL_FlushEvent(SDL_EVENT_GAMEPAD_ADDED);
 
     // Open all currently attached game controllers
-    int numJoysticks = SDL_NumJoysticks();
+    int numJoysticks;
+    SDL_JoystickID* joys = SDL_GetJoysticks(&numJoysticks);
     for (int i = 0; i < numJoysticks; i++) {
-        if (SDL_IsGameController(i)) {
-            SDL_GameController* gc = SDL_GameControllerOpen(i);
+        if (SDL_IsGamepad(joys[i])) {
+            SDL_Gamepad* gc = SDL_OpenGamepad(joys[i]);
             if (gc != nullptr) {
                 m_Gamepads.append(gc);
             }
         }
     }
+    SDL_free(joys);
 
     m_Enabled = true;
 
@@ -86,11 +88,11 @@ void SdlGamepadKeyNavigation::disable()
     Q_ASSERT(!m_PollingTimer->isActive());
 
     while (!m_Gamepads.isEmpty()) {
-        SDL_GameControllerClose(m_Gamepads[0]);
+        SDL_CloseGamepad(m_Gamepads[0]);
         m_Gamepads.removeAt(0);
     }
 
-    SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER);
+    SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
 }
 
 void SdlGamepadKeyNavigation::notifyWindowFocus(bool hasFocus)
@@ -104,52 +106,52 @@ void SdlGamepadKeyNavigation::onPollingTimerFired()
     SDL_Event event;
 
     // Update joystick state without pumping other events (see enable() comment)
-    SDL_JoystickUpdate();
+    SDL_UpdateJoysticks();
 
     // Discard any pending button events on the first poll to avoid picking up
     // stale input data from the stream session (like the quit combo).
     if (m_FirstPoll) {
-        SDL_FlushEvent(SDL_CONTROLLERBUTTONDOWN);
-        SDL_FlushEvent(SDL_CONTROLLERBUTTONUP);
+        SDL_FlushEvent(SDL_EVENT_GAMEPAD_BUTTON_DOWN);
+        SDL_FlushEvent(SDL_EVENT_GAMEPAD_BUTTON_UP);
         m_FirstPoll = false;
     }
 
     // Peep events rather than polling to avoid calling SDL_PumpEvents()
-    while (SDL_PeepEvents(&event, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT) == 1) {
+    while (SDL_PeepEvents(&event, 1, SDL_GETEVENT, SDL_EVENT_FIRST, SDL_EVENT_LAST) == 1) {
         switch (event.type) {
-        case SDL_QUIT:
+        case SDL_EVENT_QUIT:
             // SDL may send us a quit event since we initialize
             // the video subsystem on startup. If we get one,
             // forward it on for Qt to take care of.
             QCoreApplication::instance()->quit();
             break;
-        case SDL_CONTROLLERBUTTONDOWN:
-        case SDL_CONTROLLERBUTTONUP:
+        case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+        case SDL_EVENT_GAMEPAD_BUTTON_UP:
         {
             QEvent::Type type =
-                    event.type == SDL_CONTROLLERBUTTONDOWN ?
+                    event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ?
                         QEvent::Type::KeyPress : QEvent::Type::KeyRelease;
 
             // Swap face buttons if needed
             if (m_Prefs->swapFaceButtons) {
-                switch (event.cbutton.button) {
-                case SDL_CONTROLLER_BUTTON_A:
-                    event.cbutton.button = SDL_CONTROLLER_BUTTON_B;
+                switch (event.gbutton.button) {
+                case SDL_GAMEPAD_BUTTON_SOUTH:
+                    event.gbutton.button = SDL_GAMEPAD_BUTTON_EAST;
                     break;
-                case SDL_CONTROLLER_BUTTON_B:
-                    event.cbutton.button = SDL_CONTROLLER_BUTTON_A;
+                case SDL_GAMEPAD_BUTTON_EAST:
+                    event.gbutton.button = SDL_GAMEPAD_BUTTON_SOUTH;
                     break;
-                case SDL_CONTROLLER_BUTTON_X:
-                    event.cbutton.button = SDL_CONTROLLER_BUTTON_Y;
+                case SDL_GAMEPAD_BUTTON_WEST:
+                    event.gbutton.button = SDL_GAMEPAD_BUTTON_NORTH;
                     break;
-                case SDL_CONTROLLER_BUTTON_Y:
-                    event.cbutton.button = SDL_CONTROLLER_BUTTON_X;
+                case SDL_GAMEPAD_BUTTON_NORTH:
+                    event.gbutton.button = SDL_GAMEPAD_BUTTON_WEST;
                     break;
                 }
             }
 
-            switch (event.cbutton.button) {
-            case SDL_CONTROLLER_BUTTON_DPAD_UP:
+            switch (event.gbutton.button) {
+            case SDL_GAMEPAD_BUTTON_DPAD_UP:
                 if (m_UiNavMode) {
                     // Back-tab
                     sendKey(type, Qt::Key_Tab, Qt::ShiftModifier);
@@ -158,7 +160,7 @@ void SdlGamepadKeyNavigation::onPollingTimerFired()
                     sendKey(type, Qt::Key_Up);
                 }
                 break;
-            case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+            case SDL_GAMEPAD_BUTTON_DPAD_DOWN:
                 if (m_UiNavMode) {
                     sendKey(type, Qt::Key_Tab);
                 }
@@ -166,13 +168,13 @@ void SdlGamepadKeyNavigation::onPollingTimerFired()
                     sendKey(type, Qt::Key_Down);
                 }
                 break;
-            case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+            case SDL_GAMEPAD_BUTTON_DPAD_LEFT:
                 sendKey(type, Qt::Key_Left);
                 break;
-            case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+            case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:
                 sendKey(type, Qt::Key_Right);
                 break;
-            case SDL_CONTROLLER_BUTTON_A:
+            case SDL_GAMEPAD_BUTTON_SOUTH:
                 if (m_UiNavMode) {
                     sendKey(type, Qt::Key_Space);
                 }
@@ -180,14 +182,14 @@ void SdlGamepadKeyNavigation::onPollingTimerFired()
                     sendKey(type, Qt::Key_Return);
                 }
                 break;
-            case SDL_CONTROLLER_BUTTON_B:
+            case SDL_GAMEPAD_BUTTON_EAST:
                 sendKey(type, Qt::Key_Escape);
                 break;
-            case SDL_CONTROLLER_BUTTON_X:
+            case SDL_GAMEPAD_BUTTON_WEST:
                 sendKey(type, Qt::Key_Menu);
                 break;
-            case SDL_CONTROLLER_BUTTON_Y:
-            case SDL_CONTROLLER_BUTTON_START:
+            case SDL_GAMEPAD_BUTTON_NORTH:
+            case SDL_GAMEPAD_BUTTON_START:
                 // HACK: We use this keycode to inform main.qml
                 // to show the settings when Key_Menu is handled
                 // by the control in focus.
@@ -198,19 +200,19 @@ void SdlGamepadKeyNavigation::onPollingTimerFired()
             }
             break;
         }
-        case SDL_CONTROLLERDEVICEADDED:
-            SDL_GameController* gc = SDL_GameControllerOpen(event.cdevice.which);
+        case SDL_EVENT_GAMEPAD_ADDED:
+            SDL_Gamepad* gc = SDL_OpenGamepad(event.cdevice.which);
             if (gc != nullptr) {
-                // SDL_CONTROLLERDEVICEADDED can be reported multiple times for the same
+                // SDL_EVENT_GAMEPAD_ADDED can be reported multiple times for the same
                 // gamepad in rare cases, because SDL doesn't fixup the device index in
-                // the SDL_CONTROLLERDEVICEADDED event if an unopened gamepad disappears
+                // the SDL_EVENT_GAMEPAD_ADDED event if an unopened gamepad disappears
                 // before we've processed the add event.
                 if (!m_Gamepads.contains(gc)) {
                     m_Gamepads.append(gc);
                 }
                 else {
                     // We already have this game controller open
-                    SDL_GameControllerClose(gc);
+                    SDL_CloseGamepad(gc);
                 }
             }
             break;
@@ -219,8 +221,8 @@ void SdlGamepadKeyNavigation::onPollingTimerFired()
 
     // Handle analog sticks by polling
     for (auto gc : std::as_const(m_Gamepads)) {
-        short leftX = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTX);
-        short leftY = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTY);
+        short leftX = SDL_GetGamepadAxis(gc, SDL_GAMEPAD_AXIS_LEFTX);
+        short leftY = SDL_GetGamepadAxis(gc, SDL_GAMEPAD_AXIS_LEFTY);
         if (SDL_GetTicks() - m_LastAxisNavigationEventTime < AXIS_NAVIGATION_REPEAT_DELAY) {
             // Do nothing
         }
@@ -296,12 +298,14 @@ int SdlGamepadKeyNavigation::getConnectedGamepads()
     Q_ASSERT(m_Enabled);
 
     int count = 0;
-    int numJoysticks = SDL_NumJoysticks();
+    int numJoysticks;
+    SDL_JoystickID* joys = SDL_GetJoysticks(&numJoysticks);
     for (int i = 0; i < numJoysticks; i++) {
-        if (SDL_IsGameController(i)) {
+        if (SDL_IsGamepad(joys[i])) {
             count++;
         }
     }
+    SDL_free(joys);
 
     return count;
 }

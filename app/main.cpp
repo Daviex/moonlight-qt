@@ -481,8 +481,8 @@ int main(int argc, char *argv[])
 #else
     SDL_LogOutputFunction oldSdlLogFn;
     void* oldSdlLogUserdata;
-    SDL_LogGetOutputFunction(&oldSdlLogFn, &oldSdlLogUserdata);
-    SDL_LogSetOutputFunction(sdlLogToDiskHandler, nullptr);
+    SDL_GetLogOutputFunction(&oldSdlLogFn, &oldSdlLogUserdata);
+    SDL_SetLogOutputFunction(sdlLogToDiskHandler, nullptr);
 #endif
     qInstallMessageHandler(qtLogToDiskHandler);
 #ifdef HAVE_FFMPEG
@@ -663,12 +663,7 @@ int main(int argc, char *argv[])
     // The DXVA2 renderer uses Direct3D 9Ex itself directly.
     SDL_SetHint(SDL_HINT_WINDOWS_USE_D3D9EX, "1");
 
-    if (SDL_InitSubSystem(SDL_INIT_TIMER) != 0) {
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "SDL_InitSubSystem(SDL_INIT_TIMER) failed: %s",
-                     SDL_GetError());
-        return -1;
-    }
+    // SDL3: timer subsystem is always available, no separate init needed.
 
 #if defined(STEAM_LINK) || defined(Q_OS_WIN32)
     // Steam Link requires that we initialize video before creating our
@@ -677,7 +672,7 @@ int main(int argc, char *argv[])
     // We keep the video subsystem initialized on Windows because it's
     // much more costly to reinitialize than other platforms. It hurts
     // the settings page transition performance significantly.
-    if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
+    if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "SDL_InitSubSystem(SDL_INIT_VIDEO) failed: %s",
                      SDL_GetError());
@@ -808,41 +803,10 @@ int main(int argc, char *argv[])
                 "Compiled with SDL %d.%d.%d",
                 compileVersion.major, compileVersion.minor, compileVersion.patch);
 
-    SDL_version runtimeVersion;
-    SDL_GetVersion(&runtimeVersion);
+    int sdlVer = SDL_GetVersion();
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "Running with SDL %d.%d.%d",
-                runtimeVersion.major, runtimeVersion.minor, runtimeVersion.patch);
-
-    // If we're running under sdl2-compat, it may tell us the underlying SDL3 version
-    const char* sdl3Version = SDL_GetHint("SDL3_VERSION");
-    int sdl3VersionInt = 0;
-    if (sdl3Version) {
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "SDL3 version: %s",
-                    sdl3Version);
-
-        // Parse the version into integer form
-        QStringList list = QString(sdl3Version).split('.');
-        Q_ASSERT(list.size() == 3);
-        if (list.size() == 3) {
-            sdl3VersionInt = SDL_VERSIONNUM(list.at(0).toInt(), list.at(1).toInt(), list.at(2).toInt());
-        }
-    }
-
-    // SDL 3.4.0 and 3.4.2 have bugs in atomic KMSDRM support that break us,
-    // so disable atomic on the affected SDL3 versions. Since not all versions
-    // of sdl2-compat will set the SDL3_VERSION hint, we assume that versions
-    // prior to 2.32.66 are affected (since that was released at the same time
-    // as SDL 3.4.4 with the atomic fixes).
-    if ((sdl3VersionInt != 0 && sdl3VersionInt < SDL_VERSIONNUM(3, 4, 4)) ||
-            (runtimeVersion.patch >= 50 && runtimeVersion.patch < 66)) {
-#if !defined(Q_OS_WIN32) && !defined(Q_OS_DARWIN)
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "Setting SDL_KMSDRM_ATOMIC=0 for older sdl2-compat/SDL3 version");
-        SDL_SetHint("SDL_KMSDRM_ATOMIC", "0");
-#endif
-    }
+                SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_MICRO_VERSION);
 
     // Apply the initial translation based on user preference
     StreamingPreferences::get()->retranslate();
@@ -951,6 +915,14 @@ int main(int argc, char *argv[])
     // Create the identity manager on the main thread
     IdentityManager::get();
 
+    // Set a dark window background immediately to avoid a white flash
+    // while QML loads and the Material theme initializes.
+    {
+        QPalette p = app.palette();
+        p.setColor(QPalette::Window, QColor(0x12, 0x12, 0x12));
+        app.setPalette(p);
+    }
+
     // We require the Material theme
     QQuickStyle::setStyle("Material");
 
@@ -1043,7 +1015,7 @@ int main(int argc, char *argv[])
 #if SDL_VERSION_ATLEAST(3, 0, 0)
     SDL_SetLogOutputFunction(SDL_GetDefaultLogOutputFunction(), nullptr);
 #else
-    SDL_LogSetOutputFunction(oldSdlLogFn, oldSdlLogUserdata);
+    SDL_SetLogOutputFunction(oldSdlLogFn, oldSdlLogUserdata);
 #endif
     qInstallMessageHandler(nullptr);
 #ifdef HAVE_FFMPEG

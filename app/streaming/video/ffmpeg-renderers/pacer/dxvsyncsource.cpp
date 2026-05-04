@@ -47,21 +47,9 @@ bool DxVsyncSource::initialize(SDL_Window* window, int)
         return false;
     }
 
-    SDL_SysWMinfo info;
-
-    SDL_VERSION(&info.version);
-
-    if (!SDL_GetWindowWMInfo(window, &info)) {
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "SDL_GetWindowWMInfo() failed: %s",
-                     SDL_GetError());
-        return false;
-    }
-
-    // Pacer should only create us on Win32
-    SDL_assert(info.subsystem == SDL_SYSWM_WINDOWS);
-
-    m_Window = info.info.win.window;
+    // SDL3 property-based native handle access (replaces SDL_GetWindowWMInfo)
+    m_Window = (HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
+    SDL_assert(m_Window != NULL);
 
     return true;
 }

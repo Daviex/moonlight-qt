@@ -131,7 +131,7 @@ void PlVkRenderer::unlockQueue(struct AVHWDeviceContext *dev_ctx, uint32_t queue
 
 void PlVkRenderer::overlayUploadComplete(void* opaque)
 {
-    SDL_FreeSurface((SDL_Surface*)opaque);
+    SDL_DestroySurface((SDL_Surface*)opaque);
 }
 
 PlVkRenderer::PlVkRenderer(bool hwaccel, IFFmpegRenderer *backendRenderer) :
@@ -420,7 +420,7 @@ bool PlVkRenderer::initialize(PDECODER_PARAMETERS params)
     m_Window = params->window;
 
     unsigned int instanceExtensionCount = 0;
-    if (!SDL_Vulkan_GetInstanceExtensions(params->window, &instanceExtensionCount, nullptr)) {
+    if (!SDL_Vulkan_GetInstanceExtensions(&instanceExtensionCount)) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "SDL_Vulkan_GetInstanceExtensions() #1 failed: %s",
                      SDL_GetError());
@@ -429,7 +429,7 @@ bool PlVkRenderer::initialize(PDECODER_PARAMETERS params)
     }
 
     std::vector<const char*> instanceExtensions(instanceExtensionCount);
-    if (!SDL_Vulkan_GetInstanceExtensions(params->window, &instanceExtensionCount, instanceExtensions.data())) {
+    if (!SDL_Vulkan_GetInstanceExtensions(&instanceExtensionCount)) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "SDL_Vulkan_GetInstanceExtensions() #2 failed: %s",
                      SDL_GetError());
@@ -467,7 +467,7 @@ bool PlVkRenderer::initialize(PDECODER_PARAMETERS params)
         // Don't let Qt take DRM master from us during SDL_Vulkan_CreateSurface()
         DrmMasterLocker locker;
 
-        if (!SDL_Vulkan_CreateSurface(params->window, m_PlVkInstance->instance, &m_VkSurface)) {
+        if (!SDL_Vulkan_CreateSurface(params->window, m_PlVkInstance->instance, nullptr, &m_VkSurface)) {
             SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                          "SDL_Vulkan_CreateSurface() failed: %s",
                          SDL_GetError());
@@ -776,7 +776,7 @@ void PlVkRenderer::waitToRender()
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "GPU is in failed state. Recreating renderer.");
         SDL_Event event;
-        event.type = SDL_RENDER_DEVICE_RESET;
+        event.type = SDL_EVENT_RENDER_DEVICE_RESET;
         SDL_PushEvent(&event);
         return;
     }
@@ -794,7 +794,7 @@ void PlVkRenderer::waitToRender()
 
     // Handle the swapchain being resized
     int vkDrawableW, vkDrawableH;
-    SDL_Vulkan_GetDrawableSize(m_Window, &vkDrawableW, &vkDrawableH);
+    SDL_GetWindowSizeInPixels(m_Window, &vkDrawableW, &vkDrawableH);
     if (!pl_swapchain_resize(m_Swapchain, &vkDrawableW, &vkDrawableH)) {
         // Swapchain (re)creation can fail if the window is occluded
         return;
@@ -853,7 +853,7 @@ void PlVkRenderer::renderFrame(AVFrame *frame)
     pl_frame_from_swapchain(&targetFrame, &m_SwapchainFrame);
 
     // We perform minimal processing under the overlay lock to avoid blocking threads updating the overlay
-    SDL_AtomicLock(&m_OverlayLock);
+    SDL_LockSpinlock(&m_OverlayLock);
     for (int i = 0; i < Overlay::OverlayMax; i++) {
         // If we have a staging overlay, we need to transfer ownership to us
         if (m_Overlays[i].hasStagingOverlay) {
@@ -900,7 +900,7 @@ void PlVkRenderer::renderFrame(AVFrame *frame)
             overlays.push_back(m_Overlays[i].overlay);
         }
     }
-    SDL_AtomicUnlock(&m_OverlayLock);
+    SDL_UnlockSpinlock(&m_OverlayLock);
 
     SDL_Rect src;
     src.x = mappedFrame.crop.x0;
@@ -939,7 +939,7 @@ void PlVkRenderer::renderFrame(AVFrame *frame)
 
         // Recreate the renderer
         SDL_Event event;
-        event.type = SDL_RENDER_DEVICE_RESET;
+        event.type = SDL_EVENT_RENDER_DEVICE_RESET;
         SDL_PushEvent(&event);
         goto UnmapExit;
     }
@@ -979,12 +979,12 @@ void PlVkRenderer::notifyOverlayUpdated(Overlay::OverlayType type)
         return;
     }
 
-    SDL_AtomicLock(&m_OverlayLock);
+    SDL_LockSpinlock(&m_OverlayLock);
     // We want to clear the staging overlay flag even if a staging overlay is still present,
     // since this ensures the render thread will not read from a partially initialized pl_tex
     // as we modify or recreate the staging overlay texture outside the overlay lock.
     m_Overlays[type].hasStagingOverlay = false;
-    SDL_AtomicUnlock(&m_OverlayLock);
+    SDL_UnlockSpinlock(&m_OverlayLock);
 
     // If there's no new staging overlay, free the old staging overlay texture.
     // NB: This is safe to do outside the overlay lock because we're guaranteed
@@ -996,10 +996,10 @@ void PlVkRenderer::notifyOverlayUpdated(Overlay::OverlayType type)
     }
 
     // Find a compatible texture format
-    SDL_assert(newSurface->format->format == SDL_PIXELFORMAT_ARGB8888);
+    SDL_assert(newSurface->format == SDL_PIXELFORMAT_ARGB8888);
     pl_fmt texFormat = pl_find_named_fmt(m_Vulkan->gpu, "bgra8");
     if (!texFormat) {
-        SDL_FreeSurface(newSurface);
+        SDL_DestroySurface(newSurface);
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "pl_find_named_fmt(bgra8) failed");
         return;
@@ -1019,7 +1019,7 @@ void PlVkRenderer::notifyOverlayUpdated(Overlay::OverlayType type)
     if (!pl_tex_recreate(m_Vulkan->gpu, &m_Overlays[type].stagingOverlay.tex, &texParams)) {
         pl_tex_destroy(m_Vulkan->gpu, &m_Overlays[type].stagingOverlay.tex);
         SDL_zero(m_Overlays[type].stagingOverlay);
-        SDL_FreeSurface(newSurface);
+        SDL_DestroySurface(newSurface);
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "pl_tex_recreate() failed");
         return;
@@ -1036,7 +1036,7 @@ void PlVkRenderer::notifyOverlayUpdated(Overlay::OverlayType type)
     if (!pl_tex_upload(m_Vulkan->gpu, &xferParams)) {
         pl_tex_destroy(m_Vulkan->gpu, &m_Overlays[type].stagingOverlay.tex);
         SDL_zero(m_Overlays[type].stagingOverlay);
-        SDL_FreeSurface(newSurface);
+        SDL_DestroySurface(newSurface);
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "pl_tex_upload() failed");
         return;
@@ -1052,10 +1052,10 @@ void PlVkRenderer::notifyOverlayUpdated(Overlay::OverlayType type)
     m_Overlays[type].stagingOverlay.color = pl_color_space_srgb;
 
     // Make this staging overlay visible to the render thread
-    SDL_AtomicLock(&m_OverlayLock);
+    SDL_LockSpinlock(&m_OverlayLock);
     SDL_assert(!m_Overlays[type].hasStagingOverlay);
     m_Overlays[type].hasStagingOverlay = true;
-    SDL_AtomicUnlock(&m_OverlayLock);
+    SDL_UnlockSpinlock(&m_OverlayLock);
 }
 
 bool PlVkRenderer::notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO info)

@@ -11,7 +11,7 @@
 #include "waylandvsyncsource.h"
 #endif
 
-#include <SDL_syswm.h>
+// SDL_syswm.h removed in SDL3; platform detection via SDL_GetCurrentVideoDriver()
 
 // Limit the number of queued frames to prevent excessive memory consumption
 // if the V-Sync source or renderer is blocked for a while. It's important
@@ -119,9 +119,9 @@ int Pacer::vsyncThread(void *context)
     Pacer* me = reinterpret_cast<Pacer*>(context);
 
 #if SDL_VERSION_ATLEAST(2, 0, 9)
-    SDL_SetThreadPriority(SDL_THREAD_PRIORITY_TIME_CRITICAL);
+    SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_TIME_CRITICAL);
 #else
-    SDL_SetThreadPriority(SDL_THREAD_PRIORITY_HIGH);
+    SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_HIGH);
 #endif
 
     bool async = me->m_VsyncSource->isAsync();
@@ -151,7 +151,7 @@ int Pacer::renderThread(void* context)
 {
     Pacer* me = reinterpret_cast<Pacer*>(context);
 
-    if (SDL_SetThreadPriority(SDL_THREAD_PRIORITY_HIGH) < 0) {
+    if (SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_HIGH) < 0) {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "Unable to set render thread to high priority: %s",
                     SDL_GetError());
@@ -203,7 +203,7 @@ void Pacer::enqueueFrameForRenderingAndUnlock(AVFrame *frame)
         SDL_Event event;
 
         // For main thread rendering, we'll push an event to trigger a callback
-        event.type = SDL_USEREVENT;
+        event.type = SDL_EVENT_USER;
         event.user.code = SDL_CODE_FRAME_READY;
         SDL_PushEvent(&event);
     }
@@ -288,33 +288,19 @@ bool Pacer::initialize(SDL_Window* window, int maxVideoFps, bool enablePacing)
                     "Frame pacing: target %d Hz with %d FPS stream, %d ms timer slack, %d ms queue history",
                     m_DisplayFps, m_MaxVideoFps, m_TimerSlackMillis, QUEUE_HISTORY_WINDOW_MS);
 
-        SDL_SysWMinfo info;
-        SDL_VERSION(&info.version);
-        if (!SDL_GetWindowWMInfo(window, &info)) {
-            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                         "SDL_GetWindowWMInfo() failed: %s",
-                         SDL_GetError());
-            return false;
-        }
-
-        switch (info.subsystem) {
+        // SDL3: detect platform via video driver string instead of SDL_GetWindowWMInfo()
+        const char* videoDriver = SDL_GetCurrentVideoDriver();
     #ifdef Q_OS_WIN32
-        case SDL_SYSWM_WINDOWS:
+        if (SDL_strcmp(videoDriver, "windows") == 0) {
             m_VsyncSource = new DxVsyncSource(this);
-            break;
+        }
     #endif
 
     #if defined(SDL_VIDEO_DRIVER_WAYLAND) && defined(HAS_WAYLAND)
-        case SDL_SYSWM_WAYLAND:
+        else if (SDL_strcmp(videoDriver, "wayland") == 0) {
             m_VsyncSource = new WaylandVsyncSource(this);
-            break;
-    #endif
-
-        default:
-            // Platforms without a VsyncSource will just render frames
-            // immediately like they used to.
-            break;
         }
+    #endif
 
         SDL_assert(m_VsyncSource != nullptr || !(m_RendererAttributes & RENDERER_ATTRIBUTE_FORCE_PACING));
 

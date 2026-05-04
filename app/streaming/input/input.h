@@ -6,7 +6,7 @@
 #include "SDL_compat.h"
 
 struct GamepadState {
-    SDL_GameController* controller;
+    SDL_Gamepad* controller;
     SDL_JoystickID jsId;
     short index;
 
@@ -24,11 +24,11 @@ struct GamepadState {
 
 #if SDL_VERSION_ATLEAST(2, 0, 14)
     uint8_t gyroReportPeriodMs;
-    float lastGyroEventData[SDL_arraysize(SDL_ControllerSensorEvent::data)];
+    float lastGyroEventData[SDL_arraysize(SDL_GamepadSensorEvent::data)];
     uint32_t lastGyroEventTime;
 
     uint8_t accelReportPeriodMs;
-    float lastAccelEventData[SDL_arraysize(SDL_ControllerSensorEvent::data)];
+    float lastAccelEventData[SDL_arraysize(SDL_GamepadSensorEvent::data)];
     uint32_t lastAccelEventTime;
 #endif
 
@@ -98,16 +98,16 @@ public:
 
     void handleMouseWheelEvent(SDL_MouseWheelEvent* event);
 
-    void handleControllerAxisEvent(SDL_ControllerAxisEvent* event);
+    void handleControllerAxisEvent(SDL_GamepadAxisEvent* event);
 
-    void handleControllerButtonEvent(SDL_ControllerButtonEvent* event);
+    void handleControllerButtonEvent(SDL_GamepadButtonEvent* event);
 
-    void handleControllerDeviceEvent(SDL_ControllerDeviceEvent* event);
+    void handleControllerDeviceEvent(SDL_GamepadDeviceEvent* event);
 
 #if SDL_VERSION_ATLEAST(2, 0, 14)
-    void handleControllerSensorEvent(SDL_ControllerSensorEvent* event);
+    void handleControllerSensorEvent(SDL_GamepadSensorEvent* event);
 
-    void handleControllerTouchpadEvent(SDL_ControllerTouchpadEvent* event);
+    void handleControllerTouchpadEvent(SDL_GamepadTouchpadEvent* event);
 #endif
 
 #if SDL_VERSION_ATLEAST(2, 24, 0)
@@ -175,7 +175,7 @@ private:
 
     void sendGamepadState(GamepadState* state);
 
-    void sendGamepadBatteryState(GamepadState* state, SDL_JoystickPowerLevel level);
+    void sendGamepadBatteryState(GamepadState* state, SDL_JoystickPowerLevel level, int percent);
 
     void handleAbsoluteFingerEvent(SDL_TouchFingerEvent* event);
 
@@ -188,19 +188,19 @@ private:
     void performSpecialKeyCombo(KeyCombo combo);
 
     static
-    Uint32 longPressTimerCallback(Uint32 interval, void* param);
+    Uint32 longPressTimerCallback(void* param, SDL_TimerID timerID, Uint32 interval);
 
     static
-    Uint32 mouseEmulationTimerCallback(Uint32 interval, void* param);
+    Uint32 mouseEmulationTimerCallback(void* param, SDL_TimerID timerID, Uint32 interval);
 
     static
-    Uint32 releaseLeftButtonTimerCallback(Uint32 interval, void* param);
+    Uint32 releaseLeftButtonTimerCallback(void* param, SDL_TimerID, Uint32 interval);
 
     static
-    Uint32 releaseRightButtonTimerCallback(Uint32 interval, void* param);
+    Uint32 releaseRightButtonTimerCallback(void* param, SDL_TimerID, Uint32 interval);
 
     static
-    Uint32 dragTimerCallback(Uint32 interval, void* param);
+    Uint32 dragTimerCallback(void* param, SDL_TimerID, Uint32 interval);
 
     SDL_Window* m_Window;
     bool m_MultiController;

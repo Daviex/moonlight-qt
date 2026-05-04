@@ -139,7 +139,7 @@ void Session::clConnectionTerminated(int errorCode)
 
     // Push a quit event to the main loop
     SDL_Event event;
-    event.type = SDL_QUIT;
+    event.type = SDL_EVENT_QUIT;
     event.quit.timestamp = SDL_GetTicks();
     SDL_PushEvent(&event);
 }
@@ -162,7 +162,7 @@ void Session::clRumble(unsigned short controllerNumber, unsigned short lowFreqMo
     // with the removal of game controllers that could result in our game controller
     // going away during this callback.
     SDL_Event rumbleEvent = {};
-    rumbleEvent.type = SDL_USEREVENT;
+    rumbleEvent.type = SDL_EVENT_USER;
     rumbleEvent.user.code = SDL_CODE_GAMECONTROLLER_RUMBLE;
     rumbleEvent.user.data1 = (void*)(uintptr_t)controllerNumber;
     rumbleEvent.user.data2 = (void*)(uintptr_t)((lowFreqMotor << 16) | highFreqMotor);
@@ -218,7 +218,7 @@ void Session::clRumbleTriggers(uint16_t controllerNumber, uint16_t leftTrigger, 
     // with the removal of game controllers that could result in our game controller
     // going away during this callback.
     SDL_Event rumbleEvent = {};
-    rumbleEvent.type = SDL_USEREVENT;
+    rumbleEvent.type = SDL_EVENT_USER;
     rumbleEvent.user.code = SDL_CODE_GAMECONTROLLER_RUMBLE_TRIGGERS;
     rumbleEvent.user.data1 = (void*)(uintptr_t)controllerNumber;
     rumbleEvent.user.data2 = (void*)(uintptr_t)((leftTrigger << 16) | rightTrigger);
@@ -231,7 +231,7 @@ void Session::clSetMotionEventState(uint16_t controllerNumber, uint8_t motionTyp
     // with the removal of game controllers that could result in our game controller
     // going away during this callback.
     SDL_Event setMotionEventStateEvent = {};
-    setMotionEventStateEvent.type = SDL_USEREVENT;
+    setMotionEventStateEvent.type = SDL_EVENT_USER;
     setMotionEventStateEvent.user.code = SDL_CODE_GAMECONTROLLER_SET_MOTION_EVENT_STATE;
     setMotionEventStateEvent.user.data1 = (void*)(uintptr_t)controllerNumber;
     setMotionEventStateEvent.user.data2 = (void*)(uintptr_t)((motionType << 16) | reportRateHz);
@@ -244,7 +244,7 @@ void Session::clSetControllerLED(uint16_t controllerNumber, uint8_t r, uint8_t g
     // with the removal of game controllers that could result in our game controller
     // going away during this callback.
     SDL_Event setControllerLEDEvent = {};
-    setControllerLEDEvent.type = SDL_USEREVENT;
+    setControllerLEDEvent.type = SDL_EVENT_USER;
     setControllerLEDEvent.user.code = SDL_CODE_GAMECONTROLLER_SET_CONTROLLER_LED;
     setControllerLEDEvent.user.data1 = (void*)(uintptr_t)controllerNumber;
     setControllerLEDEvent.user.data2 = (void*)(uintptr_t)(r << 16 | g << 8 | b);
@@ -256,7 +256,7 @@ void Session::clSetAdaptiveTriggers(uint16_t controllerNumber, uint8_t eventFlag
     // with the removal of game controllers that could result in our game controller
     // going away during this callback.
     SDL_Event setControllerLEDEvent = {};
-    setControllerLEDEvent.type = SDL_USEREVENT;
+    setControllerLEDEvent.type = SDL_EVENT_USER;
     setControllerLEDEvent.user.code = SDL_CODE_GAMECONTROLLER_SET_ADAPTIVE_TRIGGERS;
     setControllerLEDEvent.user.data1 = (void*)(uintptr_t)controllerNumber;
 
@@ -695,7 +695,7 @@ bool Session::initialize(QQuickWindow* qtWindow)
     }
 #endif
 
-    if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
+    if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "SDL_InitSubSystem(SDL_INIT_VIDEO) failed: %s",
                      SDL_GetError());
@@ -731,7 +731,7 @@ bool Session::initialize(QQuickWindow* qtWindow)
 #ifndef STEAM_LINK
     // Opt-in to all encryption features if we detect that the platform
     // has AES cryptography acceleration instructions and more than 2 cores.
-    if (StreamUtils::hasFastAes() && SDL_GetCPUCount() > 2) {
+    if (StreamUtils::hasFastAes() && SDL_GetNumLogicalCPUCores() > 2) {
         m_StreamConfig.encryptionFlags = ENCFLG_ALL;
     }
     else {
@@ -954,7 +954,7 @@ bool Session::initialize(QQuickWindow* qtWindow)
     case StreamingPreferences::WM_FULLSCREEN_DESKTOP:
         // Only use full-screen desktop mode if we're running a desktop environment
         if (WMUtils::isRunningDesktopEnvironment()) {
-            m_FullScreenFlag = SDL_WINDOW_FULLSCREEN_DESKTOP;
+            m_FullScreenFlag = SDL_WINDOW_FULLSCREEN;
             break;
         }
         // Fall-through
@@ -962,7 +962,7 @@ bool Session::initialize(QQuickWindow* qtWindow)
 #ifdef Q_OS_DARWIN
         if (qEnvironmentVariableIntValue("I_WANT_BUGGY_FULLSCREEN") == 0) {
             // Don't use "real" fullscreen on macOS by default. See comments above.
-            m_FullScreenFlag = SDL_WINDOW_FULLSCREEN_DESKTOP;
+            m_FullScreenFlag = SDL_WINDOW_FULLSCREEN;
         }
         else {
             m_FullScreenFlag = SDL_WINDOW_FULLSCREEN;
@@ -1368,7 +1368,7 @@ void Session::getWindowDimensions(int& x, int& y,
     int displayIndex = 0;
 
     if (m_Window != nullptr) {
-        displayIndex = SDL_GetWindowDisplayIndex(m_Window);
+        displayIndex = SDL_GetDisplayForWindow(m_Window);
         SDL_assert(displayIndex >= 0);
     }
     // Create our window on the same display that Qt's UI
@@ -1383,16 +1383,18 @@ void Session::getWindowDimensions(int& x, int& y,
                 SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                             "Qt UI screen is at (%d,%d)",
                             displayRect.x(), displayRect.y());
-                for (int i = 0; i < SDL_GetNumVideoDisplays(); i++) {
+                int numDisplays = 0;
+                SDL_DisplayID* displayIDs = SDL_GetDisplays(&numDisplays);
+                for (int i = 0; i < numDisplays; i++) {
                     SDL_Rect displayBounds;
 
-                    if (SDL_GetDisplayBounds(i, &displayBounds) == 0) {
+                    if (SDL_GetDisplayBounds(displayIDs[i], &displayBounds)) {
                         if (displayBounds.x == displayRect.x() &&
                             displayBounds.y == displayRect.y()) {
                             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                                         "SDL found matching display %d",
                                         i);
-                            displayIndex = i;
+                            displayIndex = displayIDs[i];
                             break;
                         }
                     }
@@ -1402,6 +1404,7 @@ void Session::getWindowDimensions(int& x, int& y,
                                     i, SDL_GetError());
                     }
                 }
+                SDL_free(displayIDs);
             }
             else {
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
@@ -1411,7 +1414,7 @@ void Session::getWindowDimensions(int& x, int& y,
     }
 
     SDL_Rect usableBounds;
-    if (SDL_GetDisplayUsableBounds(displayIndex, &usableBounds) == 0) {
+    if (SDL_GetDisplayUsableBounds(displayIndex, &usableBounds)) {
         // If the stream resolution fits within the usable display area, use it directly
         if (m_StreamConfig.width <= usableBounds.w &&
             m_StreamConfig.height <= usableBounds.h) {
@@ -1447,12 +1450,14 @@ void Session::getWindowDimensions(int& x, int& y,
 
 void Session::updateOptimalWindowDisplayMode()
 {
-    SDL_DisplayMode desktopMode, bestMode, mode;
-    int displayIndex = SDL_GetWindowDisplayIndex(m_Window);
+    SDL_DisplayMode desktopMode, bestMode;
+    int displayIndex = (int)SDL_GetDisplayForWindow(m_Window);
 
     // Try the current display mode first. On macOS, this will be the normal
     // scaled desktop resolution setting.
-    if (SDL_GetDesktopDisplayMode(displayIndex, &desktopMode) == 0) {
+    const SDL_DisplayMode* desktopModePtr = SDL_GetDesktopDisplayMode(displayIndex);
+    if (desktopModePtr != NULL) {
+        desktopMode = *desktopModePtr;
         // If this doesn't fit the selected resolution, use the native
         // resolution of the panel (unscaled).
         if (desktopMode.w < m_ActiveVideoWidth || desktopMode.h < m_ActiveVideoHeight) {
@@ -1464,8 +1469,7 @@ void Session::updateOptimalWindowDisplayMode()
     }
     else {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                    "SDL_GetDesktopDisplayMode() failed: %s",
-                    SDL_GetError());
+                    "SDL_GetDesktopDisplayMode() failed");
         return;
     }
 
@@ -1485,19 +1489,22 @@ void Session::updateOptimalWindowDisplayMode()
     if (!matchVideo) {
         // Start with the native desktop resolution and try to find
         // the highest refresh rate that our stream FPS evenly divides.
-        int numDisplayModes = SDL_GetNumDisplayModes(displayIndex);
-        for (int i = 0; i < numDisplayModes; i++) {
-            if (SDL_GetDisplayMode(displayIndex, i, &mode) == 0) {
-                if (mode.w == desktopMode.w && mode.h == desktopMode.h &&
-                    mode.refresh_rate % m_StreamConfig.fps == 0) {
+        int numDisplayModes = 0;
+        SDL_DisplayMode** displayModes = SDL_GetFullscreenDisplayModes(displayIndex, &numDisplayModes);
+        if (displayModes != NULL) {
+            for (int i = 0; i < numDisplayModes; i++) {
+                const SDL_DisplayMode* modePtr = displayModes[i];
+                if (modePtr->w == desktopMode.w && modePtr->h == desktopMode.h &&
+                    (int)modePtr->refresh_rate % m_StreamConfig.fps == 0) {
                     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                                 "Found display mode with desktop resolution: %dx%dx%d",
-                                mode.w, mode.h, mode.refresh_rate);
-                    if (mode.refresh_rate > bestMode.refresh_rate) {
-                        bestMode = mode;
+                                modePtr->w, modePtr->h, (int)modePtr->refresh_rate);
+                    if (modePtr->refresh_rate > bestMode.refresh_rate) {
+                        bestMode = *modePtr;
                     }
                 }
             }
+            SDL_free(displayModes);
         }
     }
 
@@ -1509,22 +1516,25 @@ void Session::updateOptimalWindowDisplayMode()
     if (bestMode.refresh_rate == 0) {
         float bestModeAspectRatio = 0;
         float videoAspectRatio = (float)m_ActiveVideoWidth / (float)m_ActiveVideoHeight;
-        int numDisplayModes = SDL_GetNumDisplayModes(displayIndex);
-        for (int i = 0; i < numDisplayModes; i++) {
-            if (SDL_GetDisplayMode(displayIndex, i, &mode) == 0) {
-                float modeAspectRatio = (float)mode.w / (float)mode.h;
-                if (mode.w >= m_ActiveVideoWidth && mode.h >= m_ActiveVideoHeight &&
-                        mode.refresh_rate % m_StreamConfig.fps == 0) {
+        int numDisplayModes = 0;
+        SDL_DisplayMode** displayModes = SDL_GetFullscreenDisplayModes(displayIndex, &numDisplayModes);
+        if (displayModes != NULL) {
+            for (int i = 0; i < numDisplayModes; i++) {
+                const SDL_DisplayMode* modePtr = displayModes[i];
+                float modeAspectRatio = (float)modePtr->w / (float)modePtr->h;
+                if (modePtr->w >= m_ActiveVideoWidth && modePtr->h >= m_ActiveVideoHeight &&
+                        (int)modePtr->refresh_rate % m_StreamConfig.fps == 0) {
                     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                                 "Found display mode with video resolution: %dx%dx%d",
-                                mode.w, mode.h, mode.refresh_rate);
-                    if (mode.refresh_rate >= bestMode.refresh_rate &&
+                                modePtr->w, modePtr->h, (int)modePtr->refresh_rate);
+                    if (modePtr->refresh_rate >= bestMode.refresh_rate &&
                             (bestModeAspectRatio == 0 || fabs(videoAspectRatio - modeAspectRatio) <= fabs(videoAspectRatio - bestModeAspectRatio))) {
-                        bestMode = mode;
+                        bestMode = *modePtr;
                         bestModeAspectRatio = modeAspectRatio;
                     }
                 }
             }
+            SDL_free(displayModes);
         }
     }
 
@@ -1538,7 +1548,7 @@ void Session::updateOptimalWindowDisplayMode()
         bestMode = desktopMode;
     }
 
-    if ((SDL_GetWindowFlags(m_Window) & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN) {
+    if ((SDL_GetWindowFlags(m_Window) & SDL_WINDOW_FULLSCREEN) == SDL_WINDOW_FULLSCREEN) {
         // Only print when the window is actually in full-screen exclusive mode,
         // otherwise we're not actually using the mode we've set here
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
@@ -1546,7 +1556,7 @@ void Session::updateOptimalWindowDisplayMode()
                     bestMode.w, bestMode.h, bestMode.refresh_rate);
     }
 
-    SDL_SetWindowDisplayMode(m_Window, &bestMode);
+    SDL_SetWindowFullscreenMode(m_Window, &bestMode);
 }
 
 void Session::toggleFullscreen()
@@ -1775,7 +1785,7 @@ void Session::flushWindowEvents()
 
     // This event will cause us to set m_FlushingWindowEvents back to false.
     SDL_Event flushEvent = {};
-    flushEvent.type = SDL_USEREVENT;
+    flushEvent.type = SDL_EVENT_USER;
     flushEvent.user.code = SDL_CODE_FLUSH_WINDOW_EVENT_BARRIER;
     SDL_PushEvent(&flushEvent);
 }
@@ -1819,7 +1829,7 @@ void Session::interrupt()
 
     // Inject a quit event to our SDL event loop
     SDL_Event event;
-    event.type = SDL_QUIT;
+    event.type = SDL_EVENT_QUIT;
     event.quit.timestamp = SDL_GetTicks();
     SDL_PushEvent(&event);
 }
@@ -1861,7 +1871,7 @@ void Session::exec()
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
 
     // We always want a resizable window with High DPI enabled
-    Uint32 defaultWindowFlags = SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE;
+    Uint32 defaultWindowFlags = SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_RESIZABLE;
 
     // If we're starting in windowed mode and the Moonlight GUI is maximized or
     // minimized, match that with the streaming window.
@@ -1894,22 +1904,24 @@ void Session::exec()
 #endif
 
     m_Window = SDL_CreateWindow(windowName.c_str(),
-                                x,
-                                y,
                                 width,
                                 height,
                                 defaultWindowFlags | StreamUtils::getPlatformWindowFlags());
+    if (m_Window) {
+        SDL_SetWindowPosition(m_Window, x, y);
+    }
     if (!m_Window) {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "SDL_CreateWindow() failed with platform flags: %s",
                     SDL_GetError());
 
         m_Window = SDL_CreateWindow(windowName.c_str(),
-                                    x,
-                                    y,
                                     width,
                                     height,
                                     defaultWindowFlags);
+        if (m_Window) {
+            SDL_SetWindowPosition(m_Window, x, y);
+        }
         if (!m_Window) {
             SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                          "SDL_CreateWindow() failed: %s",
@@ -1931,12 +1943,11 @@ void Session::exec()
 
     QPainter svgPainter(&svgImage);
     svgIconRenderer.render(&svgPainter);
-    SDL_Surface* iconSurface = SDL_CreateRGBSurfaceWithFormatFrom((void*)svgImage.constBits(),
-                                                                  svgImage.width(),
-                                                                  svgImage.height(),
-                                                                  32,
-                                                                  4 * svgImage.width(),
-                                                                  SDL_PIXELFORMAT_RGBA32);
+    SDL_Surface* iconSurface = SDL_CreateSurfaceFrom(svgImage.width(),
+                                                                   svgImage.height(),
+                                                                   SDL_PIXELFORMAT_RGBA32,
+                                                                   (void*)svgImage.constBits(),
+                                                                   4 * svgImage.width());
 #ifndef Q_OS_DARWIN
     // Other platforms seem to preserve our Qt icon when creating a new window.
     if (iconSurface != nullptr) {
@@ -1958,12 +1969,12 @@ void Session::exec()
     bool needsFirstEnterCapture = false;
     bool needsPostDecoderCreationCapture = false;
 
-    // HACK: For Wayland, we wait until we get the first SDL_WINDOWEVENT_ENTER
+    // HACK: For Wayland, we wait until we get the first SDL_EVENT_WINDOW_MOUSE_ENTER
     // event where it seems to work consistently on GNOME. For other platforms,
     // especially where SDL may call SDL_RecreateWindow(), we must only capture
     // after the decoder is created.
     if (strcmp(SDL_GetCurrentVideoDriver(), "wayland") == 0) {
-        // Native Wayland: Capture on SDL_WINDOWEVENT_ENTER
+        // Native Wayland: Capture on SDL_EVENT_WINDOW_MOUSE_ENTER
         needsFirstEnterCapture = true;
     }
     else {
@@ -1975,7 +1986,7 @@ void Session::exec()
     // when we initialize the video subsystem, but this
     // causes an IME popup when certain keys are held down
     // on macOS.
-    SDL_StopTextInput();
+    SDL_StopTextInput(SDL_GetKeyboardFocus());
 
     // Disable the screen saver if requested
     if (m_Preferences->keepAwake) {
@@ -1991,9 +2002,9 @@ void Session::exec()
     // sleep precision and more accurate callback timing.
     SDL_SetHint(SDL_HINT_TIMER_RESOLUTION, "1");
 
-    int currentDisplayIndex = SDL_GetWindowDisplayIndex(m_Window);
+    int currentDisplayIndex = SDL_GetDisplayForWindow(m_Window);
 
-    // Now that we're about to stream, any SDL_QUIT event is expected
+    // Now that we're about to stream, any SDL_EVENT_QUIT event is expected
     // unless it comes from the connection termination callback where
     // (m_UnexpectedTermination is set back to true).
     m_UnexpectedTermination = false;
@@ -2043,12 +2054,12 @@ void Session::exec()
         }
 #endif
         switch (event.type) {
-        case SDL_QUIT:
+        case SDL_EVENT_QUIT:
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                         "Quit event received");
             goto DispatchDeferredCleanup;
 
-        case SDL_USEREVENT:
+        case SDL_EVENT_USER:
             switch (event.user.code) {
             case SDL_CODE_FRAME_READY:
                 if (m_VideoDecoder != nullptr) {
@@ -2088,50 +2099,51 @@ void Session::exec()
             }
             break;
 
-        case SDL_WINDOWEVENT:
-            // Early handling of some events
-            switch (event.window.event) {
-            case SDL_WINDOWEVENT_FOCUS_LOST:
+        // SDL3: window events are individual event types, not a sub-type of SDL_WINDOWEVENT.
+        // The inner switch handles them directly via event.window.type.
+        {
+            switch (event.window.type) {
+            case SDL_EVENT_WINDOW_FOCUS_LOST:
                 if (m_Preferences->muteOnFocusLoss) {
                     m_AudioMuted = true;
                 }
                 m_InputHandler->notifyFocusLost();
                 break;
-            case SDL_WINDOWEVENT_FOCUS_GAINED:
+            case SDL_EVENT_WINDOW_FOCUS_GAINED:
                 if (m_Preferences->muteOnFocusLoss) {
                     m_AudioMuted = false;
                 }
                 m_InputHandler->notifyFocusGained();
                 break;
-            case SDL_WINDOWEVENT_LEAVE:
+            case SDL_EVENT_WINDOW_MOUSE_LEAVE:
                 m_InputHandler->notifyMouseLeave();
                 break;
             }
 
             presence.runCallbacks();
 
-            // Capture the mouse on SDL_WINDOWEVENT_ENTER if needed
-            if (needsFirstEnterCapture && event.window.event == SDL_WINDOWEVENT_ENTER) {
+            // Capture the mouse on SDL_EVENT_WINDOW_MOUSE_ENTER if needed
+            if (needsFirstEnterCapture && event.window.type == SDL_EVENT_WINDOW_MOUSE_ENTER) {
                 m_InputHandler->setCaptureActive(true);
                 needsFirstEnterCapture = false;
             }
 
             // We want to recreate the decoder for resizes (full-screen toggles) and the initial shown event.
-            // We use SDL_WINDOWEVENT_SIZE_CHANGED rather than SDL_WINDOWEVENT_RESIZED because the latter doesn't
+            // We use SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED rather than SDL_EVENT_WINDOW_RESIZED because the latter doesn't
             // seem to fire when switching from windowed to full-screen on X11.
-            if (event.window.event != SDL_WINDOWEVENT_SIZE_CHANGED &&
-                (event.window.event != SDL_WINDOWEVENT_SHOWN || m_VideoDecoder != nullptr)) {
+            if (event.window.type != SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED &&
+                (event.window.type != SDL_EVENT_WINDOW_SHOWN || m_VideoDecoder != nullptr)) {
                 // Check that the window display hasn't changed. If it has, we want
                 // to recreate the decoder to allow it to adapt to the new display.
                 // This will allow Pacer to pull the new display refresh rate.
 #if SDL_VERSION_ATLEAST(2, 0, 18)
                 // On SDL 2.0.18+, there's an event for this specific situation
-                if (event.window.event != SDL_WINDOWEVENT_DISPLAY_CHANGED) {
+                if (event.window.type != SDL_EVENT_WINDOW_DISPLAY_CHANGED) {
                     break;
                 }
 #else
                 // Prior to SDL 2.0.18, we must check the display index for each window event
-                if (SDL_GetWindowDisplayIndex(m_Window) == currentDisplayIndex) {
+                if (SDL_GetDisplayForWindow(m_Window) == currentDisplayIndex) {
                     break;
                 }
 #endif
@@ -2150,7 +2162,7 @@ void Session::exec()
                 // Ignore window events for renderer reset if flushing
                 SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                             "Dropping window event during flush: %d (%d %d)",
-                            event.window.event,
+                            event.window.type,
                             event.window.data1,
                             event.window.data2);
                 break;
@@ -2163,14 +2175,14 @@ void Session::exec()
                 WINDOW_STATE_CHANGE_INFO windowChangeInfo = {};
                 windowChangeInfo.window = m_Window;
 
-                if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+                if (event.window.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
                     windowChangeInfo.stateChangeFlags |= WINDOW_STATE_CHANGE_SIZE;
 
                     windowChangeInfo.width = event.window.data1;
                     windowChangeInfo.height = event.window.data2;
                 }
 
-                int newDisplayIndex = SDL_GetWindowDisplayIndex(m_Window);
+                int newDisplayIndex = SDL_GetDisplayForWindow(m_Window);
                 if (newDisplayIndex != currentDisplayIndex) {
                     windowChangeInfo.stateChangeFlags |= WINDOW_STATE_CHANGE_DISPLAY;
 
@@ -2180,10 +2192,10 @@ void Session::exec()
                     // decoder recreation path to ensure Pacer is switched to the new display
                     // and that we apply any V-Sync disablement rules that may be needed for
                     // this display.
-                    SDL_DisplayMode oldMode, newMode;
-                    if (SDL_GetCurrentDisplayMode(currentDisplayIndex, &oldMode) < 0 ||
-                            SDL_GetCurrentDisplayMode(newDisplayIndex, &newMode) < 0 ||
-                            oldMode.refresh_rate != newMode.refresh_rate) {
+                    const SDL_DisplayMode* oldMode = SDL_GetCurrentDisplayMode(currentDisplayIndex);
+                    const SDL_DisplayMode* newMode = SDL_GetCurrentDisplayMode(newDisplayIndex);
+                    if (!oldMode || !newMode ||
+                            oldMode->refresh_rate != newMode->refresh_rate) {
                         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                                     "Forcing renderer recreation due to refresh rate change between displays");
                         forceRecreation = true;
@@ -2204,14 +2216,15 @@ void Session::exec()
 
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                         "Recreating renderer for window event: %d (%d %d)",
-                        event.window.event,
+                        event.window.type,
                         event.window.data1,
                         event.window.data2);
 
             // Fall through
-        case SDL_RENDER_DEVICE_RESET:
+        }
+        case SDL_EVENT_RENDER_DEVICE_RESET:
 
-            if (event.type != SDL_WINDOWEVENT) {
+            if (event.type < SDL_EVENT_WINDOW_FIRST || event.type > SDL_EVENT_WINDOW_LAST) {
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                             "Recreating renderer by internal request: %d",
                             event.type);
@@ -2230,8 +2243,8 @@ void Session::exec()
 
             // Update the window display mode based on our current monitor
             // NB: Avoid a useless modeset by only doing this if it changed.
-            if (currentDisplayIndex != SDL_GetWindowDisplayIndex(m_Window)) {
-                currentDisplayIndex = SDL_GetWindowDisplayIndex(m_Window);
+            if (currentDisplayIndex != SDL_GetDisplayForWindow(m_Window)) {
+                currentDisplayIndex = SDL_GetDisplayForWindow(m_Window);
                 updateOptimalWindowDisplayMode();
             }
 
@@ -2239,7 +2252,7 @@ void Session::exec()
             // have queued to reset itself (if this reset was the result
             // of device loss or an internal error).
             SDL_PumpEvents();
-            SDL_FlushEvent(SDL_RENDER_DEVICE_RESET);
+            SDL_FlushEvent(SDL_EVENT_RENDER_DEVICE_RESET);
 
             {
                 // If the stream exceeds the display refresh rate (plus some slack),
@@ -2291,64 +2304,60 @@ void Session::exec()
             SDL_UnlockMutex(m_DecoderLock);
             break;
 
-        case SDL_KEYUP:
-        case SDL_KEYDOWN:
+        case SDL_EVENT_KEY_UP:
+        case SDL_EVENT_KEY_DOWN:
             presence.runCallbacks();
             m_InputHandler->handleKeyEvent(&event.key);
             break;
-        case SDL_MOUSEBUTTONDOWN:
-        case SDL_MOUSEBUTTONUP:
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        case SDL_EVENT_MOUSE_BUTTON_UP:
             presence.runCallbacks();
             m_InputHandler->handleMouseButtonEvent(&event.button);
             break;
-        case SDL_MOUSEMOTION:
+        case SDL_EVENT_MOUSE_MOTION:
             m_InputHandler->handleMouseMotionEvent(&event.motion);
             break;
-        case SDL_MOUSEWHEEL:
+        case SDL_EVENT_MOUSE_WHEEL:
             m_InputHandler->handleMouseWheelEvent(&event.wheel);
             break;
-        case SDL_CONTROLLERAXISMOTION:
-            m_InputHandler->handleControllerAxisEvent(&event.caxis);
+        case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+            m_InputHandler->handleControllerAxisEvent(&event.gaxis);
             break;
-        case SDL_CONTROLLERBUTTONDOWN:
-        case SDL_CONTROLLERBUTTONUP:
+        case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+        case SDL_EVENT_GAMEPAD_BUTTON_UP:
             presence.runCallbacks();
-            m_InputHandler->handleControllerButtonEvent(&event.cbutton);
+            m_InputHandler->handleControllerButtonEvent(&event.gbutton);
             break;
 #if SDL_VERSION_ATLEAST(2, 0, 14)
-        case SDL_CONTROLLERSENSORUPDATE:
-            m_InputHandler->handleControllerSensorEvent(&event.csensor);
+        case SDL_EVENT_GAMEPAD_SENSOR_UPDATE:
+            m_InputHandler->handleControllerSensorEvent(&event.gsensor);
             break;
-        case SDL_CONTROLLERTOUCHPADDOWN:
-        case SDL_CONTROLLERTOUCHPADUP:
-        case SDL_CONTROLLERTOUCHPADMOTION:
-            m_InputHandler->handleControllerTouchpadEvent(&event.ctouchpad);
+        case SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN:
+        case SDL_EVENT_GAMEPAD_TOUCHPAD_UP:
+        case SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION:
+            m_InputHandler->handleControllerTouchpadEvent(&event.gtouchpad);
             break;
 #endif
 #if SDL_VERSION_ATLEAST(2, 24, 0)
-        case SDL_JOYBATTERYUPDATED:
+        case SDL_EVENT_JOYSTICK_BATTERY_UPDATED:
             m_InputHandler->handleJoystickBatteryEvent(&event.jbattery);
             break;
 #endif
-        case SDL_CONTROLLERDEVICEADDED:
-        case SDL_CONTROLLERDEVICEREMOVED:
-            m_InputHandler->handleControllerDeviceEvent(&event.cdevice);
+        case SDL_EVENT_GAMEPAD_ADDED:
+        case SDL_EVENT_GAMEPAD_REMOVED:
+            m_InputHandler->handleControllerDeviceEvent(&event.gdevice);
             break;
-        case SDL_JOYDEVICEADDED:
+        case SDL_EVENT_JOYSTICK_ADDED:
             m_InputHandler->handleJoystickArrivalEvent(&event.jdevice);
             break;
-        case SDL_FINGERDOWN:
-        case SDL_FINGERMOTION:
-        case SDL_FINGERUP:
+        case SDL_EVENT_FINGER_DOWN:
+        case SDL_EVENT_FINGER_MOTION:
+        case SDL_EVENT_FINGER_UP:
             m_InputHandler->handleTouchFingerEvent(&event.tfinger);
             break;
-        case SDL_DISPLAYEVENT:
-            switch (event.display.event) {
-            case SDL_DISPLAYEVENT_CONNECTED:
-            case SDL_DISPLAYEVENT_DISCONNECTED:
-                m_InputHandler->updatePointerRegionLock();
-                break;
-            }
+        case SDL_EVENT_DISPLAY_ADDED:
+        case SDL_EVENT_DISPLAY_REMOVED:
+            m_InputHandler->updatePointerRegionLock();
             break;
         }
     }
@@ -2413,7 +2422,7 @@ DispatchDeferredCleanup:
     SDL_DestroyWindow(m_Window);
 
     if (iconSurface != nullptr) {
-        SDL_FreeSurface(iconSurface);
+        SDL_DestroySurface(iconSurface);
     }
 
     SDL_QuitSubSystem(SDL_INIT_VIDEO);

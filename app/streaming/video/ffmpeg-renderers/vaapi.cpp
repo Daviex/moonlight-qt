@@ -761,7 +761,7 @@ void VAAPIRenderer::notifyOverlayUpdated(Overlay::OverlayType type)
     }
 
     if (!overlayEnabled) {
-        SDL_FreeSurface(newSurface);
+        SDL_DestroySurface(newSurface);
         return;
     }
 
@@ -775,7 +775,7 @@ void VAAPIRenderer::notifyOverlayUpdated(Overlay::OverlayType type)
             SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                          "vaCreateImage() failed: %d",
                          status);
-            SDL_FreeSurface(newSurface);
+            SDL_DestroySurface(newSurface);
             return;
         }
 
@@ -785,7 +785,7 @@ void VAAPIRenderer::notifyOverlayUpdated(Overlay::OverlayType type)
             SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                          "vaMapBuffer() failed: %d",
                          status);
-            SDL_FreeSurface(newSurface);
+            SDL_DestroySurface(newSurface);
             vaDestroyImage(vaDeviceContext->display, newImage.image_id);
             return;
         }
@@ -800,7 +800,7 @@ void VAAPIRenderer::notifyOverlayUpdated(Overlay::OverlayType type)
             SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                          "vaUnmapBuffer() failed: %d",
                          status);
-            SDL_FreeSurface(newSurface);
+            SDL_DestroySurface(newSurface);
             vaDestroyImage(vaDeviceContext->display, newImage.image_id);
             return;
         }
@@ -822,7 +822,7 @@ void VAAPIRenderer::notifyOverlayUpdated(Overlay::OverlayType type)
         overlayRect.h = newSurface->h;
 
         // Surface data is no longer needed
-        SDL_FreeSurface(newSurface);
+        SDL_DestroySurface(newSurface);
 
         VASubpictureID newSubpicture;
         status = vaCreateSubpicture(vaDeviceContext->display, newImage.image_id, &newSubpicture);

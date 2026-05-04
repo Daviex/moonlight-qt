@@ -19,7 +19,7 @@ public:
     virtual AudioFormat getAudioBufferFormat();
 
 private:
-    SDL_AudioDeviceID m_AudioDevice;
+    SDL_AudioStream* m_AudioStream;
     void* m_AudioBuffer;
     int m_FrameSize;
 };

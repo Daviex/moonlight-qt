@@ -22,7 +22,7 @@ void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
 
         // Push a quit event to the main loop
         SDL_Event event;
-        event.type = SDL_QUIT;
+        event.type = SDL_EVENT_QUIT;
         event.quit.timestamp = SDL_GetTicks();
         SDL_PushEvent(&event);
         break;
@@ -76,9 +76,13 @@ void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Detected show mouse combo");
 
-        if (!SDL_GetRelativeMouseMode()) {
+        if (!SDL_GetWindowRelativeMouseMode(m_Window)) {
             m_MouseCursorCapturedVisibilityState = !m_MouseCursorCapturedVisibilityState;
-            SDL_ShowCursor(m_MouseCursorCapturedVisibilityState);
+            if (m_MouseCursorCapturedVisibilityState) {
+                SDL_ShowCursor();
+            } else {
+                SDL_HideCursor();
+            }
         }
         else {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
@@ -148,7 +152,7 @@ void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
 
         // Push a quit event to the main loop
         SDL_Event quitExitEvent;
-        quitExitEvent.type = SDL_QUIT;
+        quitExitEvent.type = SDL_EVENT_QUIT;
         quitExitEvent.quit.timestamp = SDL_GetTicks();
         SDL_PushEvent(&quitExitEvent);
         break;
@@ -166,15 +170,15 @@ void SdlInputHandler::handleKeyEvent(SDL_KeyboardEvent* event)
 
     if (event->repeat) {
         // Ignore repeat key down events
-        SDL_assert(event->state == SDL_PRESSED);
+        SDL_assert(event->down == true);
         return;
     }
 
     // Check for our special key combos
-    if ((event->state == SDL_PRESSED) &&
-            (event->keysym.mod & KMOD_CTRL) &&
-            (event->keysym.mod & KMOD_ALT) &&
-            (event->keysym.mod & KMOD_SHIFT)) {
+    if ((event->down == true) &&
+            (event->mod & SDL_KMOD_CTRL) &&
+            (event->mod & SDL_KMOD_ALT) &&
+            (event->mod & SDL_KMOD_SHIFT)) {
         // First we test the SDLK combos for matches,
         // that way we ensure that latin keyboard users
         // can match to the key they see on their keyboards.
@@ -187,14 +191,14 @@ void SdlInputHandler::handleKeyEvent(SDL_KeyboardEvent* event)
         // the scancode of another.
 
         for (int i = 0; i < KeyComboMax; i++) {
-            if (m_SpecialKeyCombos[i].enabled && event->keysym.sym == m_SpecialKeyCombos[i].keyCode) {
+            if (m_SpecialKeyCombos[i].enabled && event->key == m_SpecialKeyCombos[i].keyCode) {
                 performSpecialKeyCombo(m_SpecialKeyCombos[i].keyCombo);
                 return;
             }
         }
 
         for (int i = 0; i < KeyComboMax; i++) {
-            if (m_SpecialKeyCombos[i].enabled && event->keysym.scancode == m_SpecialKeyCombos[i].scanCode) {
+            if (m_SpecialKeyCombos[i].enabled && event->scancode == m_SpecialKeyCombos[i].scanCode) {
                 performSpecialKeyCombo(m_SpecialKeyCombos[i].keyCombo);
                 return;
             }
@@ -203,16 +207,16 @@ void SdlInputHandler::handleKeyEvent(SDL_KeyboardEvent* event)
 
     // Set modifier flags
     modifiers = 0;
-    if (event->keysym.mod & KMOD_CTRL) {
+    if (event->mod & SDL_KMOD_CTRL) {
         modifiers |= MODIFIER_CTRL;
     }
-    if (event->keysym.mod & KMOD_ALT) {
+    if (event->mod & SDL_KMOD_ALT) {
         modifiers |= MODIFIER_ALT;
     }
-    if (event->keysym.mod & KMOD_SHIFT) {
+    if (event->mod & SDL_KMOD_SHIFT) {
         modifiers |= MODIFIER_SHIFT;
     }
-    if (event->keysym.mod & KMOD_GUI) {
+    if (event->mod & SDL_KMOD_GUI) {
         if (isSystemKeyCaptureActive()) {
             modifiers |= MODIFIER_META;
         }
@@ -221,25 +225,25 @@ void SdlInputHandler::handleKeyEvent(SDL_KeyboardEvent* event)
     // Set keycode. We explicitly use scancode here because GFE will try to correct
     // for AZERTY layouts on the host but it depends on receiving VK_ values matching
     // a QWERTY layout to work.
-    if (event->keysym.scancode >= SDL_SCANCODE_1 && event->keysym.scancode <= SDL_SCANCODE_9) {
+    if (event->scancode >= SDL_SCANCODE_1 && event->scancode <= SDL_SCANCODE_9) {
         // SDL defines SDL_SCANCODE_0 > SDL_SCANCODE_9, so we need to handle that manually
-        keyCode = (event->keysym.scancode - SDL_SCANCODE_1) + VK_0 + 1;
+        keyCode = (event->scancode - SDL_SCANCODE_1) + VK_0 + 1;
     }
-    else if (event->keysym.scancode >= SDL_SCANCODE_A && event->keysym.scancode <= SDL_SCANCODE_Z) {
-        keyCode = (event->keysym.scancode - SDL_SCANCODE_A) + VK_A;
+    else if (event->scancode >= SDL_SCANCODE_A && event->scancode <= SDL_SCANCODE_Z) {
+        keyCode = (event->scancode - SDL_SCANCODE_A) + VK_A;
     }
-    else if (event->keysym.scancode >= SDL_SCANCODE_F1 && event->keysym.scancode <= SDL_SCANCODE_F12) {
-        keyCode = (event->keysym.scancode - SDL_SCANCODE_F1) + VK_F1;
+    else if (event->scancode >= SDL_SCANCODE_F1 && event->scancode <= SDL_SCANCODE_F12) {
+        keyCode = (event->scancode - SDL_SCANCODE_F1) + VK_F1;
     }
-    else if (event->keysym.scancode >= SDL_SCANCODE_F13 && event->keysym.scancode <= SDL_SCANCODE_F24) {
-        keyCode = (event->keysym.scancode - SDL_SCANCODE_F13) + VK_F13;
+    else if (event->scancode >= SDL_SCANCODE_F13 && event->scancode <= SDL_SCANCODE_F24) {
+        keyCode = (event->scancode - SDL_SCANCODE_F13) + VK_F13;
     }
-    else if (event->keysym.scancode >= SDL_SCANCODE_KP_1 && event->keysym.scancode <= SDL_SCANCODE_KP_9) {
+    else if (event->scancode >= SDL_SCANCODE_KP_1 && event->scancode <= SDL_SCANCODE_KP_9) {
         // SDL defines SDL_SCANCODE_KP_0 > SDL_SCANCODE_KP_9, so we need to handle that manually
-        keyCode = (event->keysym.scancode - SDL_SCANCODE_KP_1) + VK_NUMPAD0 + 1;
+        keyCode = (event->scancode - SDL_SCANCODE_KP_1) + VK_NUMPAD0 + 1;
     }
     else {
-        switch (event->keysym.scancode) {
+        switch (event->scancode) {
             case SDL_SCANCODE_BACKSPACE:
                 keyCode = 0x08;
                 break;
@@ -444,13 +448,13 @@ void SdlInputHandler::handleKeyEvent(SDL_KeyboardEvent* event)
             default:
                 SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                             "Unhandled button event: %d",
-                             event->keysym.scancode);
+                             event->scancode);
                 return;
         }
     }
 
     // Track the key state so we always know which keys are down
-    if (event->state == SDL_PRESSED) {
+    if (event->down == true) {
         m_KeysDown.insert(keyCode);
     }
     else {
@@ -458,7 +462,7 @@ void SdlInputHandler::handleKeyEvent(SDL_KeyboardEvent* event)
     }
 
     LiSendKeyboardEvent2(0x8000 | keyCode,
-                        event->state == SDL_PRESSED ?
+                        event->down == true ?
                             KEY_ACTION_DOWN : KEY_ACTION_UP,
                         modifiers,
                         shouldNotConvertToScanCodeOnServer ? SS_KBE_FLAG_NON_NORMALIZED : 0);

@@ -1,6 +1,6 @@
 #include "waylandvsyncsource.h"
 
-#include <SDL_syswm.h>
+// SDL_syswm.h removed in SDL3; native handles via SDL properties
 
 #ifndef SDL_VIDEO_DRIVER_WAYLAND
 #warning Unable to use WaylandVsyncSource without SDL support
@@ -29,22 +29,11 @@ WaylandVsyncSource::~WaylandVsyncSource()
 
 bool WaylandVsyncSource::initialize(SDL_Window* window, int)
 {
-    SDL_SysWMinfo info;
-
-    SDL_VERSION(&info.version);
-
-    if (!SDL_GetWindowWMInfo(window, &info)) {
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "SDL_GetWindowWMInfo() failed: %s",
-                     SDL_GetError());
-        return false;
-    }
-
-    // Pacer should not create us for non-Wayland windows
-    SDL_assert(info.subsystem == SDL_SYSWM_WAYLAND);
-
-    m_Display = info.info.wl.display;
-    m_Surface = info.info.wl.surface;
+    // SDL3 property-based native Wayland object access (replaces SDL_GetWindowWMInfo)
+    m_Display = (struct wl_display*)SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, NULL);
+    m_Surface = (struct wl_surface*)SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, NULL);
+    SDL_assert(m_Display != NULL);
+    SDL_assert(m_Surface != NULL);
 
     // Enqueue our first frame callback
     m_Callback = wl_surface_frame(m_Surface);

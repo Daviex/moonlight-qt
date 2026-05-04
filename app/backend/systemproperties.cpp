@@ -3,6 +3,7 @@
 
 #include <QGuiApplication>
 #include <QLibraryInfo>
+#include <QTimer>
 
 #include "streaming/session.h"
 #include "streaming/streamutils.h"
@@ -15,8 +16,8 @@
 class SystemPropertyQueryThread : public QThread
 {
 public:
-    SystemPropertyQueryThread(SystemProperties* properties)
-        : QThread(properties), m_Properties(properties)
+    SystemPropertyQueryThread(SystemProperties* properties, SDL_Window* testWindow)
+        : QThread(properties), m_Properties(properties), m_TestWindow(testWindow)
     {
         setObjectName("System Properties Async Query Thread");
     }
@@ -24,12 +25,15 @@ public:
 private:
     void run() override
     {
+        // Refresh display info (display modes, refresh rates, native res) in thread
+        m_Properties->refreshDisplays();
+
         bool hasHardwareAcceleration;
         bool rendererAlwaysFullScreen;
         bool supportsHdr;
         QSize maximumResolution;
 
-        Session::getDecoderInfo(m_Properties->testWindow, hasHardwareAcceleration, rendererAlwaysFullScreen, supportsHdr, maximumResolution);
+        Session::getDecoderInfo(m_TestWindow, hasHardwareAcceleration, rendererAlwaysFullScreen, supportsHdr, maximumResolution);
 
         // Propagate the decoder properties to the SystemProperties singleton and emit any change signals on the main thread
         QMetaObject::invokeMethod(m_Properties, "updateDecoderProperties",
@@ -42,6 +46,7 @@ private:
 
 private:
     SystemProperties* m_Properties;
+    SDL_Window* m_TestWindow;
 };
 
 SystemProperties::SystemProperties()
@@ -161,31 +166,28 @@ int SystemProperties::getRefreshRate(int displayIndex)
 
 void SystemProperties::startAsyncLoad()
 {
-    if (systemPropertyQueryThread) {
-        // Already started/completed
-        return;
-    }
-
-    // This isn't actually asynchronous (due to the need to synchronize with
-    // SdlGamepadKeyNavigation), but we don't query it in the constructor
-    // because it's expensive.
+    // Query unmapped gamepads immediately (expensive, but needs to be synchronous
+    // with SdlGamepadKeyNavigation initialization)
     unmappedGamepads = SdlInputHandler::getUnmappedGamepads();
     if (!unmappedGamepads.isEmpty()) {
         emit unmappedGamepadsChanged();
     }
 
-    // We initialize the video subsystem and test window on the main thread
-    // because some platforms (macOS) do not support window creation on
-    // non-main threads.
-    if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "SDL_InitSubSystem(SDL_INIT_VIDEO) failed: %s",
-                     SDL_GetError());
-        return;
-    }
+    // Defer SDL video init and hardware decode probing to let QML
+    // render its first frame before blocking the event loop.
+    QTimer::singleShot(0, this, [this]() {
+        if (systemPropertyQueryThread) {
+            return;
+        }
 
-    testWindow = StreamUtils::createTestWindow();
-    if (!testWindow) {
+        if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "SDL_InitSubSystem(SDL_INIT_VIDEO) failed: %s",
+                         SDL_GetError());
+            return;
+        }
+        testWindow = StreamUtils::createTestWindow();
+        if (!testWindow) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "Failed to create window for hardware decode test: %s",
                      SDL_GetError());
@@ -193,15 +195,10 @@ void SystemProperties::startAsyncLoad()
         return;
     }
 
-    // Update display related attributes (max FPS, native resolution, etc).
-    //
-    // NB: SDL3 will forcefully refresh displays when a window is created,
-    // so we place this after the window creation to ensure we don't pay
-    // the penalty for mode enumeration twice.
-    refreshDisplays();
-
-    systemPropertyQueryThread = new SystemPropertyQueryThread(this);
+    // refreshDisplays() and decoder probing are moved to the worker thread
+    systemPropertyQueryThread = new SystemPropertyQueryThread(this, testWindow);
     systemPropertyQueryThread->start();
+    });
 }
 
 void SystemProperties::waitForAsyncLoad()
@@ -213,7 +210,7 @@ void SystemProperties::waitForAsyncLoad()
 
 void SystemProperties::refreshDisplays()
 {
-    if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
+    if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "SDL_InitSubSystem(SDL_INIT_VIDEO) failed: %s",
                      SDL_GetError());
@@ -222,8 +219,11 @@ void SystemProperties::refreshDisplays()
 
     monitorNativeResolutions.clear();
 
+    int numDisplays;
+    SDL_DisplayID* displayIds = SDL_GetDisplays(&numDisplays);
+
     SDL_DisplayMode bestMode;
-    for (int displayIndex = 0; displayIndex < SDL_GetNumVideoDisplays(); displayIndex++) {
+    for (int displayIndex = 0; displayIndex < numDisplays; displayIndex++) {
         SDL_DisplayMode desktopMode;
         SDL_Rect safeArea;
 
@@ -240,16 +240,18 @@ void SystemProperties::refreshDisplays()
 
             // Start at desktop mode and work our way up
             bestMode = desktopMode;
-            int numDisplayModes = SDL_GetNumDisplayModes(displayIndex);
-            for (int i = 0; i < numDisplayModes; i++) {
-                SDL_DisplayMode mode;
-                if (SDL_GetDisplayMode(displayIndex, i, &mode) == 0) {
-                    if (mode.w == desktopMode.w && mode.h == desktopMode.h) {
-                        if (mode.refresh_rate > bestMode.refresh_rate) {
-                            bestMode = mode;
+            int numDisplayModes = 0;
+            SDL_DisplayMode** displayModes = SDL_GetFullscreenDisplayModes(displayIds[displayIndex], &numDisplayModes);
+            if (displayModes) {
+                for (int i = 0; i < numDisplayModes; i++) {
+                    const SDL_DisplayMode* modePtr = displayModes[i];
+                    if (modePtr->w == desktopMode.w && modePtr->h == desktopMode.h) {
+                        if (modePtr->refresh_rate > bestMode.refresh_rate) {
+                            bestMode = *modePtr;
                         }
                     }
                 }
+                SDL_free(displayModes);
             }
 
             // Try to normalize values around our our standard refresh rates.
@@ -266,5 +268,6 @@ void SystemProperties::refreshDisplays()
         }
     }
 
+    SDL_free(displayIds);
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
 }

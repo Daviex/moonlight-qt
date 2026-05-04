@@ -21,7 +21,7 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
       m_PointerRegionLockToggledByUser(false),
       m_FakeCaptureActive(false),
       m_CaptureSystemKeysMode(prefs.captureSysKeysMode),
-      m_MouseCursorCapturedVisibilityState(SDL_DISABLE),
+      m_MouseCursorCapturedVisibilityState(0),
       m_LongPressTimer(0),
       m_StreamWidth(streamWidth),
       m_StreamHeight(streamHeight),
@@ -62,57 +62,57 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
     // controllers, but breaks DirectInput applications. We will enable it because
     // it's likely that working rumble is what the user is expecting. If they don't
     // want this behavior, they can override it with the environment variable.
-    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE, "1");
-    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5_RUMBLE, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_ENHANCED_REPORTS, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_ENHANCED_REPORTS, "1");
 
     // Populate special key combo configuration
     m_SpecialKeyCombos[KeyComboQuit].keyCombo = KeyComboQuit;
-    m_SpecialKeyCombos[KeyComboQuit].keyCode = SDLK_q;
+    m_SpecialKeyCombos[KeyComboQuit].keyCode = SDLK_Q;
     m_SpecialKeyCombos[KeyComboQuit].scanCode = SDL_SCANCODE_Q;
     m_SpecialKeyCombos[KeyComboQuit].enabled = true;
 
     m_SpecialKeyCombos[KeyComboUngrabInput].keyCombo = KeyComboUngrabInput;
-    m_SpecialKeyCombos[KeyComboUngrabInput].keyCode = SDLK_z;
+    m_SpecialKeyCombos[KeyComboUngrabInput].keyCode = SDLK_Z;
     m_SpecialKeyCombos[KeyComboUngrabInput].scanCode = SDL_SCANCODE_Z;
     m_SpecialKeyCombos[KeyComboUngrabInput].enabled = QGuiApplication::platformName() != "eglfs";
 
     m_SpecialKeyCombos[KeyComboToggleFullScreen].keyCombo = KeyComboToggleFullScreen;
-    m_SpecialKeyCombos[KeyComboToggleFullScreen].keyCode = SDLK_x;
+    m_SpecialKeyCombos[KeyComboToggleFullScreen].keyCode = SDLK_X;
     m_SpecialKeyCombos[KeyComboToggleFullScreen].scanCode = SDL_SCANCODE_X;
     m_SpecialKeyCombos[KeyComboToggleFullScreen].enabled = QGuiApplication::platformName() != "eglfs";
 
     m_SpecialKeyCombos[KeyComboToggleStatsOverlay].keyCombo = KeyComboToggleStatsOverlay;
-    m_SpecialKeyCombos[KeyComboToggleStatsOverlay].keyCode = SDLK_s;
+    m_SpecialKeyCombos[KeyComboToggleStatsOverlay].keyCode = SDLK_S;
     m_SpecialKeyCombos[KeyComboToggleStatsOverlay].scanCode = SDL_SCANCODE_S;
     m_SpecialKeyCombos[KeyComboToggleStatsOverlay].enabled = true;
 
     m_SpecialKeyCombos[KeyComboToggleMouseMode].keyCombo = KeyComboToggleMouseMode;
-    m_SpecialKeyCombos[KeyComboToggleMouseMode].keyCode = SDLK_m;
+    m_SpecialKeyCombos[KeyComboToggleMouseMode].keyCode = SDLK_M;
     m_SpecialKeyCombos[KeyComboToggleMouseMode].scanCode = SDL_SCANCODE_M;
     m_SpecialKeyCombos[KeyComboToggleMouseMode].enabled = true;
 
     m_SpecialKeyCombos[KeyComboToggleCursorHide].keyCombo = KeyComboToggleCursorHide;
-    m_SpecialKeyCombos[KeyComboToggleCursorHide].keyCode = SDLK_c;
+    m_SpecialKeyCombos[KeyComboToggleCursorHide].keyCode = SDLK_C;
     m_SpecialKeyCombos[KeyComboToggleCursorHide].scanCode = SDL_SCANCODE_C;
     m_SpecialKeyCombos[KeyComboToggleCursorHide].enabled = true;
 
     m_SpecialKeyCombos[KeyComboToggleMinimize].keyCombo = KeyComboToggleMinimize;
-    m_SpecialKeyCombos[KeyComboToggleMinimize].keyCode = SDLK_d;
+    m_SpecialKeyCombos[KeyComboToggleMinimize].keyCode = SDLK_D;
     m_SpecialKeyCombos[KeyComboToggleMinimize].scanCode = SDL_SCANCODE_D;
     m_SpecialKeyCombos[KeyComboToggleMinimize].enabled = QGuiApplication::platformName() != "eglfs";
 
     m_SpecialKeyCombos[KeyComboPasteText].keyCombo = KeyComboPasteText;
-    m_SpecialKeyCombos[KeyComboPasteText].keyCode = SDLK_v;
+    m_SpecialKeyCombos[KeyComboPasteText].keyCode = SDLK_V;
     m_SpecialKeyCombos[KeyComboPasteText].scanCode = SDL_SCANCODE_V;
     m_SpecialKeyCombos[KeyComboPasteText].enabled = true;
 
     m_SpecialKeyCombos[KeyComboTogglePointerRegionLock].keyCombo = KeyComboTogglePointerRegionLock;
-    m_SpecialKeyCombos[KeyComboTogglePointerRegionLock].keyCode = SDLK_l;
+    m_SpecialKeyCombos[KeyComboTogglePointerRegionLock].keyCode = SDLK_L;
     m_SpecialKeyCombos[KeyComboTogglePointerRegionLock].scanCode = SDL_SCANCODE_L;
     m_SpecialKeyCombos[KeyComboTogglePointerRegionLock].enabled = true;
 
     m_SpecialKeyCombos[KeyComboQuitAndExit].keyCombo = KeyComboQuitAndExit;
-    m_SpecialKeyCombos[KeyComboQuitAndExit].keyCode = SDLK_e;
+    m_SpecialKeyCombos[KeyComboQuitAndExit].keyCode = SDLK_E;
     m_SpecialKeyCombos[KeyComboQuitAndExit].scanCode = SDL_SCANCODE_E;
     m_SpecialKeyCombos[KeyComboQuitAndExit].enabled = true;
 
@@ -153,9 +153,9 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
     // can allow mapping manager to update the mappings before GC attach
     // events are generated.
     SDL_assert(!SDL_WasInit(SDL_INIT_JOYSTICK));
-    if (SDL_InitSubSystem(SDL_INIT_JOYSTICK) != 0) {
+    if (!SDL_InitSubSystem(SDL_INIT_JOYSTICK)) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "SDL_InitSubSystem(SDL_INIT_JOYSTICK) failed: %s",
+                     "!SDL_InitSubSystem(SDL_INIT_JOYSTICK) failed: %s",
                      SDL_GetError());
     }
 
@@ -165,23 +165,23 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
     // Flush gamepad arrival and departure events which may be queued before
     // starting the gamecontroller subsystem again. This prevents us from
     // receiving duplicate arrival and departure events for the same gamepad.
-    SDL_FlushEvent(SDL_CONTROLLERDEVICEADDED);
-    SDL_FlushEvent(SDL_CONTROLLERDEVICEREMOVED);
+    SDL_FlushEvent(SDL_EVENT_GAMEPAD_ADDED);
+    SDL_FlushEvent(SDL_EVENT_GAMEPAD_REMOVED);
 
     // We need to reinit this each time, since you only get
     // an initial set of gamepad arrival events once per init.
-    SDL_assert(!SDL_WasInit(SDL_INIT_GAMECONTROLLER));
-    if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) {
+    SDL_assert(!SDL_WasInit(SDL_INIT_GAMEPAD));
+    if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD)) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) failed: %s",
+                     "!SDL_InitSubSystem(SDL_INIT_GAMEPAD) failed: %s",
                      SDL_GetError());
     }
 
 #if !SDL_VERSION_ATLEAST(2, 0, 9)
     SDL_assert(!SDL_WasInit(SDL_INIT_HAPTIC));
-    if (SDL_InitSubSystem(SDL_INIT_HAPTIC) != 0) {
+    if (!SDL_InitSubSystem(SDL_INIT_HAPTIC)) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "SDL_InitSubSystem(SDL_INIT_HAPTIC) failed: %s",
+                     "!SDL_InitSubSystem(SDL_INIT_HAPTIC) failed: %s",
                      SDL_GetError());
     }
 #endif
@@ -206,11 +206,11 @@ SdlInputHandler::~SdlInputHandler()
         }
 #if !SDL_VERSION_ATLEAST(2, 0, 9)
         if (m_GamepadState[i].haptic != nullptr) {
-            SDL_HapticClose(m_GamepadState[i].haptic);
+            SDL_CloseHaptic(m_GamepadState[i].haptic);
         }
 #endif
         if (m_GamepadState[i].controller != nullptr) {
-            SDL_GameControllerClose(m_GamepadState[i].controller);
+            SDL_CloseGamepad(m_GamepadState[i].controller);
         }
     }
 
@@ -224,8 +224,8 @@ SdlInputHandler::~SdlInputHandler()
     SDL_assert(!SDL_WasInit(SDL_INIT_HAPTIC));
 #endif
 
-    SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER);
-    SDL_assert(!SDL_WasInit(SDL_INIT_GAMECONTROLLER));
+    SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
+    SDL_assert(!SDL_WasInit(SDL_INIT_GAMEPAD));
 
     SDL_QuitSubSystem(SDL_INIT_JOYSTICK);
     SDL_assert(!SDL_WasInit(SDL_INIT_JOYSTICK));
@@ -242,7 +242,7 @@ SdlInputHandler::~SdlInputHandler()
     // FIXME: We should also do this for other situations where SDL
     // and Qt will draw their own mouse cursors like KMSDRM or RPi
     // video backends.
-    SDL_ShowCursor(SDL_DISABLE);
+    SDL_ShowCursor(0);
 #endif
 }
 
@@ -280,8 +280,8 @@ void SdlInputHandler::notifyMouseLeave()
         // NB: Not using SDL_GetGlobalMouseState() because we want our state not the system's
         Uint32 mouseState = SDL_GetMouseState(nullptr, nullptr);
         for (Uint32 button = SDL_BUTTON_LEFT; button <= SDL_BUTTON_X2; button++) {
-            if (mouseState & SDL_BUTTON(button)) {
-                SDL_CaptureMouse(SDL_TRUE);
+            if (mouseState & SDL_BUTTON_MASK(button)) {
+                SDL_CaptureMouse(true);
                 break;
             }
         }
@@ -309,11 +309,11 @@ void SdlInputHandler::notifyFocusGained()
 
 bool SdlInputHandler::isCaptureActive()
 {
-    if (SDL_GetRelativeMouseMode()) {
+    if (SDL_GetWindowRelativeMouseMode(m_Window)) {
         return true;
     }
 
-    // Some platforms don't support SDL_SetRelativeMouseMode
+    // Some platforms don't support SDL_SetWindowRelativeMouseMode
     return m_FakeCaptureActive;
 }
 
@@ -332,12 +332,12 @@ void SdlInputHandler::updateKeyboardGrabState()
     }
 
     // Don't close the window on Alt+F4 when keyboard grab is enabled
-    SDL_SetHint(SDL_HINT_WINDOWS_NO_CLOSE_ON_ALT_F4, shouldGrab ? "1" : "0");
+    SDL_SetHint(SDL_HINT_WINDOWS_CLOSE_ON_ALT_F4, shouldGrab ? "1" : "0");
 
 #if SDL_VERSION_ATLEAST(2, 0, 15)
     // On SDL 2.0.15+, we can get keyboard-only grab on Win32, X11, and Wayland.
     // SDL 2.0.18 adds keyboard grab on macOS (if built with non-AppStore APIs).
-    SDL_SetWindowKeyboardGrab(m_Window, shouldGrab ? SDL_TRUE : SDL_FALSE);
+    SDL_SetWindowKeyboardGrab(m_Window, shouldGrab ? true : false);
 #endif
 }
 
@@ -356,7 +356,7 @@ bool SdlInputHandler::isSystemKeyCaptureActive()
 #if SDL_VERSION_ATLEAST(2, 0, 15)
             || !(windowFlags & SDL_WINDOW_KEYBOARD_GRABBED)
 #else
-            || !(windowFlags & SDL_WINDOW_INPUT_GRABBED)
+            || !(windowFlags & SDL_WINDOW_MOUSE_GRABBED)
 #endif
             )
     {
@@ -375,15 +375,15 @@ void SdlInputHandler::setCaptureActive(bool active)
 {
     if (active) {
         // If we're in relative mode, try to activate SDL's relative mouse mode
-        if (m_AbsoluteMouseMode || SDL_SetRelativeMouseMode(SDL_TRUE) < 0) {
+        if (m_AbsoluteMouseMode || SDL_SetWindowRelativeMouseMode(m_Window, true) < 0) {
             // Relative mouse mode didn't work or was disabled, so we'll just hide the cursor
-            SDL_ShowCursor(m_MouseCursorCapturedVisibilityState);
+            if (m_MouseCursorCapturedVisibilityState) { SDL_ShowCursor(); } else { SDL_HideCursor(); };
             m_FakeCaptureActive = true;
         }
 
         // Synchronize the client and host cursor when activating absolute capture
         if (m_AbsoluteMouseMode) {
-            int mouseX, mouseY;
+            float mouseX, mouseY;
             int windowX, windowY;
 
             // We have to use SDL_GetGlobalMouseState() because macOS may not reflect
@@ -398,7 +398,7 @@ void SdlInputHandler::setCaptureActive(bool active)
             if (isMouseInVideoRegion(mouseX, mouseY)) {
                 // Synthesize a mouse event to synchronize the cursor
                 SDL_MouseMotionEvent motionEvent = {};
-                motionEvent.type = SDL_MOUSEMOTION;
+                motionEvent.type = SDL_EVENT_MOUSE_MOTION;
                 motionEvent.timestamp = SDL_GetTicks();
                 motionEvent.windowID = SDL_GetWindowID(m_Window);
                 motionEvent.x = mouseX;
@@ -410,11 +410,11 @@ void SdlInputHandler::setCaptureActive(bool active)
     else {
         if (m_FakeCaptureActive) {
             // Display the cursor again
-            SDL_ShowCursor(SDL_ENABLE);
+            SDL_ShowCursor();
             m_FakeCaptureActive = false;
         }
         else {
-            SDL_SetRelativeMouseMode(SDL_FALSE);
+            SDL_SetWindowRelativeMouseMode(m_Window, false);
         }
     }
 
@@ -428,7 +428,7 @@ void SdlInputHandler::setCaptureActive(bool active)
 void SdlInputHandler::handleTouchFingerEvent(SDL_TouchFingerEvent* event)
 {
 #if SDL_VERSION_ATLEAST(2, 0, 10)
-    if (SDL_GetTouchDeviceType(event->touchId) != SDL_TOUCH_DEVICE_DIRECT) {
+    if (SDL_GetTouchDeviceType(event->touchID) != SDL_TOUCH_DEVICE_DIRECT) {
         // Ignore anything that isn't a touchscreen. We may get callbacks
         // for trackpads, but we want to handle those in the mouse path.
         return;

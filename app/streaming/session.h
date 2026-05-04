@@ -257,7 +257,7 @@ private:
     NvApp m_App;
     SDL_Window* m_Window;
     IVideoDecoder* m_VideoDecoder;
-    SDL_mutex* m_DecoderLock;
+    SDL_Mutex* m_DecoderLock;
     bool m_AudioDisabled;
     bool m_AudioMuted;
     Uint32 m_FullScreenFlag;
