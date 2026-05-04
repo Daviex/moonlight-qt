@@ -276,7 +276,7 @@ void SdlInputHandler::handleControllerButtonEvent(SDL_GamepadButtonEvent* event)
         state->buttons |= k_ButtonMap[event->button];
 
         if (event->button == SDL_GAMEPAD_BUTTON_START) {
-            state->lastStartDownTime = SDL_GetTicks();
+            state->lastStartDownTime = SDL_GetTicksNS();
         }
         else if (state->mouseEmulationTimer != 0) {
             if (event->button == SDL_GAMEPAD_BUTTON_SOUTH) {
@@ -312,7 +312,7 @@ void SdlInputHandler::handleControllerButtonEvent(SDL_GamepadButtonEvent* event)
         state->buttons &= ~k_ButtonMap[event->button];
 
         if (event->button == SDL_GAMEPAD_BUTTON_START) {
-            if (SDL_GetTicks() - state->lastStartDownTime > MOUSE_EMULATION_LONG_PRESS_TIME) {
+            if (SDL_GetTicksNS() - state->lastStartDownTime > SDL_MS_TO_NS(MOUSE_EMULATION_LONG_PRESS_TIME)) {
                 if (state->mouseEmulationTimer != 0) {
                     SDL_RemoveTimer(state->mouseEmulationTimer);
                     state->mouseEmulationTimer = 0;
@@ -360,7 +360,7 @@ void SdlInputHandler::handleControllerButtonEvent(SDL_GamepadButtonEvent* event)
         // Push a quit event to the main loop
         SDL_Event event;
         event.type = SDL_EVENT_QUIT;
-        event.quit.timestamp = SDL_GetTicks();
+        event.quit.timestamp = SDL_GetTicksNS();
         SDL_PushEvent(&event);
 
         // Clear buttons down on this gamepad
@@ -402,7 +402,7 @@ void SdlInputHandler::handleControllerSensorEvent(SDL_GamepadSensorEvent* event)
     switch (event->sensor) {
     case SDL_SENSOR_ACCEL:
         if (state->accelReportPeriodMs &&
-                ((int)((event->timestamp) - (state->lastAccelEventTime + state->accelReportPeriodMs)) >= 0) &&
+                event->timestamp - state->lastAccelEventTime >= SDL_MS_TO_NS(state->accelReportPeriodMs) &&
                 memcmp(event->data, state->lastAccelEventData, sizeof(event->data)) != 0) {
             memcpy(state->lastAccelEventData, event->data, sizeof(event->data));
             state->lastAccelEventTime = event->timestamp;
@@ -412,7 +412,7 @@ void SdlInputHandler::handleControllerSensorEvent(SDL_GamepadSensorEvent* event)
         break;
     case SDL_SENSOR_GYRO:
         if (state->gyroReportPeriodMs &&
-                ((int)((event->timestamp) - (state->lastGyroEventTime + state->gyroReportPeriodMs)) >= 0) &&
+                event->timestamp - state->lastGyroEventTime >= SDL_MS_TO_NS(state->gyroReportPeriodMs) &&
                 memcmp(event->data, state->lastGyroEventData, sizeof(event->data)) != 0) {
             memcpy(state->lastGyroEventData, event->data, sizeof(event->data));
             state->lastGyroEventTime = event->timestamp;
@@ -562,9 +562,9 @@ void SdlInputHandler::handleControllerDeviceEvent(SDL_GamepadDeviceEvent* event)
         // Perform a tiny rumbles to see if haptics are supported.
         // NB: We cannot use zeros for rumble intensity or SDL will not actually call the JS driver
         // and we'll get a (potentially false) success value returned.
-        hapticCaps |= SDL_RumbleGamepad(controller, 1, 1, 1) == 0 ? ML_HAPTIC_GC_RUMBLE : 0;
+        hapticCaps |= SDL_RumbleGamepad(controller, 1, 1, 1) ? ML_HAPTIC_GC_RUMBLE : 0;
 #if SDL_VERSION_ATLEAST(2, 0, 14)
-        hapticCaps |= SDL_RumbleGamepadTriggers(controller, 1, 1, 1) == 0 ? ML_HAPTIC_GC_TRIGGER_RUMBLE : 0;
+        hapticCaps |= SDL_RumbleGamepadTriggers(controller, 1, 1, 1) ? ML_HAPTIC_GC_TRIGGER_RUMBLE : 0;
 #endif
 #else
         state->haptic = SDL_OpenHapticFromJoystick(SDL_GetGamepadJoystick(state->controller));
@@ -578,7 +578,7 @@ void SdlInputHandler::handleControllerDeviceEvent(SDL_GamepadDeviceEvent* event)
 
             if ((SDL_GetHapticFeatures(state->haptic) & SDL_HAPTIC_LEFTRIGHT) == 0) {
                 if (SDL_HapticRumbleSupported(state->haptic)) {
-                    if (SDL_InitHapticRumble(state->haptic) == 0) {
+                    if (SDL_InitHapticRumble(state->haptic)) {
                         state->hapticMethod = GAMEPAD_HAPTIC_METHOD_SIMPLERUMBLE;
                     }
                 }

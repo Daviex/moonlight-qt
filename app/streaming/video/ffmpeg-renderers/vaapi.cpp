@@ -13,8 +13,6 @@
 #include <xf86drm.h>
 #endif
 
-#include <SDL_syswm.h>
-
 #include <unistd.h>
 #include <fcntl.h>
 
@@ -93,27 +91,20 @@ VAAPIRenderer::~VAAPIRenderer()
 VADisplay
 VAAPIRenderer::openDisplay(SDL_Window* window)
 {
-    SDL_SysWMinfo info;
     VADisplay display;
+    SDL_PropertiesID props = SDL_GetWindowProperties(window);
 
-    SDL_VERSION(&info.version);
-
-    if (!SDL_GetWindowWMInfo(window, &info)) {
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "SDL_GetWindowWMInfo() failed: %s",
-                     SDL_GetError());
-        return nullptr;
-    }
-
-    m_WindowSystem = info.subsystem;
-    if (info.subsystem == SDL_SYSWM_X11) {
+    m_WindowSystem = SDL_SYSWM_UNKNOWN;
+    if (SDL_HasProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER)) {
+        m_WindowSystem = SDL_SYSWM_X11;
 #ifdef HAVE_LIBVA_X11
-        m_XWindow = info.info.x11.window;
+        m_XWindow = (Window)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
 
         // It's possible to enter this function several times as we're probing VA drivers.
         // Only open the new Display object the first time through.
         if (m_XDisplay == nullptr) {
-            m_XDisplay = XOpenDisplay(XDisplayString(info.info.x11.display));
+            Display* sdlDisplay = (Display*)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr);
+            m_XDisplay = XOpenDisplay(XDisplayString(sdlDisplay));
             if (m_XDisplay == nullptr) {
                 SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                              "Unable to clone SDL X11 display for VAAPI");
@@ -133,9 +124,10 @@ VAAPIRenderer::openDisplay(SDL_Window* window)
         return nullptr;
 #endif
     }
-    else if (info.subsystem == SDL_SYSWM_WAYLAND) {
+    else if (SDL_HasProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER)) {
+        m_WindowSystem = SDL_SYSWM_WAYLAND;
 #ifdef HAVE_LIBVA_WAYLAND
-        display = vaGetDisplayWl(info.info.wl.display);
+        display = vaGetDisplayWl(SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr));
         if (display == nullptr) {
             SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                          "Unable to open Wayland display for VAAPI");
@@ -148,7 +140,8 @@ VAAPIRenderer::openDisplay(SDL_Window* window)
 #endif
     }
 #if defined(SDL_VIDEO_DRIVER_KMSDRM) && defined(HAVE_LIBVA_DRM) && SDL_VERSION_ATLEAST(2, 0, 15)
-    else if (info.subsystem == SDL_SYSWM_KMSDRM) {
+    else if (SDL_HasProperty(props, SDL_PROP_WINDOW_KMSDRM_DRM_FD_NUMBER)) {
+        m_WindowSystem = SDL_SYSWM_KMSDRM;
         // It's possible to enter this function several times as we're probing VA drivers.
         // Make sure to only duplicate the DRM FD the first time through.
         if (m_DrmFd < 0) {
@@ -211,8 +204,7 @@ VAAPIRenderer::openDisplay(SDL_Window* window)
 #endif
     else {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "Unsupported VAAPI rendering subsystem: %d",
-                     info.subsystem);
+                     "Unsupported VAAPI rendering subsystem");
         return nullptr;
     }
 

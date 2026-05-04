@@ -17,7 +17,7 @@ struct GamepadState {
 #endif
 
     SDL_TimerID mouseEmulationTimer;
-    uint32_t lastStartDownTime;
+    Uint64 lastStartDownTime;
 
     bool clickpadButtonEmulationEnabled;
     bool emulatedClickpadButtonDown;
@@ -25,11 +25,11 @@ struct GamepadState {
 #if SDL_VERSION_ATLEAST(2, 0, 14)
     uint8_t gyroReportPeriodMs;
     float lastGyroEventData[SDL_arraysize(SDL_GamepadSensorEvent::data)];
-    uint32_t lastGyroEventTime;
+    Uint64 lastGyroEventTime;
 
     uint8_t accelReportPeriodMs;
     float lastAccelEventData[SDL_arraysize(SDL_GamepadSensorEvent::data)];
-    uint32_t lastAccelEventTime;
+    Uint64 lastAccelEventTime;
 #endif
 
     int buttons;

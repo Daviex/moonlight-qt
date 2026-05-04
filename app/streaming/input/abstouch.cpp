@@ -197,7 +197,7 @@ void SdlInputHandler::emulateAbsoluteFingerEvent(SDL_TouchFingerEvent* event)
 
     // Don't reposition for finger down events within the deadzone. This makes double-clicking easier.
     if (event->type != SDL_EVENT_FINGER_DOWN ||
-            event->timestamp - m_LastTouchUpEvent.timestamp > DOUBLE_TAP_DEAD_ZONE_DELAY ||
+            event->timestamp - m_LastTouchUpEvent.timestamp > SDL_MS_TO_NS(DOUBLE_TAP_DEAD_ZONE_DELAY) ||
             qSqrt(qPow(event->x - m_LastTouchUpEvent.x, 2) + qPow(event->y - m_LastTouchUpEvent.y, 2)) > DOUBLE_TAP_DEAD_ZONE_DELTA) {
         // Scale window-relative events to be video-relative and clamp to video region
         short x = qMin(qMax((int)(event->x * windowWidth), dst.x), dst.x + dst.w);

@@ -11,8 +11,6 @@
 #include <Limelight.h>
 #include <unistd.h>
 
-#include <SDL_syswm.h>
-
 // These are extensions, so some platform headers may not provide them
 #ifndef GL_UNPACK_ROW_LENGTH_EXT
 #define GL_UNPACK_ROW_LENGTH_EXT 0x0CF2
@@ -405,7 +403,7 @@ bool EGLRenderer::initialize(PDECODER_PARAMETERS params)
     // https://bugzilla.libsdl.org/show_bug.cgi?id=4350
     // https://hg.libsdl.org/SDL/rev/84618d571795
     //
-    // SDL_HINT_VIDEO_X11_FORCE_EGL isn't supported until SDL 2.0.12
+    // SDL_HINT_VIDEO_FORCE_EGL isn't supported until SDL 2.0.12
     // and we need to use EGL to avoid triggering a crash in Mesa.
     // https://gitlab.freedesktop.org/mesa/mesa/issues/1011
     if (!SDL_VERSION_ATLEAST(2, 0, 12)) {
@@ -422,27 +420,25 @@ bool EGLRenderer::initialize(PDECODER_PARAMETERS params)
         return false;
     }
 
-    int renderIndex;
     int maxRenderers = SDL_GetNumRenderDrivers();
     SDL_assert(maxRenderers >= 0);
 
-    SDL_RendererInfo renderInfo;
-    for (renderIndex = 0; renderIndex < maxRenderers; ++renderIndex) {
-        if (SDL_GetRenderDriverInfo(renderIndex, &renderInfo))
-            continue;
-        if (!strcmp(renderInfo.name, "opengles2")) {
-            SDL_assert(renderInfo.flags & SDL_RENDERER_ACCELERATED);
+    const char* renderDriver = nullptr;
+    for (int renderIndex = 0; renderIndex < maxRenderers; ++renderIndex) {
+        const char* name = SDL_GetRenderDriver(renderIndex);
+        if (name != nullptr && !strcmp(name, "opengles2")) {
+            renderDriver = name;
             break;
         }
     }
-    if (renderIndex == maxRenderers) {
+    if (renderDriver == nullptr) {
         EGL_LOG(Error, "Could not find a suitable SDL_Renderer");
         m_InitFailureReason = InitFailureReason::NoSoftwareSupport;
         return false;
     }
 
     // This will load OpenGL ES and convert our window to SDL_WINDOW_OPENGL if necessary
-    SDL_Renderer* dummyRenderer = SDL_CreateRenderer(m_Window, renderIndex, SDL_RENDERER_ACCELERATED);
+    SDL_Renderer* dummyRenderer = SDL_CreateRenderer(m_Window, renderDriver);
     if (dummyRenderer) {
         SDL_DestroyRenderer(dummyRenderer);
         dummyRenderer = nullptr;
@@ -455,9 +451,9 @@ bool EGLRenderer::initialize(PDECODER_PARAMETERS params)
 
     // SDL_CreateRenderer() can end up having to recreate our window (SDL_RecreateWindow())
     // to ensure it's compatible with the renderer's OpenGL context. If that happens, we
-    // can get spurious SDL_WINDOWEVENT events that will cause us to (again) recreate our
+    // can get spurious window events that will cause us to (again) recreate our
     // renderer. This can lead to an infinite to renderer recreation, so discard all
-    // SDL_WINDOWEVENT events after SDL_CreateRenderer().
+    // window events after SDL_CreateRenderer().
     Session* session = Session::get();
     if (session != nullptr) {
         // If we get here during a session, we need to synchronize with the event loop
@@ -467,23 +463,19 @@ bool EGLRenderer::initialize(PDECODER_PARAMETERS params)
     else if (!params->testOnly) {
         // If we get here prior to the start of a session, just pump and flush ourselves.
         SDL_PumpEvents();
-        SDL_FlushEvent(SDL_WINDOWEVENT);
+        for (SDL_EventType type = SDL_EVENT_WINDOW_FIRST; type <= SDL_EVENT_WINDOW_LAST; type = (SDL_EventType)(type + 1)) {
+            SDL_FlushEvent(type);
+        }
     }
 
-    SDL_SysWMinfo info;
-    SDL_VERSION(&info.version);
-    if (!SDL_GetWindowWMInfo(params->window, &info)) {
-        EGL_LOG(Error, "SDL_GetWindowWMInfo() failed: %s", SDL_GetError());
-        m_InitFailureReason = InitFailureReason::NoSoftwareSupport;
-        return false;
-    }
+    const char* videoDriver = SDL_GetCurrentVideoDriver();
 
     if (!(m_Context = SDL_GL_CreateContext(params->window))) {
         EGL_LOG(Error, "Cannot create OpenGL context: %s", SDL_GetError());
         m_InitFailureReason = InitFailureReason::NoSoftwareSupport;
         return false;
     }
-    if (SDL_GL_MakeCurrent(params->window, m_Context)) {
+    if (!SDL_GL_MakeCurrent(params->window, m_Context)) {
         EGL_LOG(Error, "Cannot use created EGL context: %s", SDL_GetError());
         m_InitFailureReason = InitFailureReason::NoSoftwareSupport;
         return false;
@@ -587,7 +579,7 @@ bool EGLRenderer::initialize(PDECODER_PARAMETERS params)
     // with vsync enabled, so this also mitigates that problem too.
     if (params->enableVsync
 #ifdef SDL_VIDEO_DRIVER_WAYLAND
-            && info.subsystem != SDL_SYSWM_WAYLAND
+            && strcmp(videoDriver, "wayland") != 0
 #endif
             ) {
         SDL_GL_SetSwapInterval(1);
@@ -599,7 +591,7 @@ bool EGLRenderer::initialize(PDECODER_PARAMETERS params)
         // the video stream's frame interval. The latency
         // reduction is also less critical without a compositor
         // adding latency too.
-        if (info.subsystem != SDL_SYSWM_KMSDRM)
+        if (strcmp(videoDriver, "kmsdrm") != 0)
 #endif
         {
             m_BlockingSwapBuffers = true;

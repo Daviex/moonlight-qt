@@ -23,7 +23,7 @@ void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
         // Push a quit event to the main loop
         SDL_Event event;
         event.type = SDL_EVENT_QUIT;
-        event.quit.timestamp = SDL_GetTicks();
+        event.quit.timestamp = SDL_GetTicksNS();
         SDL_PushEvent(&event);
         break;
 
@@ -153,7 +153,7 @@ void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
         // Push a quit event to the main loop
         SDL_Event quitExitEvent;
         quitExitEvent.type = SDL_EVENT_QUIT;
-        quitExitEvent.quit.timestamp = SDL_GetTicks();
+        quitExitEvent.quit.timestamp = SDL_GetTicksNS();
         SDL_PushEvent(&quitExitEvent);
         break;
 

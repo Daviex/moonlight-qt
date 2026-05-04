@@ -140,7 +140,7 @@ void Session::clConnectionTerminated(int errorCode)
     // Push a quit event to the main loop
     SDL_Event event;
     event.type = SDL_EVENT_QUIT;
-    event.quit.timestamp = SDL_GetTicks();
+    event.quit.timestamp = SDL_GetTicksNS();
     SDL_PushEvent(&event);
 }
 
@@ -203,7 +203,7 @@ void Session::clSetHdrMode(bool enabled)
     // If we're in the process of recreating our decoder when we get
     // this callback, we'll drop it. The main thread will make the
     // callback when it finishes creating the new decoder.
-    if (SDL_TryLockMutex(s_ActiveSession->m_DecoderLock) == 0) {
+    if (SDL_TryLockMutex(s_ActiveSession->m_DecoderLock)) {
         IVideoDecoder* decoder = s_ActiveSession->m_VideoDecoder;
         if (decoder != nullptr) {
             decoder->setHdrMode(enabled);
@@ -373,7 +373,7 @@ int Session::drSubmitDecodeUnit(PDECODE_UNIT du)
     // safely return DR_OK and wait for the IDR frame request by
     // the decoder reinitialization code.
 
-    if (SDL_TryLockMutex(s_ActiveSession->m_DecoderLock) == 0) {
+    if (SDL_TryLockMutex(s_ActiveSession->m_DecoderLock)) {
         IVideoDecoder* decoder = s_ActiveSession->m_VideoDecoder;
         if (decoder != nullptr) {
             int ret = decoder->submitDecodeUnit(du);
@@ -1830,7 +1830,7 @@ void Session::interrupt()
     // Inject a quit event to our SDL event loop
     SDL_Event event;
     event.type = SDL_EVENT_QUIT;
-    event.quit.timestamp = SDL_GetTicks();
+    event.quit.timestamp = SDL_GetTicksNS();
     SDL_PushEvent(&event);
 }
 
@@ -2099,8 +2099,13 @@ void Session::exec()
             }
             break;
 
-        // SDL3: window events are individual event types, not a sub-type of SDL_WINDOWEVENT.
-        // The inner switch handles them directly via event.window.type.
+        case SDL_EVENT_WINDOW_FOCUS_LOST:
+        case SDL_EVENT_WINDOW_FOCUS_GAINED:
+        case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+        case SDL_EVENT_WINDOW_MOUSE_ENTER:
+        case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+        case SDL_EVENT_WINDOW_SHOWN:
+        case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
         {
             switch (event.window.type) {
             case SDL_EVENT_WINDOW_FOCUS_LOST:

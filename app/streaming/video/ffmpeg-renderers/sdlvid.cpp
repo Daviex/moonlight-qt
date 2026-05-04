@@ -204,7 +204,9 @@ bool SdlRenderer::initialize(PDECODER_PARAMETERS params)
     else {
         // If we get here prior to the start of a session, just pump and flush ourselves.
         SDL_PumpEvents();
-        SDL_FlushEvent(SDL_EVENT_WINDOW_FIRST);
+        for (SDL_EventType type = SDL_EVENT_WINDOW_FIRST; type <= SDL_EVENT_WINDOW_LAST; type = (SDL_EventType)(type + 1)) {
+            SDL_FlushEvent(type);
+        }
     }
 
     if (!m_Renderer) {

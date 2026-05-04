@@ -151,7 +151,7 @@ int Pacer::renderThread(void* context)
 {
     Pacer* me = reinterpret_cast<Pacer*>(context);
 
-    if (SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_HIGH) < 0) {
+    if (!SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_HIGH)) {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "Unable to set render thread to high priority: %s",
                     SDL_GetError());

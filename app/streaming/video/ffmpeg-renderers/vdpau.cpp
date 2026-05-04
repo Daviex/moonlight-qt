@@ -3,8 +3,6 @@
 #include <streaming/streamutils.h>
 #include <utils.h>
 
-#include <SDL_syswm.h>
-
 #define BAIL_ON_FAIL(status, something) if ((status) != VDP_STATUS_OK) { \
                                             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, \
                                                         #something " failed: %d", (status)); \
@@ -79,7 +77,7 @@ bool VDPAURenderer::initialize(PDECODER_PARAMETERS params)
 {
     int err;
     VdpStatus status;
-    SDL_SysWMinfo info;
+    SDL_PropertiesID props = SDL_GetWindowProperties(params->window);
 
     // Avoid initializing VDPAU on this window on the first selection pass if:
     // a) We know we want HDR compatibility
@@ -98,26 +96,15 @@ bool VDPAURenderer::initialize(PDECODER_PARAMETERS params)
         }
     }
 
-    SDL_VERSION(&info.version);
-
-    if (!SDL_GetWindowWMInfo(params->window, &info)) {
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "SDL_GetWindowWMInfo() failed: %s",
-                     SDL_GetError());
-        m_InitFailureReason = InitFailureReason::NoSoftwareSupport;
-        return false;
-    }
-
-    if (info.subsystem == SDL_SYSWM_WAYLAND) {
+    if (SDL_HasProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER)) {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "VDPAU is not supported on Wayland");
         m_InitFailureReason = InitFailureReason::NoSoftwareSupport;
         return false;
     }
-    else if (info.subsystem != SDL_SYSWM_X11) {
+    else if (!SDL_HasProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER)) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "VDPAU is not supported on the current subsystem: %d",
-                     info.subsystem);
+                     "VDPAU is not supported on the current subsystem");
         m_InitFailureReason = InitFailureReason::NoSoftwareSupport;
         return false;
     }
@@ -137,8 +124,9 @@ bool VDPAURenderer::initialize(PDECODER_PARAMETERS params)
 
     char* displayName = nullptr;
 #ifdef HAS_X11
-    SDL_assert(info.subsystem == SDL_SYSWM_X11);
-    displayName = XDisplayString(info.info.x11.display);
+    Display* xdisplay = (Display*)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr);
+    SDL_assert(xdisplay != nullptr);
+    displayName = XDisplayString(xdisplay);
 #endif
 
     err = av_hwdevice_ctx_create(&m_HwContext,
@@ -228,12 +216,13 @@ bool VDPAURenderer::initialize(PDECODER_PARAMETERS params)
 
     SDL_GetWindowSize(params->window, (int*)&m_DisplayWidth, (int*)&m_DisplayHeight);
 
-    SDL_assert(info.subsystem == SDL_SYSWM_X11);
+    Window xwindow = (Window)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
+    SDL_assert(xwindow != 0);
 
     GET_PROC_ADDRESS(VDP_FUNC_ID_PRESENTATION_QUEUE_TARGET_CREATE_X11,
                      &m_VdpPresentationQueueTargetCreateX11);
     status = m_VdpPresentationQueueTargetCreateX11(m_Device,
-                                                   info.info.x11.window,
+                                                   xwindow,
                                                    &m_PresentationQueueTarget);
     if (status != VDP_STATUS_OK) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
@@ -485,7 +474,7 @@ void VDPAURenderer::renderOverlay(VdpOutputSurface destination, Overlay::Overlay
         return;
     }
 
-    if (SDL_TryLockMutex(m_OverlayMutex) != 0) {
+    if (!SDL_TryLockMutex(m_OverlayMutex)) {
         // If the overlay is currently being updated, skip rendering it this frame.
         return;
     }

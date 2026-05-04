@@ -52,20 +52,6 @@ jobs:
           cmake --build build -j
           sudo cmake --install build
 
-      - name: Checkout sdl2-compat
-        uses: actions/checkout@v5
-        with:
-          repository: libsdl-org/sdl2-compat
-          ref: release-2.32.68
-          path: deps/sdl2-compat
-
-      - name: Build sdl2-compat
-        working-directory: deps/sdl2-compat
-        run: |
-          cmake -DSDL2COMPAT_TESTS=OFF -S . -B build
-          cmake --build build -j
-          sudo cmake --install build
-
       - name: Checkout SDL_ttf
         uses: actions/checkout@v5
         with:

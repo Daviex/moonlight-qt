@@ -14,8 +14,6 @@
 #ifdef Q_OS_UNIX
 #include <unistd.h>
 #include <fcntl.h>
-
-#include <SDL_syswm.h>
 #endif
 
 #ifdef Q_OS_LINUX
@@ -393,26 +391,23 @@ int StreamUtils::getDrmFdForWindow(SDL_Window* window, bool* mustClose)
 {
     *mustClose = false;
 
-#if defined(SDL_VIDEO_DRIVER_KMSDRM) && SDL_VERSION_ATLEAST(2, 0, 15)
-    SDL_SysWMinfo info;
-    SDL_VERSION(&info.version);
-    if (!SDL_GetWindowWMInfo(window, &info)) {
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "SDL_GetWindowWMInfo() failed: %s",
-                     SDL_GetError());
-        return -1;
-    }
-
-    if (info.subsystem == SDL_SYSWM_KMSDRM) {
+#if defined(SDL_VIDEO_DRIVER_KMSDRM)
+    SDL_PropertiesID props = SDL_GetWindowProperties(window);
+    if (SDL_HasProperty(props, SDL_PROP_WINDOW_KMSDRM_DRM_FD_NUMBER)) {
         // If SDL has an FD, share that
-        if (info.info.kmsdrm.drm_fd >= 0) {
+        int drmFd = (int)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_KMSDRM_DRM_FD_NUMBER, -1);
+        if (drmFd >= 0) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                         "Sharing DRM FD with SDL");
-            return info.info.kmsdrm.drm_fd;
+            return drmFd;
         }
         else {
             char path[128];
-            snprintf(path, sizeof(path), "/dev/dri/card%u", info.info.kmsdrm.dev_index);
+            Sint64 devIndex = (Sint64)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_KMSDRM_DEVICE_INDEX_NUMBER, -1);
+            if (devIndex < 0) {
+                return -1;
+            }
+            snprintf(path, sizeof(path), "/dev/dri/card%" SDL_PRIs64, devIndex);
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                         "Opening DRM FD from SDL by path: %s",
                         path);

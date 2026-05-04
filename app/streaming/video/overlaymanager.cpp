@@ -20,7 +20,7 @@ OverlayManager::OverlayManager() :
     // the lifetime of a new Session object.
     //SDL_assert(TTF_WasInit() == 0);
 
-    if (TTF_Init() != 0) {
+    if (!TTF_Init()) {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "TTF_Init() failed: %s",
                     SDL_GetError());
@@ -134,7 +134,7 @@ void OverlayManager::notifyOverlayUpdated(OverlayType type)
 
         // m_FontData must stay around until the font is closed
         m_Overlays[type].font = TTF_OpenFontIO(SDL_IOFromConstMem(m_FontData.constData(), m_FontData.size()),
-                                               1,
+                                               true,
                                                m_Overlays[type].fontSize);
         if (m_Overlays[type].font == nullptr) {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
@@ -153,6 +153,7 @@ void OverlayManager::notifyOverlayUpdated(OverlayType type)
             // The _Wrapped variant is required for line breaks to work
             TTF_RenderText_Blended_Wrapped(m_Overlays[type].font,
                                            m_Overlays[type].text,
+                                           0,
                                            m_Overlays[type].color,
                                            1024)
             : nullptr);

@@ -137,7 +137,7 @@ void SdlInputHandler::handleRelativeFingerEvent(SDL_TouchFingerEvent* event)
             m_DragButton = 0;
         }
         // 2 finger tap
-        else if (event->timestamp - m_TouchDownEvent[1].timestamp < 250) {
+        else if (event->timestamp - m_TouchDownEvent[1].timestamp < SDL_MS_TO_NS(250)) {
             // Zero timestamp of the primary finger to ensure we won't
             // generate a left click if the primary finger comes up soon.
             m_TouchDownEvent[0].timestamp = 0;
@@ -152,7 +152,7 @@ void SdlInputHandler::handleRelativeFingerEvent(SDL_TouchFingerEvent* event)
                                                      nullptr);
         }
         // 1 finger tap
-        else if (event->timestamp - m_TouchDownEvent[0].timestamp < 250) {
+        else if (event->timestamp - m_TouchDownEvent[0].timestamp < SDL_MS_TO_NS(250)) {
             // Press down the left mouse button
             LiSendMouseButtonEvent(BUTTON_ACTION_PRESS, BUTTON_LEFT);
 

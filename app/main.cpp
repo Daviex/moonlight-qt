@@ -592,7 +592,7 @@ int main(int argc, char *argv[])
     // SDL to fail to find a working OpenGL implementation at all. Let's force EGL
     // on all platforms for both SDL and Qt. This also avoids GLX-EGL interop issues
     // when trying to use EGL on the main thread after Qt uses GLX.
-    SDL_SetHint(SDL_HINT_VIDEO_X11_FORCE_EGL, "1");
+    SDL_SetHint(SDL_HINT_VIDEO_FORCE_EGL, "1");
     qputenv("QT_XCB_GL_INTEGRATION", "xcb_egl");
 
 #ifdef Q_OS_WIN32
@@ -692,38 +692,13 @@ int main(int argc, char *argv[])
     // Disable minimize on focus loss by default. Users seem to want this off by default.
     SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0");
 
-    // SDL 2.0.12 changes the default behavior to use the button label rather than the button
-    // position as most other software does. Set this back to 0 to stay consistent with prior
-    // releases of Moonlight.
-    SDL_SetHint(SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0");
-
-    // Disable relative mouse scaling to renderer size or logical DPI. We want to send
-    // the mouse motion exactly how it was given to us.
-    SDL_SetHint(SDL_HINT_MOUSE_RELATIVE_SCALING, "0");
-
-    // Set our app name for SDL to use with PulseAudio and PipeWire. This matches what we
-    // provide as our app name to libsoundio too. On SDL 2.0.18+, SDL_APP_NAME is also used
-    // for screensaver inhibitor reporting.
-    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_APP_NAME, "Moonlight");
     SDL_SetHint(SDL_HINT_APP_NAME, "Moonlight");
+    SDL_SetAppMetadata("Moonlight", nullptr, "com.moonlight_stream.Moonlight");
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_TYPE_STRING, "application");
 
     // We handle capturing the mouse ourselves when it leaves the window, so we don't need
     // SDL doing it for us behind our backs.
     SDL_SetHint(SDL_HINT_MOUSE_AUTO_CAPTURE, "0");
-
-    // SDL will try to lock the mouse cursor on Wayland if it's not visible in order to
-    // support applications that assume they can warp the cursor (which isn't possible
-    // on Wayland). We don't want this behavior because it interferes with seamless mouse
-    // mode when toggling between windowed and fullscreen modes by unexpectedly locking
-    // the mouse cursor.
-    SDL_SetHint(SDL_HINT_VIDEO_WAYLAND_EMULATE_MOUSE_WARP, "0");
-
-#ifdef QT_DEBUG
-    // Allow thread naming using exceptions on debug builds. SDL doesn't use SEH
-    // when throwing the exceptions, so we don't enable it for release builds out
-    // of caution.
-    SDL_SetHint(SDL_HINT_WINDOWS_DISABLE_THREAD_NAMING, "0");
-#endif
 
     // Enable fast parameter checks on SDL 3.4.0+. We don't abuse the API by passing
     // incorrect objects, so we don't need additional expensive parameter checks.
@@ -825,17 +800,17 @@ int main(int argc, char *argv[])
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Detected XWayland. This will probably break hardware decoding! Try running with QT_QPA_PLATFORM=wayland or switch to X11.");
         }
-        qputenv("SDL_VIDEODRIVER", "x11");
+        qputenv("SDL_VIDEO_DRIVER", "x11");
     }
     else if (QGuiApplication::platformName().startsWith("wayland")) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Detected Wayland");
-        qputenv("SDL_VIDEODRIVER", "wayland");
+        qputenv("SDL_VIDEO_DRIVER", "wayland");
     }
 #ifndef STEAM_LINK
     // Force use of the KMSDRM backend for SDL when using Qt platform plugins
     // that directly draw to the display without a windowing system.
     else if (QGuiApplication::platformName() == "eglfs" || QGuiApplication::platformName() == "linuxfb") {
-        qputenv("SDL_VIDEODRIVER", "kmsdrm");
+        qputenv("SDL_VIDEO_DRIVER", "kmsdrm");
     }
 #endif
 

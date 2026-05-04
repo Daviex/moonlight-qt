@@ -201,7 +201,7 @@ void SdlGamepadKeyNavigation::onPollingTimerFired()
             break;
         }
         case SDL_EVENT_GAMEPAD_ADDED:
-            SDL_Gamepad* gc = SDL_OpenGamepad(event.cdevice.which);
+            SDL_Gamepad* gc = SDL_OpenGamepad(event.gdevice.which);
             if (gc != nullptr) {
                 // SDL_EVENT_GAMEPAD_ADDED can be reported multiple times for the same
                 // gamepad in rare cases, because SDL doesn't fixup the device index in

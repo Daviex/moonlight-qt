@@ -375,7 +375,7 @@ void SdlInputHandler::setCaptureActive(bool active)
 {
     if (active) {
         // If we're in relative mode, try to activate SDL's relative mouse mode
-        if (m_AbsoluteMouseMode || SDL_SetWindowRelativeMouseMode(m_Window, true) < 0) {
+        if (m_AbsoluteMouseMode || !SDL_SetWindowRelativeMouseMode(m_Window, true)) {
             // Relative mouse mode didn't work or was disabled, so we'll just hide the cursor
             if (m_MouseCursorCapturedVisibilityState) { SDL_ShowCursor(); } else { SDL_HideCursor(); };
             m_FakeCaptureActive = true;
@@ -399,7 +399,7 @@ void SdlInputHandler::setCaptureActive(bool active)
                 // Synthesize a mouse event to synchronize the cursor
                 SDL_MouseMotionEvent motionEvent = {};
                 motionEvent.type = SDL_EVENT_MOUSE_MOTION;
-                motionEvent.timestamp = SDL_GetTicks();
+                motionEvent.timestamp = SDL_GetTicksNS();
                 motionEvent.windowID = SDL_GetWindowID(m_Window);
                 motionEvent.x = mouseX;
                 motionEvent.y = mouseY;
