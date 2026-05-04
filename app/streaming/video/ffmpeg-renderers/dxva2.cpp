@@ -410,6 +410,13 @@ bool DXVA2Renderer::initializeDevice(SDL_Window* window, bool enableVsync)
     }
 
     int adapterIndex = SDL_GetDirect3D9AdapterIndex(SDL_GetDisplayForWindow(window));
+    if (adapterIndex < 0) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "SDL_GetDirect3D9AdapterIndex() failed: %s",
+                     SDL_GetError());
+        return false;
+    }
+
     Uint32 windowFlags = SDL_GetWindowFlags(window);
 
     // Initialize quirks *before* calling CreateDeviceEx() to allow our below
