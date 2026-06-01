@@ -32,6 +32,17 @@ jobs:
     with:
       ci_version: ${{ needs.setup.outputs.ci_version }}
 
+  publish-appimage-prerelease:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs:
+      - setup
+      - build-appimage
+    permissions:
+      contents: write
+    uses: ./.github/workflows/prerelease-appimage.yml
+    with:
+      ci_version: ${{ needs.setup.outputs.ci_version }}
+
   build-steamlink:
     needs: setup
     uses: ./.github/workflows/build-steamlink.yml
