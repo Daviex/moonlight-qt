@@ -1,0 +1,110 @@
+---
+name: Prerelease - Builds
+
+permissions:
+  contents: write
+
+on:
+  workflow_call:
+    inputs:
+      ci_version:
+        required: true
+        type: string
+
+jobs:
+  publish-prerelease:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v6
+        with:
+          pattern: Moonlight-*-${{ inputs.ci_version }}
+          path: dist
+
+      - name: Prepare release assets
+        env:
+          CI_VERSION: ${{ inputs.ci_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          mkdir -p release-assets
+
+          found=0
+          for artifact_dir in dist/Moonlight-*-"${CI_VERSION}"; do
+            if [[ ! -d "${artifact_dir}" ]]; then
+              continue
+            fi
+
+            artifact_name="$(basename "${artifact_dir}")"
+            mapfile -d '' files < <(find "${artifact_dir}" -type f -print0)
+
+            if [[ "${#files[@]}" -eq 0 ]]; then
+              echo "Artifact is empty: ${artifact_name}" >&2
+              exit 1
+            fi
+
+            if [[ "${#files[@]}" -eq 1 ]]; then
+              filename="$(basename "${files[0]}")"
+              asset_path="release-assets/${filename}"
+
+              if [[ -e "${asset_path}" ]]; then
+                asset_path="release-assets/${artifact_name}-${filename}"
+              fi
+
+              cp "${files[0]}" "${asset_path}"
+            else
+              (cd "${artifact_dir}" && zip -qr "../../release-assets/${artifact_name}.zip" .)
+            fi
+
+            found=$((found + 1))
+          done
+
+          if [[ "${found}" -eq 0 ]]; then
+            echo "No release artifacts found for CI version ${CI_VERSION}" >&2
+            find dist -maxdepth 2 -type f -print >&2
+            exit 1
+          fi
+
+          find release-assets -maxdepth 1 -type f -print
+
+      - name: Publish GitHub prerelease
+        env:
+          CI_VERSION: ${{ inputs.ci_version }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_tag="prerelease-${CI_VERSION}"
+          release_name="Moonlight prerelease ${CI_VERSION}"
+
+          mapfile -d '' release_assets < <(find release-assets -maxdepth 1 -type f -print0 | sort -z)
+          if [[ "${#release_assets[@]}" -eq 0 ]]; then
+            echo "No release assets prepared" >&2
+            exit 1
+          fi
+
+          notes_file="$(mktemp)"
+          {
+            echo "Automatic prerelease builds for commit ${GITHUB_SHA}."
+            echo
+            echo "Built from ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}."
+          } > "${notes_file}"
+
+          if gh release view "${release_tag}" >/dev/null 2>&1; then
+            gh release upload "${release_tag}" "${release_assets[@]}" --clobber
+            gh release edit "${release_tag}" \
+              --title "${release_name}" \
+              --notes-file "${notes_file}" \
+              --prerelease
+          else
+            gh release create "${release_tag}" "${release_assets[@]}" \
+              --title "${release_name}" \
+              --notes-file "${notes_file}" \
+              --prerelease \
+              --target "${GITHUB_SHA}"
+          fi
