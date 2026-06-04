@@ -1,4 +1,5 @@
 #include "streamingpreferences.h"
+#include "backend/profilemanager.h"
 #include "utils.h"
 
 #include <QSettings>
@@ -104,6 +105,7 @@ StreamingPreferences* StreamingPreferences::get(QQmlEngine *qmlEngine)
 void StreamingPreferences::reload()
 {
     QSettings settings;
+    ProfileManager::beginProfileSettings(settings);
 
     int defaultVer = settings.value(SER_DEFAULTVER, 0).toInt();
 
@@ -319,6 +321,7 @@ QString StreamingPreferences::getSuffixFromLanguage(StreamingPreferences::Langua
 void StreamingPreferences::save()
 {
     QSettings settings;
+    ProfileManager::beginProfileSettings(settings);
 
     settings.setValue(SER_WIDTH, width);
     settings.setValue(SER_HEIGHT, height);

@@ -1,4 +1,5 @@
 #include "nvcomputer.h"
+#include "identitymanager.h"
 #include <Limelight.h>
 
 #include <QDebug>
@@ -478,10 +479,9 @@ NvHTTP::openConnection(QUrl baseUrl,
     QUrl url(baseUrl);
     url.setPath("/" + command);
 
-    // Use a common UID for Moonlight clients to allow them to quit
-    // games for each other (otherwise GFE gets screwed up and it requires
-    // manual intervention to solve).
-    url.setQuery("uniqueid=0123456789ABCDEF&uuid=" +
+    // Use the active profile's UID so hosts can distinguish separate Moonlight
+    // profiles on the same physical client.
+    url.setQuery("uniqueid=" + IdentityManager::get()->getUniqueId() + "&uuid=" +
                  QUuid::createUuid().toRfc4122().toHex() +
                  ((arguments != nullptr) ? ("&" + arguments) : ""));
 

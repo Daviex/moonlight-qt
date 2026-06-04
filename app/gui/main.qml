@@ -6,12 +6,14 @@ import QtQuick.Controls.Material 2.2
 
 import ComputerManager 1.0
 import AutoUpdateChecker 1.0
+import ProfileManager 1.0
 import StreamingPreferences 1.0
 import SystemProperties 1.0
 import SdlGamepadKeyNavigation 1.0
 
 ApplicationWindow {
     property bool pollingActive: false
+    property bool configChecksStarted: false
 
     // Set by SettingsView to force the back operation to pop all
     // pages except the initial view. This is required when doing
@@ -50,17 +52,26 @@ ApplicationWindow {
             window.showFullScreen()
         }
 
-        // Display any modal dialogs for configuration warnings
-        if (runConfigChecks) {
-            if (SystemProperties.isWow64) {
-                wow64Dialog.open()
-            }
-
-            // Hardware acceleration and unmapped gamepads are checked asynchronously
-            SystemProperties.hasHardwareAccelerationChanged.connect(hasHardwareAccelerationChanged)
-            SystemProperties.unmappedGamepadsChanged.connect(hasUnmappedGamepadsChanged)
-            SystemProperties.startAsyncLoad()
+        if (runConfigChecks && !currentItemSuppressesPolling()) {
+            runConfigurationChecks()
         }
+    }
+
+    function runConfigurationChecks() {
+        if (configChecksStarted) {
+            return
+        }
+
+        configChecksStarted = true
+
+        if (SystemProperties.isWow64) {
+            wow64Dialog.open()
+        }
+
+        // Hardware acceleration and unmapped gamepads are checked asynchronously
+        SystemProperties.hasHardwareAccelerationChanged.connect(hasHardwareAccelerationChanged)
+        SystemProperties.unmappedGamepadsChanged.connect(hasUnmappedGamepadsChanged)
+        SystemProperties.startAsyncLoad()
     }
 
     function hasHardwareAccelerationChanged() {
@@ -123,6 +134,16 @@ ApplicationWindow {
             if (currentItem) {
                 currentItem.forceActiveFocus()
             }
+
+            if (currentItemSuppressesPolling()) {
+                stopPollingIfNeeded()
+            }
+            else {
+                startPollingIfNeeded()
+                if (runConfigChecks) {
+                    runConfigurationChecks()
+                }
+            }
         }
 
         Keys.onEscapePressed: {
@@ -144,14 +165,18 @@ ApplicationWindow {
         }
 
         Keys.onMenuPressed: {
-            settingsButton.clicked()
+            if (settingsButton.visible) {
+                settingsButton.clicked()
+            }
         }
 
         // This is a keypress we've reserved for letting the
         // SdlGamepadKeyNavigation object tell us to show settings
         // when Menu is consumed by a focused control.
         Keys.onHangupPressed: {
-            settingsButton.clicked()
+            if (settingsButton.visible) {
+                settingsButton.clicked()
+            }
         }
     }
 
@@ -170,26 +195,35 @@ ApplicationWindow {
         }
     }
 
+    function currentItemSuppressesPolling() {
+        return !stackView.currentItem || stackView.currentItem.suppressPolling === true
+    }
+
+    function startPollingIfNeeded() {
+        if (!currentItemSuppressesPolling() && visible && active && ProfileManager.hasActiveProfile && !pollingActive) {
+            ComputerManager.startPolling()
+            pollingActive = true
+        }
+    }
+
+    function stopPollingIfNeeded() {
+        if (pollingActive) {
+            ComputerManager.stopPollingAsync()
+            pollingActive = false
+        }
+    }
+
     onVisibleChanged: {
         // When we become invisible while streaming is going on,
         // stop polling immediately.
         if (!visible) {
             inactivityTimer.stop()
-
-            if (pollingActive) {
-                ComputerManager.stopPollingAsync()
-                pollingActive = false
-            }
+            stopPollingIfNeeded()
         }
         else if (active) {
             // When we become visible and active again, start polling
             inactivityTimer.stop()
-
-            // Restart polling if it was stopped
-            if (!pollingActive) {
-                ComputerManager.startPolling()
-                pollingActive = true
-            }
+            startPollingIfNeeded()
         }
 
         // Poll for gamepad input only when the window is in focus
@@ -200,12 +234,7 @@ ApplicationWindow {
         if (active) {
             // Stop the inactivity timer
             inactivityTimer.stop()
-
-            // Restart polling if it was stopped
-            if (!pollingActive) {
-                ComputerManager.startPolling()
-                pollingActive = true
-            }
+            startPollingIfNeeded()
         }
         else {
             // Start the inactivity timer to stop polling
@@ -341,6 +370,29 @@ ApplicationWindow {
             }
 
             NavigableToolButton {
+                id: profilesButton
+                visible: stackView.currentItem instanceof PcView
+
+                iconSource: "qrc:/res/account_circle.svg"
+
+                ToolTip.delay: 1000
+                ToolTip.timeout: 3000
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Profiles")
+
+                onClicked: {
+                    stopPollingIfNeeded()
+                    var component = Qt.createComponent("ProfileSelectionView.qml")
+                    var profileView = component.createObject(stackView, {"allowActivation": false})
+                    stackView.push(profileView)
+                }
+
+                Keys.onDownPressed: {
+                    stackView.currentItem.forceActiveFocus(Qt.TabFocus)
+                }
+            }
+
+            NavigableToolButton {
                 property string browserUrl: ""
 
                 id: updateButton
@@ -423,6 +475,7 @@ ApplicationWindow {
 
             NavigableToolButton {
                 id: settingsButton
+                visible: !currentItemSuppressesPolling()
 
                 iconSource:  "qrc:/res/settings.svg"
 
@@ -435,6 +488,7 @@ ApplicationWindow {
                 Shortcut {
                     id: settingsShortcut
                     sequence: StandardKey.Preferences
+                    enabled: settingsButton.visible
                     onActivated: settingsButton.clicked()
                 }
 

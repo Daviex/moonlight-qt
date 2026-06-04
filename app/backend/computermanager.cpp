@@ -2,6 +2,7 @@
 #include "boxartmanager.h"
 #include "nvhttp.h"
 #include "nvpairingmanager.h"
+#include "profilemanager.h"
 
 #include <Limelight.h>
 #include <QtEndian>
@@ -163,9 +164,11 @@ ComputerManager::ComputerManager(StreamingPreferences* prefs)
       m_PollingRef(0),
       m_MdnsBrowser(nullptr),
       m_CompatFetcher(nullptr),
-      m_NeedsDelayedFlush(false)
+      m_NeedsDelayedFlush(false),
+      m_ProfileId(ProfileManager::activeProfileId())
 {
     QSettings settings;
+    ProfileManager::beginProfileSettings(settings, m_ProfileId);
 
     // If there's a hosts backup copy, we must have failed to commit
     // a previous update before exiting. Restore the backup now.
@@ -279,6 +282,7 @@ void DelayedFlushThread::run() {
         // Perform the flush
         {
             QSettings settings;
+            ProfileManager::beginProfileSettings(settings, m_ComputerManager->m_ProfileId);
 
             // First, write to the backup location
             settings.beginWriteArray(SER_HOSTS_BACKUP);

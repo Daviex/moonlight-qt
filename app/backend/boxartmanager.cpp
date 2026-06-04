@@ -1,4 +1,5 @@
 #include "boxartmanager.h"
+#include "profilemanager.h"
 #include "../path.h"
 
 #include <QImageReader>
@@ -6,7 +7,7 @@
 
 BoxArtManager::BoxArtManager(QObject *parent) :
     QObject(parent),
-    m_BoxArtDir(Path::getBoxArtCacheDir()),
+    m_BoxArtDir(QDir(Path::getBoxArtCacheDir()).filePath(ProfileManager::activeProfileId())),
     m_ThreadPool(this)
 {
     // 4 is a good balance between fast loading for large

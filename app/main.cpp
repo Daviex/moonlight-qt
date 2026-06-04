@@ -49,6 +49,7 @@
 #include "gui/appmodel.h"
 #include "backend/autoupdatechecker.h"
 #include "backend/computermanager.h"
+#include "backend/profilemanager.h"
 #include "backend/systemproperties.h"
 #include "streaming/session.h"
 #include "settings/streamingpreferences.h"
@@ -793,6 +794,26 @@ int main(int argc, char *argv[])
 
     GlobalCommandLineParser parser;
     GlobalCommandLineParser::ParseResult commandLineParserResult = parser.parse(app.arguments());
+
+    ProfileManager* profileManager = ProfileManager::get();
+    bool profileSelectionRequired = false;
+    if (!parser.getProfile().isEmpty()) {
+        QString profileError;
+        if (!profileManager->activateProfileByNameOrId(parser.getProfile(), &profileError)) {
+            QTextStream(stderr) << profileError << Qt::endl;
+            return 1;
+        }
+    }
+    else if (commandLineParserResult == GlobalCommandLineParser::NormalStartRequested) {
+        if (!profileManager->activateAutoLoginProfile()) {
+            profileManager->activateDefaultProfile();
+            profileSelectionRequired = true;
+        }
+    }
+    else {
+        profileManager->activateDefaultProfile();
+    }
+
     switch (commandLineParserResult) {
     case GlobalCommandLineParser::ListRequested:
         // Don't log to the console since it will jumble the command output
@@ -922,6 +943,13 @@ int main(int argc, char *argv[])
     qmlRegisterType<ComputerModel>("ComputerModel", 1, 0, "ComputerModel");
     qmlRegisterType<AppModel>("AppModel", 1, 0, "AppModel");
     qmlRegisterUncreatableType<Session>("Session", 1, 0, "Session", "Session cannot be created from QML");
+    qmlRegisterSingletonType<ProfileManager>("ProfileManager", 1, 0,
+                                             "ProfileManager",
+                                             [](QQmlEngine* qmlEngine, QJSEngine*) -> QObject* {
+                                                 QQmlEngine::setObjectOwnership(ProfileManager::get(), QQmlEngine::CppOwnership);
+                                                 Q_UNUSED(qmlEngine);
+                                                 return ProfileManager::get();
+                                             });
     qmlRegisterSingletonType<ComputerManager>("ComputerManager", 1, 0,
                                               "ComputerManager",
                                               [](QQmlEngine* qmlEngine, QJSEngine*) -> QObject* {
@@ -977,7 +1005,7 @@ int main(int argc, char *argv[])
 
     switch (commandLineParserResult) {
     case GlobalCommandLineParser::NormalStartRequested:
-        initialView = "qrc:/gui/PcView.qml";
+        initialView = profileSelectionRequired ? "qrc:/gui/ProfileSelectionView.qml" : "qrc:/gui/PcView.qml";
         break;
     case GlobalCommandLineParser::StreamRequested:
         {

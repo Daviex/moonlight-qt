@@ -24,6 +24,9 @@ public:
     IdentityManager*
     get();
 
+    static void
+    reset();
+
 private:
     IdentityManager();
 

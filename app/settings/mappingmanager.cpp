@@ -1,4 +1,5 @@
 #include "mappingmanager.h"
+#include "backend/profilemanager.h"
 #include "path.h"
 
 #include <QDir>
@@ -15,6 +16,7 @@ MappingFetcher* MappingManager::s_MappingFetcher;
 MappingManager::MappingManager()
 {
     QSettings settings;
+    ProfileManager::beginProfileSettings(settings);
 
     // Load updated mappings from the Internet once per Moonlight launch
     if (s_MappingFetcher == nullptr) {
@@ -53,6 +55,7 @@ MappingManager::MappingManager()
 void MappingManager::save()
 {
     QSettings settings;
+    ProfileManager::beginProfileSettings(settings);
 
     settings.remove(SER_GAMEPADMAPPING);
     settings.beginWriteArray(SER_GAMEPADMAPPING);
