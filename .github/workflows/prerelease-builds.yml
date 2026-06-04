@@ -10,6 +10,9 @@ on:
       ci_version:
         required: true
         type: string
+      branch_name:
+        required: true
+        type: string
 
 jobs:
   publish-prerelease:
@@ -73,14 +76,25 @@ jobs:
       - name: Publish GitHub prerelease
         env:
           CI_VERSION: ${{ inputs.ci_version }}
+          BRANCH_NAME: ${{ inputs.branch_name }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
 
-          release_tag="prerelease-${CI_VERSION}"
-          release_name="Moonlight prerelease ${CI_VERSION}"
+          branch_slug="$(printf '%s' "${BRANCH_NAME}" | tr '[:upper:]' '[:lower:]' | sed -E 's#[^a-z0-9._-]+#-#g; s#^-+|-+$##g')"
+          if [[ -z "${branch_slug}" ]]; then
+            branch_slug="unknown-ref"
+          fi
+
+          if [[ "${BRANCH_NAME}" == "master" ]]; then
+            release_tag="prerelease-${CI_VERSION}"
+            release_name="Moonlight prerelease ${CI_VERSION}"
+          else
+            release_tag="prerelease-${branch_slug}-${CI_VERSION}"
+            release_name="Moonlight prerelease ${BRANCH_NAME} ${CI_VERSION}"
+          fi
 
           mapfile -d '' release_assets < <(find release-assets -maxdepth 1 -type f -print0 | sort -z)
           if [[ "${#release_assets[@]}" -eq 0 ]]; then
@@ -90,7 +104,7 @@ jobs:
 
           notes_file="$(mktemp)"
           {
-            echo "Automatic prerelease builds for commit ${GITHUB_SHA}."
+            echo "Automatic prerelease builds for branch ${BRANCH_NAME}, commit ${GITHUB_SHA}."
             echo
             echo "Built from ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}."
           } > "${notes_file}"

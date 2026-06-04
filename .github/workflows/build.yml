@@ -45,7 +45,14 @@ jobs:
       ci_version: ${{ needs.setup.outputs.ci_version }}
 
   publish-prerelease:
-    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/master' && needs.setup.result == 'success'
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/heads/') &&
+      needs.setup.result == 'success' &&
+      needs['build-appimage'].result == 'success' &&
+      needs['build-steamlink'].result == 'success' &&
+      needs['build-windows-macos'].result == 'success'
     needs:
       - setup
       - build-appimage
@@ -56,3 +63,4 @@ jobs:
     uses: ./.github/workflows/prerelease-builds.yml
     with:
       ci_version: ${{ needs.setup.outputs.ci_version }}
+      branch_name: ${{ github.ref_name }}
