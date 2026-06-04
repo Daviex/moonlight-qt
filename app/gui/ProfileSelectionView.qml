@@ -51,6 +51,15 @@ Item {
         }
     }
 
+    StackView.onActivated: {
+        if (profileGrid.currentIndex === -1 && SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
+            profileGrid.currentIndex = 0
+            if (profileGrid.currentItem) {
+                profileGrid.currentItem.forceActiveFocus(Qt.TabFocus)
+            }
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 24
@@ -168,9 +177,14 @@ Item {
                         }
 
                         NavigableMenuItem {
-                            text: qsTr("Set as Default")
-                            visible: !profile.defaultProfile
-                            onTriggered: ProfileManager.setDefaultProfile(profile.id)
+                            text: qsTr("Default")
+                            checkable: true
+                            checked: profile.defaultProfile
+                            onTriggered: {
+                                if (!profile.defaultProfile) {
+                                    ProfileManager.setDefaultProfile(profile.id)
+                                }
+                            }
                         }
 
                         NavigableMenuItem {
@@ -212,6 +226,34 @@ Item {
                         profileContextMenu.open()
                     }
                 }
+
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.RightButton
+                    onClicked: {
+                        parent.pressAndHold()
+                    }
+                }
+
+                Keys.onMenuPressed: {
+                    profileContextMenu.open()
+                }
+
+                Keys.onDeletePressed: {
+                    if (ProfileManager.profiles.length > 1 &&
+                            profile.id !== ProfileManager.activeProfileId) {
+                        deleteProfileDialog.profileId = profile.id
+                        deleteProfileDialog.profileName = profile.name
+                        deleteProfileDialog.open()
+                    }
+                }
+
+                Keys.onDownPressed: {
+                    grid.moveCurrentIndexDown()
+                    if (grid.currentItem === this) {
+                        addButton.forceActiveFocus(Qt.TabFocus)
+                    }
+                }
             }
         }
 
@@ -236,15 +278,27 @@ Item {
             }
 
             Button {
+                id: addButton
+                activeFocusOnTab: true
                 text: qsTr("Add")
                 onClicked: {
                     editProfileDialog.profileId = ""
                     editProfileDialog.profileName = ""
                     editProfileDialog.open()
                 }
+
+                Keys.onReturnPressed: clicked()
+                Keys.onEnterPressed: clicked()
+                Keys.onUpPressed: {
+                    if (profileGrid.count > 0) {
+                        profileGrid.currentIndex = profileGrid.count - 1
+                        profileGrid.currentItem.forceActiveFocus(Qt.TabFocus)
+                    }
+                }
             }
 
             Button {
+                activeFocusOnTab: true
                 text: qsTr("Edit")
                 enabled: profileRoot.currentProfile() !== null
                 onClicked: {
@@ -255,9 +309,13 @@ Item {
                         editProfileDialog.open()
                     }
                 }
+
+                Keys.onReturnPressed: clicked()
+                Keys.onEnterPressed: clicked()
             }
 
             Button {
+                activeFocusOnTab: true
                 text: {
                     var profile = profileRoot.currentProfile()
                     if (profileRoot.allowActivation) {
@@ -279,6 +337,9 @@ Item {
                         profileGrid.currentItem.profileContextMenu.open()
                     }
                 }
+
+                Keys.onReturnPressed: clicked()
+                Keys.onEnterPressed: clicked()
             }
         }
     }
