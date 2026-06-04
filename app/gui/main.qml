@@ -96,7 +96,7 @@ ApplicationWindow {
                 ProfileManager.autoLoginProfileId.length === 0) {
             autoLoginPromptShown = true
             autoLoginPromptDialog.profileId = profileId
-            autoLoginPromptDialog.text = qsTr("Open '%1' automatically next time?").arg(ProfileManager.activeProfileName)
+            autoLoginPromptDialog.text = qsTr("Use '%1' as the default profile and open the default profile automatically next time?").arg(ProfileManager.activeProfileName)
             autoLoginPromptDialog.open()
         }
 

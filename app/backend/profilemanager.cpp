@@ -24,7 +24,7 @@
 #define SER_DEFAULT_PROFILE "defaultProfile"
 #define SER_AUTOLOGIN_PROFILE "autoLoginProfile"
 #define SER_PROFILE_DATA "profiles"
-#define CURRENT_PROFILE_VERSION 2
+#define CURRENT_PROFILE_VERSION 3
 
 ProfileManager* ProfileManager::s_Pm = nullptr;
 QString ProfileManager::s_ActiveProfileId;
@@ -158,6 +158,16 @@ ProfileManager::ensureProfilesExist()
             m_AutoLoginProfileId.clear();
             profilesChanged = true;
         }
+        if (m_ProfileVersion < 3 && !m_AutoLoginProfileId.isEmpty()) {
+            // Version 2 allowed a separate auto-login profile. From version 3
+            // onward, the default profile is the auto-login profile.
+            m_DefaultProfileId = m_AutoLoginProfileId;
+            profilesChanged = true;
+        }
+        if (!m_AutoLoginProfileId.isEmpty() && m_AutoLoginProfileId != m_DefaultProfileId) {
+            m_AutoLoginProfileId = m_DefaultProfileId;
+            profilesChanged = true;
+        }
 
         if (profilesChanged) {
             saveProfiles();
@@ -248,8 +258,9 @@ ProfileManager::profiles() const
         map["iconId"] = profile.iconId;
         map["createdAt"] = profile.createdAt;
         map["updatedAt"] = profile.updatedAt;
+        bool startsAutomatically = !m_AutoLoginProfileId.isEmpty() && profile.id == m_DefaultProfileId;
         map["defaultProfile"] = profile.id == m_DefaultProfileId;
-        map["autoLogin"] = profile.id == m_AutoLoginProfileId;
+        map["autoLogin"] = startsAutomatically;
         list.append(map);
     }
     return list;
@@ -284,6 +295,12 @@ QString
 ProfileManager::autoLoginProfileId() const
 {
     return m_AutoLoginProfileId;
+}
+
+bool
+ProfileManager::autoLoginEnabled() const
+{
+    return !m_AutoLoginProfileId.isEmpty();
 }
 
 bool
@@ -363,7 +380,7 @@ ProfileManager::activateDefaultProfile()
 bool
 ProfileManager::activateAutoLoginProfile()
 {
-    return !m_AutoLoginProfileId.isEmpty() && activateProfile(m_AutoLoginProfileId);
+    return !m_AutoLoginProfileId.isEmpty() && activateDefaultProfile();
 }
 
 QString
@@ -432,12 +449,16 @@ ProfileManager::removeProfile(QString id)
     }
 
     bool removingActiveProfile = s_ActiveProfileId == id;
+    bool wasAutoLoginEnabled = autoLoginEnabled();
     m_Profiles.removeAt(index);
 
     if (m_DefaultProfileId == id) {
         m_DefaultProfileId = m_Profiles.first().id;
     }
-    if (m_AutoLoginProfileId == id) {
+    if (wasAutoLoginEnabled) {
+        m_AutoLoginProfileId = m_DefaultProfileId;
+    }
+    else if (m_AutoLoginProfileId == id) {
         m_AutoLoginProfileId.clear();
     }
 
@@ -470,6 +491,9 @@ ProfileManager::setDefaultProfile(QString id)
     }
 
     m_DefaultProfileId = id;
+    if (autoLoginEnabled()) {
+        m_AutoLoginProfileId = id;
+    }
     saveProfiles();
     emit profilesChanged();
     return true;
@@ -478,11 +502,35 @@ ProfileManager::setDefaultProfile(QString id)
 bool
 ProfileManager::setAutoLoginProfile(QString id, bool enabled)
 {
-    if (enabled && profileIndex(id) < 0) {
+    if (enabled) {
+        if (profileIndex(id) < 0) {
+            return false;
+        }
+        m_DefaultProfileId = id;
+        m_AutoLoginProfileId = id;
+        saveProfiles();
+        emit profilesChanged();
+        return true;
+    }
+
+    if (!id.isEmpty() && id != m_DefaultProfileId && id != m_AutoLoginProfileId) {
         return false;
     }
 
-    m_AutoLoginProfileId = enabled ? id : QString();
+    m_AutoLoginProfileId.clear();
+    saveProfiles();
+    emit profilesChanged();
+    return true;
+}
+
+bool
+ProfileManager::setAutoLoginEnabled(bool enabled)
+{
+    if (enabled && profileIndex(m_DefaultProfileId) < 0) {
+        return false;
+    }
+
+    m_AutoLoginProfileId = enabled ? m_DefaultProfileId : QString();
     saveProfiles();
     emit profilesChanged();
     return true;
@@ -497,7 +545,7 @@ ProfileManager::isDefaultProfile(QString id) const
 bool
 ProfileManager::isAutoLoginProfile(QString id) const
 {
-    return id == m_AutoLoginProfileId;
+    return autoLoginEnabled() && id == m_DefaultProfileId;
 }
 
 int

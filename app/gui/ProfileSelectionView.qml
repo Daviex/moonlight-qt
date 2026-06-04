@@ -32,7 +32,16 @@ FocusScope {
 
     Connections {
         target: ProfileManager
-        onProfilesChanged: profileRoot.rebuildProfileList()
+        function onProfilesChanged() {
+            profileRoot.rebuildProfileList()
+        }
+    }
+
+    Timer {
+        id: focusGridTimer
+        interval: 0
+        repeat: false
+        onTriggered: profileRoot.focusCurrentGridItem()
     }
 
     function findProfile(profileId) {
@@ -56,6 +65,30 @@ FocusScope {
         return data
     }
 
+    function gridColumns() {
+        return Math.max(1, Math.floor(profileGrid.itemsPerRow))
+    }
+
+    function hasGridItemBelow(itemIndex) {
+        return itemIndex + gridColumns() < profileGrid.count
+    }
+
+    function footerFocusTarget() {
+        if (defaultProfileButton.visible && defaultProfileButton.enabled) {
+            return defaultProfileButton
+        }
+        return autoLoginButton.visible && autoLoginButton.enabled ? autoLoginButton : null
+    }
+
+    function focusCurrentGridItem() {
+        if (profileGrid.currentItem) {
+            profileGrid.currentItem.forceActiveFocus(Qt.TabFocus)
+        }
+        else {
+            profileGrid.forceActiveFocus(Qt.TabFocus)
+        }
+    }
+
     function activateProfile(profileId) {
         if (!allowActivation) {
             return
@@ -75,10 +108,10 @@ FocusScope {
     }
 
     StackView.onActivated: {
-        profileGrid.forceActiveFocus()
         if (profileGrid.currentIndex === -1 && SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
             profileGrid.currentIndex = 0
         }
+        focusGridTimer.restart()
     }
 
     ColumnLayout {
@@ -108,6 +141,7 @@ FocusScope {
 
             Component.onCompleted: {
                 currentIndex = ProfileManager.profiles.length > 0 ? 0 : -1
+                focusGridTimer.restart()
             }
 
             delegate: NavigableItemDelegate {
@@ -156,8 +190,8 @@ FocusScope {
                 Label {
                     text: isAddCard ? "" :
                           (profile.id === ProfileManager.activeProfileId ? qsTr("Current") :
-                           profile.defaultProfile ? qsTr("Default") :
-                           profile.autoLogin ? qsTr("Auto-login") : "")
+                           profile.defaultProfile && profile.autoLogin ? qsTr("Default / Auto-login") :
+                           profile.defaultProfile ? qsTr("Default") : "")
                     visible: text.length > 0
                     anchors.top: profileNameLabel.bottom
                     anchors.topMargin: 6
@@ -182,14 +216,19 @@ FocusScope {
                         }
 
                         NavigableMenuItem {
-                            text: qsTr("Default")
-                            checkable: true
-                            checked: profile.defaultProfile
+                            text: profile.defaultProfile ? qsTr("Default Profile") : qsTr("Set as Default")
+                            enabled: !profile.defaultProfile
                             onTriggered: {
                                 if (!profile.defaultProfile) {
                                     ProfileManager.setDefaultProfile(profile.id)
                                 }
                             }
+                        }
+
+                        NavigableMenuItem {
+                            text: ProfileManager.autoLoginEnabled ? qsTr("Disable Default Auto-login") : qsTr("Enable Default Auto-login")
+                            visible: profile.defaultProfile
+                            onTriggered: ProfileManager.setAutoLoginEnabled(!ProfileManager.autoLoginEnabled)
                         }
 
                         NavigableMenuItem {
@@ -263,14 +302,19 @@ FocusScope {
                 }
 
                 Keys.onDownPressed: {
-                    if (isAddCard) {
-                        // At the last item (add card), move focus to checkbox
-                        if (autoLoginCheckBox.visible) {
-                            autoLoginCheckBox.forceActiveFocus(Qt.TabFocus)
-                        }
-                        return
+                    if (profileRoot.hasGridItemBelow(index)) {
+                        grid.moveCurrentIndexDown()
+                        profileRoot.focusCurrentGridItem()
                     }
-                    grid.moveCurrentIndexDown()
+                    else {
+                        var target = profileRoot.footerFocusTarget()
+                        if (target) {
+                            target.forceActiveFocus(Qt.TabFocus)
+                        }
+                        else {
+                            profileRoot.focusCurrentGridItem()
+                        }
+                    }
                 }
             }
         }
@@ -279,27 +323,55 @@ FocusScope {
             Layout.alignment: Qt.AlignHCenter
             spacing: 12
 
-            CheckBox {
-                id: autoLoginCheckBox
+            Button {
+                id: defaultProfileButton
                 activeFocusOnTab: true
-                visible: profileRoot.allowActivation && ProfileManager.hasActiveProfile
-                enabled: profileRoot.currentProfile() !== null
-                text: qsTr("Auto-login next time")
-                checked: {
+                visible: profileRoot.currentProfile() !== null
+                enabled: {
                     var profile = profileRoot.currentProfile()
-                    return profile !== null && profile.autoLogin
+                    return profile !== null && !profile.defaultProfile
                 }
-                onToggled: {
+                text: {
                     var profile = profileRoot.currentProfile()
-                    if (profile !== null && checked !== profile.autoLogin) {
-                        ProfileManager.setAutoLoginProfile(profile.id, checked)
+                    return profile !== null && profile.defaultProfile ? qsTr("Default Profile") : qsTr("Set as Default")
+                }
+                onClicked: {
+                    var profile = profileRoot.currentProfile()
+                    if (profile !== null && !profile.defaultProfile) {
+                        if (ProfileManager.setDefaultProfile(profile.id) &&
+                                autoLoginButton.visible && autoLoginButton.enabled) {
+                            autoLoginButton.forceActiveFocus(Qt.TabFocus)
+                        }
                     }
                 }
 
                 Keys.onUpPressed: {
-                    // Navigate back to the add card (last item in grid)
-                    profileGrid.currentIndex = profileGrid.count - 1
-                    profileGrid.forceActiveFocus()
+                    profileRoot.focusCurrentGridItem()
+                }
+
+                Keys.onRightPressed: {
+                    if (autoLoginButton.visible && autoLoginButton.enabled) {
+                        autoLoginButton.forceActiveFocus(Qt.TabFocus)
+                    }
+                }
+            }
+
+            Button {
+                id: autoLoginButton
+                activeFocusOnTab: true
+                visible: ProfileManager.defaultProfileId.length > 0
+                enabled: true
+                text: ProfileManager.autoLoginEnabled ? qsTr("Disable Default Auto-login") : qsTr("Enable Default Auto-login")
+                onClicked: ProfileManager.setAutoLoginEnabled(!ProfileManager.autoLoginEnabled)
+
+                Keys.onUpPressed: {
+                    profileRoot.focusCurrentGridItem()
+                }
+
+                Keys.onLeftPressed: {
+                    if (defaultProfileButton.visible && defaultProfileButton.enabled) {
+                        defaultProfileButton.forceActiveFocus(Qt.TabFocus)
+                    }
                 }
             }
 

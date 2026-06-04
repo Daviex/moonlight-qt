@@ -15,6 +15,7 @@ class ProfileManager : public QObject
     Q_PROPERTY(QString activeProfileName READ activeProfileName NOTIFY activeProfileChanged)
     Q_PROPERTY(QString defaultProfileId READ defaultProfileId NOTIFY profilesChanged)
     Q_PROPERTY(QString autoLoginProfileId READ autoLoginProfileId NOTIFY profilesChanged)
+    Q_PROPERTY(bool autoLoginEnabled READ autoLoginEnabled NOTIFY profilesChanged)
     Q_PROPERTY(bool hasActiveProfile READ hasActiveProfileValue NOTIFY activeProfileChanged)
 
 public:
@@ -60,6 +61,9 @@ public:
     QString
     autoLoginProfileId() const;
 
+    bool
+    autoLoginEnabled() const;
+
     Q_INVOKABLE bool
     activateProfile(QString id);
 
@@ -92,6 +96,9 @@ public:
 
     Q_INVOKABLE bool
     setAutoLoginProfile(QString id, bool enabled);
+
+    Q_INVOKABLE bool
+    setAutoLoginEnabled(bool enabled);
 
     Q_INVOKABLE bool
     isDefaultProfile(QString id) const;
