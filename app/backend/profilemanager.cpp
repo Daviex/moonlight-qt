@@ -14,7 +14,6 @@
 #include <QDebug>
 
 #define SER_PROFILE_MANAGER "profilemanager"
-#define SER_PROFILE_VERSION "version"
 #define SER_PROFILE_LIST "profiles"
 #define SER_PROFILE_ID "id"
 #define SER_PROFILE_NAME "name"
@@ -24,7 +23,6 @@
 #define SER_DEFAULT_PROFILE "defaultProfile"
 #define SER_AUTOLOGIN_PROFILE "autoLoginProfile"
 #define SER_PROFILE_DATA "profiles"
-#define CURRENT_PROFILE_VERSION 3
 
 ProfileManager* ProfileManager::s_Pm = nullptr;
 QString ProfileManager::s_ActiveProfileId;
@@ -76,8 +74,7 @@ ProfileManager::beginProfileSettings(QSettings& settings, QString profileId)
 }
 
 ProfileManager::ProfileManager(QObject* parent)
-    : QObject(parent),
-      m_ProfileVersion(0)
+    : QObject(parent)
 {
     loadProfiles();
     ensureProfilesExist();
@@ -89,7 +86,6 @@ ProfileManager::loadProfiles()
     QSettings settings;
     settings.beginGroup(SER_PROFILE_MANAGER);
 
-    m_ProfileVersion = settings.value(SER_PROFILE_VERSION, 0).toInt();
     m_DefaultProfileId = settings.value(SER_DEFAULT_PROFILE).toString();
     m_AutoLoginProfileId = settings.value(SER_AUTOLOGIN_PROFILE).toString();
 
@@ -118,7 +114,6 @@ ProfileManager::saveProfiles()
     QSettings settings;
     settings.beginGroup(SER_PROFILE_MANAGER);
 
-    settings.setValue(SER_PROFILE_VERSION, CURRENT_PROFILE_VERSION);
     settings.setValue(SER_DEFAULT_PROFILE, m_DefaultProfileId);
     settings.setValue(SER_AUTOLOGIN_PROFILE, m_AutoLoginProfileId);
 
@@ -140,7 +135,7 @@ void
 ProfileManager::ensureProfilesExist()
 {
     if (!m_Profiles.isEmpty()) {
-        bool profilesChanged = m_ProfileVersion < CURRENT_PROFILE_VERSION;
+        bool profilesChanged = false;
 
         if (profileIndex(m_DefaultProfileId) < 0) {
             m_DefaultProfileId = m_Profiles.first().id;
@@ -151,19 +146,6 @@ ProfileManager::ensureProfilesExist()
             profilesChanged = true;
         }
 
-        if (m_ProfileVersion < 2 && m_AutoLoginProfileId == m_DefaultProfileId) {
-            // Version 1 created the default profile with auto-login enabled.
-            // Keep explicit non-default choices, but require users to opt in to
-            // default-profile auto-login after the first profile selection.
-            m_AutoLoginProfileId.clear();
-            profilesChanged = true;
-        }
-        if (m_ProfileVersion < 3 && !m_AutoLoginProfileId.isEmpty()) {
-            // Version 2 allowed a separate auto-login profile. From version 3
-            // onward, the default profile is the auto-login profile.
-            m_DefaultProfileId = m_AutoLoginProfileId;
-            profilesChanged = true;
-        }
         if (!m_AutoLoginProfileId.isEmpty() && m_AutoLoginProfileId != m_DefaultProfileId) {
             m_AutoLoginProfileId = m_DefaultProfileId;
             profilesChanged = true;

@@ -143,5 +143,4 @@ private:
     QVector<Profile> m_Profiles;
     QString m_DefaultProfileId;
     QString m_AutoLoginProfileId;
-    int m_ProfileVersion;
 };
