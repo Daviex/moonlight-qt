@@ -41,7 +41,11 @@ FocusScope {
         id: focusGridTimer
         interval: 0
         repeat: false
-        onTriggered: profileRoot.focusCurrentGridItem()
+        onTriggered: {
+            if (!editProfileDialog.opened && !deleteProfileDialog.opened && !errorDialog.opened) {
+                profileRoot.focusCurrentGridItem()
+            }
+        }
     }
 
     function findProfile(profileId) {
@@ -74,9 +78,6 @@ FocusScope {
     }
 
     function footerFocusTarget() {
-        if (defaultProfileButton.visible && defaultProfileButton.enabled) {
-            return defaultProfileButton
-        }
         return autoLoginButton.visible && autoLoginButton.enabled ? autoLoginButton : null
     }
 
@@ -87,6 +88,15 @@ FocusScope {
         else {
             profileGrid.forceActiveFocus(Qt.TabFocus)
         }
+    }
+
+    function restoreGridFocusSoon() {
+        focusGridTimer.restart()
+    }
+
+    function toggleDefaultAutoLogin() {
+        ProfileManager.setAutoLoginEnabled(!ProfileManager.autoLoginEnabled)
+        restoreGridFocusSoon()
     }
 
     function activateProfile(profileId) {
@@ -221,14 +231,9 @@ FocusScope {
                             onTriggered: {
                                 if (!profile.defaultProfile) {
                                     ProfileManager.setDefaultProfile(profile.id)
+                                    profileRoot.restoreGridFocusSoon()
                                 }
                             }
-                        }
-
-                        NavigableMenuItem {
-                            text: ProfileManager.autoLoginEnabled ? qsTr("Disable Default Auto-login") : qsTr("Enable Default Auto-login")
-                            visible: profile.defaultProfile
-                            onTriggered: ProfileManager.setAutoLoginEnabled(!ProfileManager.autoLoginEnabled)
                         }
 
                         NavigableMenuItem {
@@ -324,54 +329,18 @@ FocusScope {
             spacing: 12
 
             Button {
-                id: defaultProfileButton
-                activeFocusOnTab: true
-                visible: profileRoot.currentProfile() !== null
-                enabled: {
-                    var profile = profileRoot.currentProfile()
-                    return profile !== null && !profile.defaultProfile
-                }
-                text: {
-                    var profile = profileRoot.currentProfile()
-                    return profile !== null && profile.defaultProfile ? qsTr("Default Profile") : qsTr("Set as Default")
-                }
-                onClicked: {
-                    var profile = profileRoot.currentProfile()
-                    if (profile !== null && !profile.defaultProfile) {
-                        if (ProfileManager.setDefaultProfile(profile.id) &&
-                                autoLoginButton.visible && autoLoginButton.enabled) {
-                            autoLoginButton.forceActiveFocus(Qt.TabFocus)
-                        }
-                    }
-                }
-
-                Keys.onUpPressed: {
-                    profileRoot.focusCurrentGridItem()
-                }
-
-                Keys.onRightPressed: {
-                    if (autoLoginButton.visible && autoLoginButton.enabled) {
-                        autoLoginButton.forceActiveFocus(Qt.TabFocus)
-                    }
-                }
-            }
-
-            Button {
                 id: autoLoginButton
                 activeFocusOnTab: true
                 visible: ProfileManager.defaultProfileId.length > 0
                 enabled: true
                 text: ProfileManager.autoLoginEnabled ? qsTr("Disable Default Auto-login") : qsTr("Enable Default Auto-login")
-                onClicked: ProfileManager.setAutoLoginEnabled(!ProfileManager.autoLoginEnabled)
+                onClicked: profileRoot.toggleDefaultAutoLogin()
+
+                Keys.onReturnPressed: clicked()
+                Keys.onEnterPressed: clicked()
 
                 Keys.onUpPressed: {
                     profileRoot.focusCurrentGridItem()
-                }
-
-                Keys.onLeftPressed: {
-                    if (defaultProfileButton.visible && defaultProfileButton.enabled) {
-                        defaultProfileButton.forceActiveFocus(Qt.TabFocus)
-                    }
                 }
             }
 
@@ -391,6 +360,8 @@ FocusScope {
             nameField.forceActiveFocus()
             nameField.selectAll()
         }
+
+        onClosed: profileRoot.restoreGridFocusSoon()
 
         onAccepted: {
             var newName = nameField.text.trim()
@@ -434,6 +405,8 @@ FocusScope {
         standardButtons: Dialog.Yes | Dialog.No
         text: qsTr("Delete profile '%1'? This removes its paired hosts, settings, and identity.").arg(profileName)
 
+        onClosed: profileRoot.restoreGridFocusSoon()
+
         onAccepted: {
             if (!ProfileManager.removeProfile(profileId)) {
                 errorDialog.text = qsTr("Unable to delete this profile.")
@@ -445,5 +418,6 @@ FocusScope {
     ErrorMessageDialog {
         id: errorDialog
         helpText: ""
+        onClosed: profileRoot.restoreGridFocusSoon()
     }
 }
