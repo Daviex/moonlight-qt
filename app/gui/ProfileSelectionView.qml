@@ -6,7 +6,7 @@ import QtQuick.Controls.Material 2.2
 import ProfileManager 1.0
 import SdlGamepadKeyNavigation 1.0
 
-Item {
+FocusScope {
     id: profileRoot
 
     property bool suppressPolling: true
@@ -15,6 +15,25 @@ Item {
     objectName: allowActivation ? qsTr("Profiles") : qsTr("Manage Profiles")
     focus: true
     activeFocusOnTab: true
+
+    property var profileList: []
+
+    function rebuildProfileList() {
+        var list = []
+        var profiles = ProfileManager.profiles
+        for (var i = 0; i < profiles.length; i++) {
+            list.push(profiles[i])
+        }
+        list.push({ isAddProfile: true })
+        profileList = list
+    }
+
+    Component.onCompleted: rebuildProfileList()
+
+    Connections {
+        target: ProfileManager
+        onProfilesChanged: profileRoot.rebuildProfileList()
+    }
 
     function findProfile(profileId) {
         var profiles = ProfileManager.profiles
@@ -27,10 +46,14 @@ Item {
     }
 
     function currentProfile() {
-        if (profileGrid.currentIndex < 0 || profileGrid.currentIndex >= ProfileManager.profiles.length) {
+        if (profileGrid.currentIndex < 0 || profileGrid.currentIndex >= profileGrid.count) {
             return null
         }
-        return ProfileManager.profiles[profileGrid.currentIndex]
+        var data = profileGrid.model[profileGrid.currentIndex]
+        if (data && data.isAddProfile) {
+            return null
+        }
+        return data
     }
 
     function activateProfile(profileId) {
@@ -52,11 +75,9 @@ Item {
     }
 
     StackView.onActivated: {
+        profileGrid.forceActiveFocus()
         if (profileGrid.currentIndex === -1 && SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
             profileGrid.currentIndex = 0
-            if (profileGrid.currentItem) {
-                profileGrid.currentItem.forceActiveFocus(Qt.TabFocus)
-            }
         }
     }
 
@@ -83,13 +104,10 @@ Item {
             focus: true
             activeFocusOnTab: true
 
-            model: ProfileManager.profiles
+            model: profileList
 
             Component.onCompleted: {
                 currentIndex = ProfileManager.profiles.length > 0 ? 0 : -1
-                if (currentIndex >= 0 && SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
-                    currentItem.forceActiveFocus(Qt.TabFocus)
-                }
             }
 
             delegate: NavigableItemDelegate {
@@ -97,6 +115,7 @@ Item {
 
                 property var profile: modelData
                 property alias profileContextMenu: profileContextMenuLoader.item
+                property bool isAddCard: modelData.isAddProfile !== undefined && modelData.isAddProfile
 
                 width: 250
                 height: 260
@@ -110,20 +129,22 @@ Item {
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.top: parent.top
                     anchors.topMargin: 16
-                    color: Material.accent
+                    color: isAddCard ? Qt.rgba(Material.accent.r, Material.accent.g, Material.accent.b, 0.3) : Material.accent
+                    border.color: isAddCard ? Material.accent : "transparent"
+                    border.width: isAddCard ? 3 : 0
 
                     Label {
                         anchors.centerIn: parent
-                        text: profile.name.length > 0 ? profile.name.charAt(0).toUpperCase() : "?"
+                        text: isAddCard ? "+" : (profile.name.length > 0 ? profile.name.charAt(0).toUpperCase() : "?")
                         font.pointSize: 54
                         font.bold: true
-                        color: "white"
+                        color: isAddCard ? Material.accent : "white"
                     }
                 }
 
                 Label {
                     id: profileNameLabel
-                    text: profile.name
+                    text: isAddCard ? qsTr("Add Profile") : profile.name
                     width: parent.width
                     anchors.top: avatar.bottom
                     anchors.topMargin: 16
@@ -133,9 +154,10 @@ Item {
                 }
 
                 Label {
-                    text: profile.id === ProfileManager.activeProfileId ? qsTr("Current") :
-                          profile.defaultProfile ? qsTr("Default") :
-                          profile.autoLogin ? qsTr("Auto-login") : ""
+                    text: isAddCard ? "" :
+                          (profile.id === ProfileManager.activeProfileId ? qsTr("Current") :
+                           profile.defaultProfile ? qsTr("Default") :
+                           profile.autoLogin ? qsTr("Auto-login") : "")
                     visible: text.length > 0
                     anchors.top: profileNameLabel.bottom
                     anchors.topMargin: 6
@@ -146,6 +168,7 @@ Item {
 
                 Loader {
                     id: profileContextMenuLoader
+                    active: !isAddCard
                     sourceComponent: NavigableMenu {
                         initiator: profileContextMenuLoader.parent
 
@@ -183,6 +206,12 @@ Item {
                 }
 
                 onClicked: {
+                    if (isAddCard) {
+                        editProfileDialog.profileId = ""
+                        editProfileDialog.profileName = ""
+                        editProfileDialog.open()
+                        return
+                    }
                     if (profileRoot.allowActivation) {
                         activateProfile(profile.id)
                     }
@@ -195,6 +224,13 @@ Item {
                 }
 
                 onPressAndHold: {
+                    if (isAddCard) {
+                        // Right-click on Add card opens create dialog
+                        editProfileDialog.profileId = ""
+                        editProfileDialog.profileName = ""
+                        editProfileDialog.open()
+                        return
+                    }
                     if (profileContextMenu.popup) {
                         profileContextMenu.popup()
                     }
@@ -212,11 +248,13 @@ Item {
                 }
 
                 Keys.onMenuPressed: {
-                    profileContextMenu.open()
+                    if (!isAddCard) {
+                        profileContextMenu.open()
+                    }
                 }
 
                 Keys.onDeletePressed: {
-                    if (ProfileManager.profiles.length > 1 &&
+                    if (!isAddCard && ProfileManager.profiles.length > 1 &&
                             profile.id !== ProfileManager.activeProfileId) {
                         deleteProfileDialog.profileId = profile.id
                         deleteProfileDialog.profileName = profile.name
@@ -225,68 +263,14 @@ Item {
                 }
 
                 Keys.onDownPressed: {
+                    if (isAddCard) {
+                        // At the last item (add card), move focus to checkbox
+                        if (autoLoginCheckBox.visible) {
+                            autoLoginCheckBox.forceActiveFocus(Qt.TabFocus)
+                        }
+                        return
+                    }
                     grid.moveCurrentIndexDown()
-                    if (grid.currentItem === this) {
-                        addProfileCard.forceActiveFocus(Qt.TabFocus)
-                    }
-                }
-            }
-
-            footer: ItemDelegate {
-                id: addProfileCard
-                width: 250
-                height: 260
-                activeFocusOnTab: true
-
-                Rectangle {
-                    id: addAvatar
-                    width: 140
-                    height: 140
-                    radius: 70
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.top: parent.top
-                    anchors.topMargin: 16
-                    color: Qt.rgba(Material.accent.r, Material.accent.g, Material.accent.b, 0.3)
-                    border.color: Material.accent
-                    border.width: 3
-
-                    Label {
-                        anchors.centerIn: parent
-                        text: "+"
-                        font.pointSize: 54
-                        font.bold: true
-                        color: Material.accent
-                    }
-                }
-
-                Label {
-                    text: qsTr("Add Profile")
-                    width: parent.width
-                    anchors.top: addAvatar.bottom
-                    anchors.topMargin: 16
-                    horizontalAlignment: Text.AlignHCenter
-                    font.pointSize: 24
-                    elide: Text.ElideRight
-                }
-
-                onClicked: {
-                    editProfileDialog.profileId = ""
-                    editProfileDialog.profileName = ""
-                    editProfileDialog.open()
-                }
-
-                Keys.onReturnPressed: clicked()
-                Keys.onEnterPressed: clicked()
-                Keys.onUpPressed: {
-                    if (profileGrid.count > 0) {
-                        profileGrid.currentIndex = profileGrid.count - 1
-                        profileGrid.currentItem.forceActiveFocus(Qt.TabFocus)
-                    }
-                }
-                Keys.onDownPressed: {
-                    if (autoLoginCheckBox.visible) {
-                        autoLoginCheckBox.forceActiveFocus(Qt.TabFocus)
-                    }
                 }
             }
         }
@@ -313,7 +297,9 @@ Item {
                 }
 
                 Keys.onUpPressed: {
-                    addProfileCard.forceActiveFocus(Qt.TabFocus)
+                    // Navigate back to the add card (last item in grid)
+                    profileGrid.currentIndex = profileGrid.count - 1
+                    profileGrid.forceActiveFocus()
                 }
             }
 
