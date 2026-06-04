@@ -50,6 +50,17 @@ Item {
         window.runConfigurationChecks()
     }
 
+    function switchProfile(profileId) {
+        if (profileId === ProfileManager.activeProfileId) {
+            return
+        }
+
+        if (!ProfileManager.switchToProfile(profileId)) {
+            errorDialog.text = qsTr("Unable to switch to this profile.")
+            errorDialog.open()
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 24
@@ -123,7 +134,8 @@ Item {
                 }
 
                 Label {
-                    text: profile.defaultProfile ? qsTr("Default") :
+                    text: profile.id === ProfileManager.activeProfileId ? qsTr("Current") :
+                          profile.defaultProfile ? qsTr("Default") :
                           profile.autoLogin ? qsTr("Auto-login") : ""
                     visible: text.length > 0
                     anchors.top: profileNameLabel.bottom
@@ -142,6 +154,18 @@ Item {
                             text: qsTr("Open Profile")
                             visible: profileRoot.allowActivation
                             onTriggered: activateProfile(profile.id)
+                        }
+
+                        NavigableMenuItem {
+                            text: qsTr("Switch to Profile")
+                            visible: !profileRoot.allowActivation && profile.id !== ProfileManager.activeProfileId
+                            onTriggered: switchProfile(profile.id)
+                        }
+
+                        NavigableMenuItem {
+                            text: qsTr("Current Profile")
+                            visible: !profileRoot.allowActivation && profile.id === ProfileManager.activeProfileId
+                            enabled: false
                         }
 
                         NavigableMenuItem {
@@ -180,6 +204,9 @@ Item {
                 onClicked: {
                     if (profileRoot.allowActivation) {
                         activateProfile(profile.id)
+                    }
+                    else if (profile.id !== ProfileManager.activeProfileId) {
+                        switchProfile(profile.id)
                     }
                     else {
                         profileContextMenu.open()
@@ -224,10 +251,18 @@ Item {
             }
 
             Button {
-                text: qsTr("Options")
+                text: {
+                    var profile = profileRoot.currentProfile()
+                    return profile !== null && profile.id !== ProfileManager.activeProfileId ?
+                                qsTr("Switch") : qsTr("Options")
+                }
                 enabled: profileGrid.currentItem !== null
                 onClicked: {
-                    if (profileGrid.currentItem !== null) {
+                    var profile = profileRoot.currentProfile()
+                    if (profile !== null && profile.id !== ProfileManager.activeProfileId) {
+                        switchProfile(profile.id)
+                    }
+                    else if (profileGrid.currentItem !== null) {
                         profileGrid.currentItem.profileContextMenu.open()
                     }
                 }

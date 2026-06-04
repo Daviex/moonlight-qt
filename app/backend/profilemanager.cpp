@@ -5,9 +5,12 @@
 #include "settings/streamingpreferences.h"
 
 #include <QDateTime>
+#include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QProcess>
 #include <QSet>
+#include <QStringList>
 #include <QUuid>
 #include <QVariantMap>
 #include <QDebug>
@@ -289,6 +292,53 @@ ProfileManager::activateProfile(QString id)
     qInfo() << "Activated Moonlight profile" << id << activeProfileName();
     emit activeProfileChanged();
 
+    return true;
+}
+
+bool
+ProfileManager::switchToProfile(QString id)
+{
+    if (profileIndex(id) < 0) {
+        qWarning() << "Cannot switch to unknown profile" << id;
+        return false;
+    }
+
+    if (s_ActiveProfileId == id) {
+        return true;
+    }
+
+    QStringList args = QCoreApplication::arguments();
+    if (!args.isEmpty()) {
+        args.removeFirst();
+    }
+
+    for (int i = 0; i < args.count(); i++) {
+        const QString arg = args.at(i);
+
+        if (arg == "--profile" || arg == "-profile") {
+            args.removeAt(i);
+            if (i < args.count()) {
+                args.removeAt(i);
+            }
+            i--;
+            continue;
+        }
+
+        if (arg.startsWith("--profile=") || arg.startsWith("-profile=")) {
+            args.removeAt(i);
+            i--;
+        }
+    }
+
+    args.prepend(id);
+    args.prepend("--profile");
+
+    if (!QProcess::startDetached(QCoreApplication::applicationFilePath(), args)) {
+        qWarning() << "Failed to restart Moonlight for profile switch";
+        return false;
+    }
+
+    QCoreApplication::quit();
     return true;
 }
 

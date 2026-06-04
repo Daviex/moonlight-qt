@@ -63,6 +63,9 @@ public:
     Q_INVOKABLE bool
     activateProfile(QString id);
 
+    Q_INVOKABLE bool
+    switchToProfile(QString id);
+
     bool
     activateProfileByNameOrId(QString nameOrId, QString* error = nullptr);
 
