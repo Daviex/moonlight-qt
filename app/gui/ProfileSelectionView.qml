@@ -150,24 +150,6 @@ Item {
                         initiator: profileContextMenuLoader.parent
 
                         NavigableMenuItem {
-                            text: qsTr("Open Profile")
-                            visible: profileRoot.allowActivation
-                            onTriggered: activateProfile(profile.id)
-                        }
-
-                        NavigableMenuItem {
-                            text: qsTr("Switch to This Profile")
-                            visible: !profileRoot.allowActivation && profile.id !== ProfileManager.activeProfileId
-                            onTriggered: switchProfile(profile.id)
-                        }
-
-                        NavigableMenuItem {
-                            text: qsTr("Current Profile")
-                            visible: !profileRoot.allowActivation && profile.id === ProfileManager.activeProfileId
-                            enabled: false
-                        }
-
-                        NavigableMenuItem {
                             text: qsTr("Rename Profile")
                             onTriggered: {
                                 editProfileDialog.profileId = profile.id
@@ -185,12 +167,6 @@ Item {
                                     ProfileManager.setDefaultProfile(profile.id)
                                 }
                             }
-                        }
-
-                        NavigableMenuItem {
-                            text: profile.autoLogin ? qsTr("Disable Auto-login") : qsTr("Enable Auto-login")
-                            visible: ProfileManager.hasActiveProfile
-                            onTriggered: ProfileManager.setAutoLoginProfile(profile.id, !profile.autoLogin)
                         }
 
                         NavigableMenuItem {
@@ -251,36 +227,48 @@ Item {
                 Keys.onDownPressed: {
                     grid.moveCurrentIndexDown()
                     if (grid.currentItem === this) {
-                        addButton.forceActiveFocus(Qt.TabFocus)
-                    }
-                }
-            }
-        }
-
-        RowLayout {
-            Layout.alignment: Qt.AlignHCenter
-            spacing: 12
-
-            CheckBox {
-                visible: profileRoot.allowActivation && ProfileManager.hasActiveProfile
-                enabled: profileRoot.currentProfile() !== null
-                text: qsTr("Auto-login next time")
-                checked: {
-                    var profile = profileRoot.currentProfile()
-                    return profile !== null && profile.autoLogin
-                }
-                onToggled: {
-                    var profile = profileRoot.currentProfile()
-                    if (profile !== null && checked !== profile.autoLogin) {
-                        ProfileManager.setAutoLoginProfile(profile.id, checked)
+                        addProfileCard.forceActiveFocus(Qt.TabFocus)
                     }
                 }
             }
 
-            Button {
-                id: addButton
+            footer: ItemDelegate {
+                id: addProfileCard
+                width: 250
+                height: 260
                 activeFocusOnTab: true
-                text: qsTr("Add")
+
+                Rectangle {
+                    id: addAvatar
+                    width: 140
+                    height: 140
+                    radius: 70
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.top: parent.top
+                    anchors.topMargin: 16
+                    color: Qt.rgba(Material.accent.r, Material.accent.g, Material.accent.b, 0.3)
+                    border.color: Material.accent
+                    border.width: 3
+
+                    Label {
+                        anchors.centerIn: parent
+                        text: "+"
+                        font.pointSize: 54
+                        font.bold: true
+                        color: Material.accent
+                    }
+                }
+
+                Label {
+                    text: qsTr("Add Profile")
+                    width: parent.width
+                    anchors.top: addAvatar.bottom
+                    anchors.topMargin: 16
+                    horizontalAlignment: Text.AlignHCenter
+                    font.pointSize: 24
+                    elide: Text.ElideRight
+                }
+
                 onClicked: {
                     editProfileDialog.profileId = ""
                     editProfileDialog.profileName = ""
@@ -295,52 +283,40 @@ Item {
                         profileGrid.currentItem.forceActiveFocus(Qt.TabFocus)
                     }
                 }
+                Keys.onDownPressed: {
+                    if (autoLoginCheckBox.visible) {
+                        autoLoginCheckBox.forceActiveFocus(Qt.TabFocus)
+                    }
+                }
             }
+        }
 
-            Button {
+        RowLayout {
+            Layout.alignment: Qt.AlignHCenter
+            spacing: 12
+
+            CheckBox {
+                id: autoLoginCheckBox
                 activeFocusOnTab: true
-                text: qsTr("Edit")
+                visible: profileRoot.allowActivation && ProfileManager.hasActiveProfile
                 enabled: profileRoot.currentProfile() !== null
-                onClicked: {
+                text: qsTr("Auto-login next time")
+                checked: {
                     var profile = profileRoot.currentProfile()
-                    if (profile !== null) {
-                        editProfileDialog.profileId = profile.id
-                        editProfileDialog.profileName = profile.name
-                        editProfileDialog.open()
+                    return profile !== null && profile.autoLogin
+                }
+                onToggled: {
+                    var profile = profileRoot.currentProfile()
+                    if (profile !== null && checked !== profile.autoLogin) {
+                        ProfileManager.setAutoLoginProfile(profile.id, checked)
                     }
                 }
 
-                Keys.onReturnPressed: clicked()
-                Keys.onEnterPressed: clicked()
+                Keys.onUpPressed: {
+                    addProfileCard.forceActiveFocus(Qt.TabFocus)
+                }
             }
 
-            Button {
-                activeFocusOnTab: true
-                text: {
-                    var profile = profileRoot.currentProfile()
-                    if (profileRoot.allowActivation) {
-                        return qsTr("Open Profile")
-                    }
-                    return profile !== null && profile.id !== ProfileManager.activeProfileId ?
-                                qsTr("Switch to This Profile") : qsTr("Options")
-                }
-                enabled: profileGrid.currentItem !== null
-                onClicked: {
-                    var profile = profileRoot.currentProfile()
-                    if (profileRoot.allowActivation && profile !== null) {
-                        activateProfile(profile.id)
-                    }
-                    else if (profile !== null && profile.id !== ProfileManager.activeProfileId) {
-                        switchProfile(profile.id)
-                    }
-                    else if (profileGrid.currentItem !== null) {
-                        profileGrid.currentItem.profileContextMenu.open()
-                    }
-                }
-
-                Keys.onReturnPressed: clicked()
-                Keys.onEnterPressed: clicked()
-            }
         }
     }
 
