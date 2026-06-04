@@ -14,6 +14,7 @@ import SdlGamepadKeyNavigation 1.0
 ApplicationWindow {
     property bool pollingActive: false
     property bool configChecksStarted: false
+    property bool autoLoginPromptShown: false
 
     // Set by SettingsView to force the back operation to pop all
     // pages except the initial view. This is required when doing
@@ -36,9 +37,14 @@ ApplicationWindow {
         SdlGamepadKeyNavigation.enable()
     }
 
-    Component.onCompleted: {
+    function showWindowWithCurrentDisplayMode() {
         // Show the window according to the user's preferences
         if (SystemProperties.hasDesktopEnvironment) {
+            if (!ProfileManager.hasActiveProfile) {
+                window.show()
+                return
+            }
+
             if (StreamingPreferences.uiDisplayMode == StreamingPreferences.UI_MAXIMIZED) {
                 window.showMaximized()
             }
@@ -51,9 +57,57 @@ ApplicationWindow {
         } else {
             window.showFullScreen()
         }
+    }
+
+    Component.onCompleted: {
+        showWindowWithCurrentDisplayMode()
+    }
+
+    function enterProfile(profileId, suppressAutoLoginPrompt) {
+        if (!profileId) {
+            return false
+        }
+
+        stopPollingIfNeeded()
+
+        if (stackView.depth > 1) {
+            stackView.pop(null, StackView.Immediate)
+        }
+
+        if (!ProfileManager.activateProfile(profileId)) {
+            return false
+        }
+
+        StreamingPreferences.retranslate()
+        showWindowWithCurrentDisplayMode()
+        SdlGamepadKeyNavigation.setUiNavMode(false)
+        ComputerManager.reloadForActiveProfile()
+
+        if (!(stackView.currentItem instanceof PcView)) {
+            stackView.push("qrc:/gui/PcView.qml")
+        }
 
         if (runConfigChecks && !currentItemSuppressesPolling()) {
             runConfigurationChecks()
+        }
+
+        if (!suppressAutoLoginPrompt &&
+                !autoLoginPromptShown &&
+                ProfileManager.autoLoginProfileId.length === 0) {
+            autoLoginPromptShown = true
+            autoLoginPromptDialog.profileId = profileId
+            autoLoginPromptDialog.text = qsTr("Open '%1' automatically next time?").arg(ProfileManager.activeProfileName)
+            autoLoginPromptDialog.open()
+        }
+
+        return true
+    }
+
+    function returnToProfileSelection() {
+        stopPollingIfNeeded()
+
+        if (stackView.depth > 1) {
+            stackView.pop(null)
         }
     }
 
@@ -125,8 +179,13 @@ ApplicationWindow {
         Component.onCompleted: {
             // Perform our early initialization before constructing
             // the initial view and pushing it to the StackView
+            var autoEnterProfile = initialView === "qrc:/gui/ProfileSelectionView.qml" &&
+                                   ProfileManager.hasActiveProfile
             doEarlyInit()
             push(initialView)
+            if (autoEnterProfile) {
+                enterProfile(ProfileManager.activeProfileId, true)
+            }
         }
 
         onCurrentItemChanged: {
@@ -381,10 +440,7 @@ ApplicationWindow {
                 ToolTip.text: qsTr("Profiles")
 
                 onClicked: {
-                    stopPollingIfNeeded()
-                    var component = Qt.createComponent("ProfileSelectionView.qml")
-                    var profileView = component.createObject(stackView, {"allowActivation": false})
-                    stackView.push(profileView)
+                    returnToProfileSelection()
                 }
 
                 Keys.onDownPressed: {
@@ -541,6 +597,13 @@ ApplicationWindow {
         text: qsTr("Are you sure you want to quit?")
         // For keyboard/gamepad navigation
         onAccepted: Qt.quit()
+    }
+
+    NavigableMessageDialog {
+        id: autoLoginPromptDialog
+        property string profileId
+        standardButtons: Dialog.Yes | Dialog.No
+        onAccepted: ProfileManager.setAutoLoginProfile(profileId, true)
     }
 
     // HACK: This belongs in StreamSegue but keeping a dialog around after the parent

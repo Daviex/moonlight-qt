@@ -164,9 +164,41 @@ ComputerManager::ComputerManager(StreamingPreferences* prefs)
       m_PollingRef(0),
       m_MdnsBrowser(nullptr),
       m_CompatFetcher(nullptr),
+      m_DelayedFlushThread(nullptr),
       m_NeedsDelayedFlush(false),
       m_ProfileId(ProfileManager::activeProfileId())
 {
+    Q_ASSERT(ProfileManager::hasActiveProfile());
+    loadHosts();
+
+    // Fetch latest compatibility data asynchronously
+    m_CompatFetcher.start();
+
+    // Start the delayed flush thread to handle saveHosts() calls
+    startDelayedFlushThread();
+
+    // To quit in a timely manner, we must block additional requests
+    // after we receive the aboutToQuit() signal. This is necessary
+    // because NvHTTP uses aboutToQuit() to abort requests in progress
+    // while quitting, however this is a one time signal - additional
+    // requests would not be aborted and block termination.
+    connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &ComputerManager::handleAboutToQuit);
+}
+
+ComputerManager::~ComputerManager()
+{
+    // Stop the delayed flush thread before acquiring the lock in write mode
+    // to avoid deadlocking with a flush that needs the lock in read mode.
+    stopDelayedFlushThread();
+
+    QWriteLocker lock(&m_Lock);
+    clearHostsAndDiscovery();
+}
+
+void ComputerManager::loadHosts()
+{
+    Q_ASSERT(!m_ProfileId.isEmpty());
+
     QSettings settings;
     ProfileManager::beginProfileSettings(settings, m_ProfileId);
 
@@ -187,41 +219,10 @@ ComputerManager::ComputerManager(StreamingPreferences* prefs)
         m_LastSerializedHosts[computer->uuid] = *computer;
     }
     settings.endArray();
-
-    // Fetch latest compatibility data asynchronously
-    m_CompatFetcher.start();
-
-    // Start the delayed flush thread to handle saveHosts() calls
-    m_DelayedFlushThread = new DelayedFlushThread(this);
-    m_DelayedFlushThread->start();
-
-    // To quit in a timely manner, we must block additional requests
-    // after we receive the aboutToQuit() signal. This is necessary
-    // because NvHTTP uses aboutToQuit() to abort requests in progress
-    // while quitting, however this is a one time signal - additional
-    // requests would not be aborted and block termination.
-    connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &ComputerManager::handleAboutToQuit);
 }
 
-ComputerManager::~ComputerManager()
+void ComputerManager::clearHostsAndDiscovery()
 {
-    // Stop the delayed flush thread before acquiring the lock in write mode
-    // to avoid deadlocking with a flush that needs the lock in read mode.
-    {
-        // Wake the delayed flush thread
-        m_DelayedFlushThread->requestInterruption();
-        m_DelayedFlushCondition.wakeOne();
-
-        // Wait for it to terminate (and finish any pending flush)
-        m_DelayedFlushThread->wait();
-        delete m_DelayedFlushThread;
-
-        // Delayed flushes should have completed by now
-        Q_ASSERT(!m_NeedsDelayedFlush);
-    }
-
-    QWriteLocker lock(&m_Lock);
-
     // Delete machines that haven't been resolved yet
     while (!m_PendingResolution.isEmpty()) {
         MdnsPendingComputer* computer = m_PendingResolution.first();
@@ -229,9 +230,10 @@ ComputerManager::~ComputerManager()
         m_PendingResolution.removeFirst();
     }
 
-    // Delete the browser to stop discovery
+    // Delete the browser and server to stop discovery
     delete m_MdnsBrowser;
     m_MdnsBrowser = nullptr;
+    m_MdnsServer.reset();
 
     // Interrupt polling
     for (ComputerPollingEntry* entry : std::as_const(m_PollEntries)) {
@@ -242,11 +244,67 @@ ComputerManager::~ComputerManager()
     for (ComputerPollingEntry* entry : std::as_const(m_PollEntries)) {
         delete entry;
     }
+    m_PollEntries.clear();
 
     // Destroy all NvComputer objects now that polling is halted
     for (NvComputer* computer : std::as_const(m_KnownHosts)) {
         delete computer;
     }
+    m_KnownHosts.clear();
+    m_PollingRef = 0;
+
+    QMutexLocker locker(&m_DelayedFlushMutex);
+    m_LastSerializedHosts.clear();
+    m_NeedsDelayedFlush = false;
+}
+
+void ComputerManager::startDelayedFlushThread()
+{
+    Q_ASSERT(m_DelayedFlushThread == nullptr);
+    m_DelayedFlushThread = new DelayedFlushThread(this);
+    m_DelayedFlushThread->start();
+}
+
+void ComputerManager::stopDelayedFlushThread()
+{
+    if (m_DelayedFlushThread == nullptr) {
+        return;
+    }
+
+    // Wake the delayed flush thread
+    m_DelayedFlushThread->requestInterruption();
+    m_DelayedFlushCondition.wakeOne();
+
+    // Wait for it to terminate (and finish any pending flush)
+    m_DelayedFlushThread->wait();
+    delete m_DelayedFlushThread;
+    m_DelayedFlushThread = nullptr;
+
+    // Delayed flushes should have completed by now
+    Q_ASSERT(!m_NeedsDelayedFlush);
+}
+
+void ComputerManager::reloadForActiveProfile()
+{
+    if (!ProfileManager::hasActiveProfile()) {
+        qWarning() << "Cannot reload computers without an active profile";
+        return;
+    }
+
+    if (m_ProfileId == ProfileManager::activeProfileId()) {
+        return;
+    }
+
+    stopDelayedFlushThread();
+
+    {
+        QWriteLocker lock(&m_Lock);
+        clearHostsAndDiscovery();
+        m_ProfileId = ProfileManager::activeProfileId();
+        loadHosts();
+    }
+
+    startDelayedFlushThread();
 }
 
 void DelayedFlushThread::run() {

@@ -806,7 +806,6 @@ int main(int argc, char *argv[])
     }
     else if (commandLineParserResult == GlobalCommandLineParser::NormalStartRequested) {
         if (!profileManager->activateAutoLoginProfile()) {
-            profileManager->activateDefaultProfile();
             profileSelectionRequired = true;
         }
     }
@@ -865,8 +864,12 @@ int main(int argc, char *argv[])
 #endif
     }
 
-    // Apply the initial translation based on user preference
-    StreamingPreferences::get()->retranslate();
+    // Apply the initial translation based on user preference if a profile was
+    // activated before QML startup. Otherwise, the profile picker will use the
+    // default language until the user selects a profile.
+    if (ProfileManager::hasActiveProfile()) {
+        StreamingPreferences::get()->retranslate();
+    }
 
     // Trickily declare the translation for dialog buttons
     QCoreApplication::translate("QPlatformTheme", "&Yes");
@@ -968,7 +971,8 @@ int main(int argc, char *argv[])
     qmlRegisterSingletonType<SdlGamepadKeyNavigation>("SdlGamepadKeyNavigation", 1, 0,
                                                       "SdlGamepadKeyNavigation",
                                                       [](QQmlEngine* qmlEngine, QJSEngine*) -> QObject* {
-                                                          return new SdlGamepadKeyNavigation(StreamingPreferences::get(qmlEngine));
+                                                          Q_UNUSED(qmlEngine);
+                                                          return new SdlGamepadKeyNavigation(nullptr);
                                                       });
     qmlRegisterSingletonType<StreamingPreferences>("StreamingPreferences", 1, 0,
                                                    "StreamingPreferences",
@@ -976,8 +980,11 @@ int main(int argc, char *argv[])
                                                        return StreamingPreferences::get(qmlEngine);
                                                    });
 
-    // Create the identity manager on the main thread
-    IdentityManager::get();
+    // Create the identity manager on the main thread if a profile is already
+    // active. Profile selection will create it when the user enters a profile.
+    if (ProfileManager::hasActiveProfile()) {
+        IdentityManager::get();
+    }
 
     // We require the Material theme
     QQuickStyle::setStyle("Material");
@@ -1005,7 +1012,8 @@ int main(int argc, char *argv[])
 
     switch (commandLineParserResult) {
     case GlobalCommandLineParser::NormalStartRequested:
-        initialView = profileSelectionRequired ? "qrc:/gui/ProfileSelectionView.qml" : "qrc:/gui/PcView.qml";
+        Q_UNUSED(profileSelectionRequired);
+        initialView = "qrc:/gui/ProfileSelectionView.qml";
         break;
     case GlobalCommandLineParser::StreamRequested:
         {

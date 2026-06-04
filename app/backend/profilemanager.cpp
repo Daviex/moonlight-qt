@@ -5,10 +5,8 @@
 #include "settings/streamingpreferences.h"
 
 #include <QDateTime>
-#include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
-#include <QProcess>
 #include <QSet>
 #include <QStringList>
 #include <QUuid>
@@ -26,7 +24,7 @@
 #define SER_DEFAULT_PROFILE "defaultProfile"
 #define SER_AUTOLOGIN_PROFILE "autoLoginProfile"
 #define SER_PROFILE_DATA "profiles"
-#define CURRENT_PROFILE_VERSION 1
+#define CURRENT_PROFILE_VERSION 2
 
 ProfileManager* ProfileManager::s_Pm = nullptr;
 QString ProfileManager::s_ActiveProfileId;
@@ -78,7 +76,8 @@ ProfileManager::beginProfileSettings(QSettings& settings, QString profileId)
 }
 
 ProfileManager::ProfileManager(QObject* parent)
-    : QObject(parent)
+    : QObject(parent),
+      m_ProfileVersion(0)
 {
     loadProfiles();
     ensureProfilesExist();
@@ -90,6 +89,7 @@ ProfileManager::loadProfiles()
     QSettings settings;
     settings.beginGroup(SER_PROFILE_MANAGER);
 
+    m_ProfileVersion = settings.value(SER_PROFILE_VERSION, 0).toInt();
     m_DefaultProfileId = settings.value(SER_DEFAULT_PROFILE).toString();
     m_AutoLoginProfileId = settings.value(SER_AUTOLOGIN_PROFILE).toString();
 
@@ -140,13 +140,28 @@ void
 ProfileManager::ensureProfilesExist()
 {
     if (!m_Profiles.isEmpty()) {
+        bool profilesChanged = m_ProfileVersion < CURRENT_PROFILE_VERSION;
+
         if (profileIndex(m_DefaultProfileId) < 0) {
             m_DefaultProfileId = m_Profiles.first().id;
+            profilesChanged = true;
         }
         if (!m_AutoLoginProfileId.isEmpty() && profileIndex(m_AutoLoginProfileId) < 0) {
             m_AutoLoginProfileId.clear();
+            profilesChanged = true;
         }
-        saveProfiles();
+
+        if (m_ProfileVersion < 2 && m_AutoLoginProfileId == m_DefaultProfileId) {
+            // Version 1 created the default profile with auto-login enabled.
+            // Keep explicit non-default choices, but require users to opt in to
+            // default-profile auto-login after the first profile selection.
+            m_AutoLoginProfileId.clear();
+            profilesChanged = true;
+        }
+
+        if (profilesChanged) {
+            saveProfiles();
+        }
         return;
     }
 
@@ -158,7 +173,7 @@ ProfileManager::ensureProfilesExist()
 
     m_Profiles.append(profile);
     m_DefaultProfileId = profile.id;
-    m_AutoLoginProfileId = profile.id;
+    m_AutoLoginProfileId.clear();
 
     migrateLegacyProfileData(profile.id);
     saveProfiles();
@@ -298,48 +313,7 @@ ProfileManager::activateProfile(QString id)
 bool
 ProfileManager::switchToProfile(QString id)
 {
-    if (profileIndex(id) < 0) {
-        qWarning() << "Cannot switch to unknown profile" << id;
-        return false;
-    }
-
-    if (s_ActiveProfileId == id) {
-        return true;
-    }
-
-    QStringList args = QCoreApplication::arguments();
-    if (!args.isEmpty()) {
-        args.removeFirst();
-    }
-
-    for (int i = 0; i < args.count(); i++) {
-        const QString arg = args.at(i);
-
-        if (arg == "--profile" || arg == "-profile") {
-            args.removeAt(i);
-            if (i < args.count()) {
-                args.removeAt(i);
-            }
-            i--;
-            continue;
-        }
-
-        if (arg.startsWith("--profile=") || arg.startsWith("-profile=")) {
-            args.removeAt(i);
-            i--;
-        }
-    }
-
-    args.prepend(id);
-    args.prepend("--profile");
-
-    if (!QProcess::startDetached(QCoreApplication::applicationFilePath(), args)) {
-        qWarning() << "Failed to restart Moonlight for profile switch";
-        return false;
-    }
-
-    QCoreApplication::quit();
-    return true;
+    return activateProfile(id);
 }
 
 bool
@@ -481,7 +455,8 @@ ProfileManager::removeProfile(QString id)
 
     if (removingActiveProfile) {
         s_ActiveProfileId.clear();
-        activateDefaultProfile();
+        IdentityManager::reset();
+        emit activeProfileChanged();
     }
 
     return true;

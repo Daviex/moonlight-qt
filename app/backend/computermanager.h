@@ -225,6 +225,8 @@ public:
 
     Q_INVOKABLE void stopPollingAsync();
 
+    Q_INVOKABLE void reloadForActiveProfile();
+
     Q_INVOKABLE void addNewHostManually(QString address);
 
     void addNewHost(NvAddress address, bool mdns, QString name = QString(), NvAddress mdnsIpv6Address = NvAddress());
@@ -261,6 +263,14 @@ private slots:
     void handleMdnsServiceResolved(MdnsPendingComputer* computer, QVector<QHostAddress>& addresses);
 
 private:
+    void loadHosts();
+
+    void clearHostsAndDiscovery();
+
+    void startDelayedFlushThread();
+
+    void stopDelayedFlushThread();
+
     void saveHosts();
 
     void saveHost(NvComputer* computer);

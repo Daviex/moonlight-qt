@@ -4,7 +4,6 @@ import QtQuick.Layouts 1.3
 import QtQuick.Controls.Material 2.2
 
 import ProfileManager 1.0
-import StreamingPreferences 1.0
 import SdlGamepadKeyNavigation 1.0
 
 Item {
@@ -39,23 +38,14 @@ Item {
             return
         }
 
-        if (!ProfileManager.activateProfile(profileId)) {
+        if (!window.enterProfile(profileId)) {
             errorDialog.text = qsTr("Unable to activate this profile.")
             errorDialog.open()
-            return
         }
-
-        StreamingPreferences.retranslate()
-        stackView.replace("qrc:/gui/PcView.qml")
-        window.runConfigurationChecks()
     }
 
     function switchProfile(profileId) {
-        if (profileId === ProfileManager.activeProfileId) {
-            return
-        }
-
-        if (!ProfileManager.switchToProfile(profileId)) {
+        if (!window.enterProfile(profileId)) {
             errorDialog.text = qsTr("Unable to switch to this profile.")
             errorDialog.open()
         }
@@ -157,7 +147,7 @@ Item {
                         }
 
                         NavigableMenuItem {
-                            text: qsTr("Switch to Profile")
+                            text: qsTr("Switch to This Profile")
                             visible: !profileRoot.allowActivation && profile.id !== ProfileManager.activeProfileId
                             onTriggered: switchProfile(profile.id)
                         }
@@ -185,13 +175,14 @@ Item {
 
                         NavigableMenuItem {
                             text: profile.autoLogin ? qsTr("Disable Auto-login") : qsTr("Enable Auto-login")
+                            visible: ProfileManager.hasActiveProfile
                             onTriggered: ProfileManager.setAutoLoginProfile(profile.id, !profile.autoLogin)
                         }
 
                         NavigableMenuItem {
                             text: qsTr("Delete Profile")
                             visible: ProfileManager.profiles.length > 1 &&
-                                     (profileRoot.allowActivation || profile.id !== ProfileManager.activeProfileId)
+                                     profile.id !== ProfileManager.activeProfileId
                             onTriggered: {
                                 deleteProfileDialog.profileId = profile.id
                                 deleteProfileDialog.profileName = profile.name
@@ -228,6 +219,22 @@ Item {
             Layout.alignment: Qt.AlignHCenter
             spacing: 12
 
+            CheckBox {
+                visible: profileRoot.allowActivation && ProfileManager.hasActiveProfile
+                enabled: profileRoot.currentProfile() !== null
+                text: qsTr("Auto-login next time")
+                checked: {
+                    var profile = profileRoot.currentProfile()
+                    return profile !== null && profile.autoLogin
+                }
+                onToggled: {
+                    var profile = profileRoot.currentProfile()
+                    if (profile !== null && checked !== profile.autoLogin) {
+                        ProfileManager.setAutoLoginProfile(profile.id, checked)
+                    }
+                }
+            }
+
             Button {
                 text: qsTr("Add")
                 onClicked: {
@@ -253,13 +260,19 @@ Item {
             Button {
                 text: {
                     var profile = profileRoot.currentProfile()
+                    if (profileRoot.allowActivation) {
+                        return qsTr("Open Profile")
+                    }
                     return profile !== null && profile.id !== ProfileManager.activeProfileId ?
-                                qsTr("Switch") : qsTr("Options")
+                                qsTr("Switch to This Profile") : qsTr("Options")
                 }
                 enabled: profileGrid.currentItem !== null
                 onClicked: {
                     var profile = profileRoot.currentProfile()
-                    if (profile !== null && profile.id !== ProfileManager.activeProfileId) {
+                    if (profileRoot.allowActivation && profile !== null) {
+                        activateProfile(profile.id)
+                    }
+                    else if (profile !== null && profile.id !== ProfileManager.activeProfileId) {
                         switchProfile(profile.id)
                     }
                     else if (profileGrid.currentItem !== null) {
