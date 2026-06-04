@@ -1,0 +1,34 @@
+sequenceDiagram
+    autonumber
+    participant QML as StreamSegue.qml
+    participant Session as Session
+    participant HTTP as NvHTTP
+    participant Li as moonlight-common-c
+    participant SDL as SDL window/input/audio/video
+    participant Host as GameStream/Sunshine host
+
+    QML->>Session: initialize(window)
+    Session->>SDL: create test window and probe decoders/displays/audio
+    Session->>Session: validateLaunch()
+    QML->>Session: start()
+    Session->>Session: acquire s_ActiveSessionSemaphore
+    Session->>HTTP: startApp(launch or resume, stream config)
+    HTTP->>Host: HTTPS /launch or /resume
+    Host-->>HTTP: RTSP session URL and status
+    Session->>Li: LiStartConnection(serverInfo, callbacks)
+    Li->>Host: RTSP/control/audio/video/input setup
+    Session-->>QML: connectionStarted()
+    Session->>SDL: create streaming window, decoder, renderer, input handler
+    loop SDL event loop
+        SDL->>Session: input/window/gamepad/audio/video events
+        Session->>Li: input and control events
+        Li-->>Session: video/audio/control callbacks
+    end
+    QML->>Session: interrupt() or host terminates
+    Session->>Li: LiStopConnection()
+    alt quit app preference
+        Session->>HTTP: quitApp()
+        HTTP->>Host: HTTPS /cancel
+    end
+    Session-->>QML: sessionFinished()
+    Session-->>QML: readyForDeletion()

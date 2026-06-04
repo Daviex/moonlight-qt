@@ -1,0 +1,20 @@
+flowchart TD
+    Push[push or pull_request] --> Build[.github/workflows/build.yml]
+    Build --> Setup[setup job<br/>CI_VERSION = short SHA]
+    Setup --> AppImage[build-appimage.yml<br/>Ubuntu 22.04]
+    Setup --> SteamLink[build-steamlink.yml<br/>Steam Link SDK]
+    Setup --> WinMac[build-win-mac.yml<br/>Windows 2025 and macOS 26]
+
+    AppImage --> AppScript[scripts/build-appimage.sh<br/>qmake6, make, linuxdeploy]
+    SteamLink --> SLScript[scripts/build-steamlink-app.sh<br/>qmake, zip app bundle]
+    WinMac --> WinScript[scripts/build-arch.bat<br/>x64 and arm64 MSI/portable ZIP]
+    WinMac --> MacScript[scripts/generate-dmg.sh<br/>universal DMG]
+    WinScript --> Bundle[scripts/generate-bundle.bat<br/>WiX bootstrapper]
+
+    AppScript --> Artifacts[GitHub artifacts]
+    SLScript --> Artifacts
+    WinScript --> Artifacts
+    MacScript --> Artifacts
+    Bundle --> Artifacts
+    Artifacts --> PreRelease[prerelease-builds.yml<br/>master push only]
+    PreRelease --> GitHubRelease[GitHub prerelease assets]

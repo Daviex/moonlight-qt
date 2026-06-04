@@ -1,0 +1,51 @@
+flowchart LR
+    User[User]
+    QML[QML shell<br/>app/gui/*.qml]
+    Main[main.cpp<br/>Qt app bootstrap]
+    CM[ComputerManager<br/>backend/computermanager.*]
+    Models[ComputerModel and AppModel<br/>gui/*model.*]
+    Host[NvComputer and NvApp<br/>backend/nvcomputer.*, nvapp.*]
+    HTTP[NvHTTP<br/>backend/nvhttp.*]
+    Pair[NvPairingManager<br/>backend/nvpairingmanager.*]
+    Identity[IdentityManager<br/>backend/identitymanager.*]
+    Session[Session<br/>streaming/session.*]
+    Input[SdlInputHandler<br/>streaming/input/*]
+    Audio[Audio renderer<br/>streaming/audio/*]
+    Video[Video decoders/renderers<br/>streaming/video/*]
+    Li[moonlight-common-c<br/>Limelight protocol]
+    MDNS[qmdnsengine<br/>mDNS discovery]
+    Settings[StreamingPreferences<br/>settings/streamingpreferences.*]
+    Path[Path and QSettings<br/>path.*, QSettings]
+    Services[Moonlight web services<br/>updates, compat, mappings, STUN]
+    HostPC[GameStream or Sunshine host]
+
+    User --> QML
+    Main --> QML
+    Main --> Identity
+    Main --> CM
+    Main --> Settings
+    QML --> Models
+    QML --> Settings
+    Models --> CM
+    Models --> Host
+    CM --> Host
+    CM --> MDNS
+    CM --> HTTP
+    CM --> Pair
+    CM --> Services
+    Pair --> Identity
+    Pair --> HTTP
+    HTTP --> Identity
+    HTTP --> HostPC
+    Session --> HTTP
+    Session --> Input
+    Session --> Audio
+    Session --> Video
+    Session --> Li
+    Input --> Li
+    Audio --> Li
+    Video --> Li
+    Li --> HostPC
+    Settings --> Path
+    Host --> Path
+    CM --> Path

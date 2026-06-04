@@ -1,0 +1,37 @@
+sequenceDiagram
+    autonumber
+    participant UI as PcView.qml / ComputerModel
+    participant CM as ComputerManager
+    participant MDNS as qmdnsengine
+    participant HTTP as NvHTTP
+    participant Pair as NvPairingManager
+    participant Identity as IdentityManager
+    participant Store as QSettings hosts
+    participant Host as GameStream/Sunshine host
+
+    UI->>CM: startPolling()
+    CM->>MDNS: browse _nvstream._tcp.local.
+    MDNS-->>CM: service discovered
+    CM->>MDNS: resolve hostname and port
+    CM->>HTTP: getServerInfo()
+    HTTP->>Host: HTTP/HTTPS serverinfo
+    Host-->>HTTP: server XML
+    HTTP-->>CM: NvComputer candidate
+    CM->>Store: saveHosts()
+    CM-->>UI: computerStateChanged()
+
+    UI->>CM: pairHost(computer, pin)
+    CM->>Pair: pair(host, pin)
+    Pair->>Identity: getSslConfig()
+    Pair->>Host: getservercert, clientchallenge, serverchallenge
+    Host-->>Pair: certificates and pairing challenges
+    Pair->>Pair: verify cert signatures and PIN-derived challenge
+    alt pair success
+        Pair-->>CM: PAIRED
+        CM->>Store: persist server certificate
+        CM-->>UI: pairCompleted()
+    else pair failure
+        Pair->>Host: unpair()
+        Pair-->>CM: PIN_WRONG / FAILED / ALREADY_IN_PROGRESS
+        CM-->>UI: pairFailed()
+    end
