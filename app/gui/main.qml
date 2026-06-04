@@ -357,6 +357,15 @@ ApplicationWindow {
                 }
             }
 
+            Label {
+                visible: ProfileManager.hasActiveProfile && !currentItemSuppressesPolling()
+                text: ProfileManager.activeProfileName
+                font.pointSize: 11
+                color: Material.accent
+                elide: Label.ElideRight
+                Layout.maximumWidth: 250
+            }
+
             // This label will appear when the window gets too small and
             // we need to ensure the toolbar controls don't collide
             Label {
