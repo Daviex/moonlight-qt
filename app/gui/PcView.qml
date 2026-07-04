@@ -11,6 +11,9 @@ import SdlGamepadKeyNavigation 1.0
 
 CenteredGridView {
     property ComputerModel computerModel : createModel()
+    property bool focusFirstHostOnLoad: false
+    property bool firstHostFocusApplied: false
+    property bool initialSelectionReset: false
 
     id: pcGrid
     focus: true
@@ -25,6 +28,8 @@ CenteredGridView {
         // We do this here instead of onActivated to avoid losing the user's
         // selection when backing out of a different page of the app.
         currentIndex = -1
+        initialSelectionReset = true
+        focusFirstHostIfNeeded()
     }
 
     // Note: Any initialization done here that is critical for streaming must
@@ -34,11 +39,15 @@ CenteredGridView {
         // Setup signals on CM
         ComputerManager.computerAddCompleted.connect(addComplete)
 
+        focusFirstHostIfNeeded()
+
         // Highlight the first item if a gamepad is connected
         if (currentIndex === -1 && SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
             currentIndex = 0
         }
     }
+
+    onCountChanged: focusFirstHostIfNeeded()
 
     StackView.onDeactivating: {
         ComputerManager.computerAddCompleted.disconnect(addComplete)
@@ -80,6 +89,17 @@ CenteredGridView {
         model.pairingCompleted.connect(pairingComplete)
         model.connectionTestCompleted.connect(testConnectionDialog.connectionTestComplete)
         return model
+    }
+
+    function focusFirstHostIfNeeded()
+    {
+        if (!initialSelectionReset || !focusFirstHostOnLoad ||
+                firstHostFocusApplied || currentIndex !== -1 || count === 0) {
+            return
+        }
+
+        currentIndex = 0
+        firstHostFocusApplied = true
     }
 
     Row {

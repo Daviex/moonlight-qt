@@ -63,7 +63,7 @@ ApplicationWindow {
         showWindowWithCurrentDisplayMode()
     }
 
-    function enterProfile(profileId, suppressAutoLoginPrompt) {
+    function enterProfile(profileId, suppressAutoLoginPrompt, focusFirstHostOnLoad) {
         if (!profileId) {
             return false
         }
@@ -84,7 +84,9 @@ ApplicationWindow {
         ComputerManager.reloadForActiveProfile()
 
         if (!(stackView.currentItem instanceof PcView)) {
-            stackView.push("qrc:/gui/PcView.qml")
+            stackView.push("qrc:/gui/PcView.qml", {
+                "focusFirstHostOnLoad": focusFirstHostOnLoad === true
+            })
         }
 
         if (runConfigChecks && !currentItemSuppressesPolling()) {
@@ -184,7 +186,7 @@ ApplicationWindow {
             doEarlyInit()
             push(initialView)
             if (autoEnterProfile) {
-                enterProfile(ProfileManager.activeProfileId, true)
+                enterProfile(ProfileManager.activeProfileId, true, true)
             }
         }
 
