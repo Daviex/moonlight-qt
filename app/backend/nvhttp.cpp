@@ -25,9 +25,10 @@
 #define XML_NAME_EQUALS(x, y) ((x) == (u##y))
 #endif
 
-NvHTTP::NvHTTP(NvAddress address, uint16_t httpsPort, QSslCertificate serverCert, QNetworkAccessManager* nam) :
+NvHTTP::NvHTTP(NvAddress address, uint16_t httpsPort, QSslCertificate serverCert, bool useTrueUid, QNetworkAccessManager* nam) :
     m_Nam(nam ? nam : new QNetworkAccessManager(this)),
-    m_ServerCert(serverCert)
+    m_ServerCert(serverCert),
+    m_UseTrueUid(useTrueUid)
 {
     m_BaseUrlHttp.setScheme("http");
     m_BaseUrlHttps.setScheme("https");
@@ -41,9 +42,8 @@ NvHTTP::NvHTTP(NvAddress address, uint16_t httpsPort, QSslCertificate serverCert
 }
 
 NvHTTP::NvHTTP(NvComputer* computer, QNetworkAccessManager* nam) :
-    NvHTTP(computer->activeAddress, computer->activeHttpsPort, computer->serverCert, nam)
+    NvHTTP(computer->activeAddress, computer->activeHttpsPort, computer->serverCert, !computer->isNvidiaServerSoftware, nam)
 {
-
 }
 
 void NvHTTP::setServerCert(QSslCertificate serverCert)
@@ -66,6 +66,11 @@ void NvHTTP::setAddress(NvAddress address)
 void NvHTTP::setHttpsPort(uint16_t port)
 {
     m_BaseUrlHttps.setPort(port);
+}
+
+void NvHTTP::setTrueUid(bool useTrueUid)
+{
+    m_UseTrueUid = useTrueUid;
 }
 
 NvAddress NvHTTP::address()
@@ -318,7 +323,16 @@ NvHTTP::getAppList()
             }
             else if (!apps.isEmpty()) {
                 if (XML_NAME_EQUALS(name, "AppTitle")) {
-                    apps.last().name = xmlReader.readElementText();
+                    // If an app has no name, Sunshine may send us <AppTitle/>,
+                    // which readElementText() returns as a null QString.
+                    // We want to treat this as an empty QString instead, so we
+                    // will explicitly convert it. An empty string will satisfy
+                    // NvApp's isInitialized() check.
+                    QString name = xmlReader.readElementText();
+                    if (name.isNull()) {
+                        name = "";
+                    }
+                    apps.last().name = name;
                 }
                 else if (XML_NAME_EQUALS(name, "ID")) {
                     apps.last().id = xmlReader.readElementText().toInt();
@@ -479,10 +493,10 @@ NvHTTP::openConnection(QUrl baseUrl,
     QUrl url(baseUrl);
     url.setPath("/" + command);
 
-    // Use the active profile's UID so hosts can distinguish separate Moonlight
-    // profiles on the same physical client.
-    url.setQuery("uniqueid=" + IdentityManager::get()->getUniqueId() + "&uuid=" +
-                 QUuid::createUuid().toRfc4122().toHex() +
+    // Use the active profile's UID for Sunshine/non-GFE hosts, but keep the
+    // shared placeholder UID for GFE so clients can quit each other's games.
+    url.setQuery("uniqueid=" + (m_UseTrueUid ? IdentityManager::get()->getUniqueId() : "0123456789ABCDEF") +
+                 "&uuid=" + QUuid::createUuid().toRfc4122().toHex() +
                  ((arguments != nullptr) ? ("&" + arguments) : ""));
 
     QNetworkRequest request(url);
