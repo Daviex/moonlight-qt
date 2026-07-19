@@ -30,6 +30,8 @@ QVariant ComputerModel::data(const QModelIndex& index, int role) const
     switch (role) {
     case NameRole:
         return computer->name;
+    case UuidRole:
+        return computer->uuid;
     case OnlineRole:
         return computer->state == NvComputer::CS_ONLINE;
     case PairedRole:
@@ -103,6 +105,7 @@ QHash<int, QByteArray> ComputerModel::roleNames() const
     QHash<int, QByteArray> names;
 
     names[NameRole] = "name";
+    names[UuidRole] = "uuid";
     names[OnlineRole] = "online";
     names[PairedRole] = "paired";
     names[BusyRole] = "busy";
@@ -177,6 +180,18 @@ void ComputerModel::renameComputer(int computerIndex, QString name)
     Q_ASSERT(computerIndex < m_Computers.count());
 
     m_ComputerManager->renameHost(m_Computers[computerIndex], name);
+}
+
+int ComputerModel::indexOfComputer(QString uuid) const
+{
+    for (int i = 0; i < m_Computers.count(); i++) {
+        QReadLocker lock(&m_Computers[i]->lock);
+        if (m_Computers[i]->uuid == uuid) {
+            return i;
+        }
+    }
+
+    return -1;
 }
 
 QString ComputerModel::generatePinString()

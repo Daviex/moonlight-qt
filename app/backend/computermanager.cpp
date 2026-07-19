@@ -14,6 +14,7 @@
 
 #define SER_HOSTS "hosts"
 #define SER_HOSTS_BACKUP "hostsbackup"
+#define SER_DEFAULT_HOST "defaultHost"
 
 class PcMonitorThread : public QThread
 {
@@ -201,6 +202,7 @@ void ComputerManager::loadHosts()
 
     QSettings settings;
     ProfileManager::beginProfileSettings(settings, m_ProfileId);
+    m_DefaultHostUuid = settings.value(SER_DEFAULT_HOST).toString();
 
     // If there's a hosts backup copy, we must have failed to commit
     // a previous update before exiting. Restore the backup now.
@@ -219,6 +221,11 @@ void ComputerManager::loadHosts()
         m_LastSerializedHosts[computer->uuid] = *computer;
     }
     settings.endArray();
+
+    if (!m_DefaultHostUuid.isEmpty() && !m_KnownHosts.contains(m_DefaultHostUuid)) {
+        m_DefaultHostUuid.clear();
+        settings.remove(SER_DEFAULT_HOST);
+    }
 }
 
 void ComputerManager::clearHostsAndDiscovery()
@@ -296,6 +303,7 @@ void ComputerManager::reloadForActiveProfile()
     }
 
     stopDelayedFlushThread();
+    QString previousDefaultHostUuid = m_DefaultHostUuid;
 
     {
         QWriteLocker lock(&m_Lock);
@@ -305,6 +313,54 @@ void ComputerManager::reloadForActiveProfile()
     }
 
     startDelayedFlushThread();
+
+    if (previousDefaultHostUuid != m_DefaultHostUuid) {
+        emit defaultHostChanged();
+    }
+}
+
+QString ComputerManager::defaultHostUuid() const
+{
+    return m_DefaultHostUuid;
+}
+
+bool ComputerManager::setDefaultHost(QString uuid)
+{
+    {
+        QReadLocker lock(&m_Lock);
+        if (!m_KnownHosts.contains(uuid)) {
+            return false;
+        }
+    }
+
+    if (m_DefaultHostUuid == uuid) {
+        return true;
+    }
+
+    m_DefaultHostUuid = uuid;
+
+    QSettings settings;
+    ProfileManager::beginProfileSettings(settings, m_ProfileId);
+    settings.setValue(SER_DEFAULT_HOST, m_DefaultHostUuid);
+
+    emit defaultHostChanged();
+    return true;
+}
+
+bool ComputerManager::clearDefaultHost()
+{
+    if (m_DefaultHostUuid.isEmpty()) {
+        return true;
+    }
+
+    m_DefaultHostUuid.clear();
+
+    QSettings settings;
+    ProfileManager::beginProfileSettings(settings, m_ProfileId);
+    settings.remove(SER_DEFAULT_HOST);
+
+    emit defaultHostChanged();
+    return true;
 }
 
 void DelayedFlushThread::run() {
@@ -601,6 +657,10 @@ private:
 
 void ComputerManager::deleteHost(NvComputer* computer)
 {
+    if (computer->uuid == m_DefaultHostUuid) {
+        clearDefaultHost();
+    }
+
     // Punt to a worker thread to avoid stalling the
     // UI while waiting for the polling thread to die
     QThreadPool::globalInstance()->start(new DeferredHostDeletionTask(this, computer));

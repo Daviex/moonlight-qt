@@ -14,6 +14,8 @@ CenteredGridView {
     property bool focusFirstHostOnLoad: false
     property bool firstHostFocusApplied: false
     property bool initialSelectionReset: false
+    property bool defaultHostAutoOpenPending: true
+    property bool activated: false
 
     id: pcGrid
     focus: true
@@ -32,25 +34,68 @@ CenteredGridView {
         focusFirstHostIfNeeded()
     }
 
+    Timer {
+        id: selectedHostFocusTimer
+        interval: 0
+        repeat: false
+        onTriggered: {
+            if (!pcGrid.activated) {
+                return
+            }
+            if (pcGrid.currentIndex >= 0 && pcGrid.currentItem) {
+                pcGrid.currentItem.forceActiveFocus(Qt.TabFocus)
+            }
+            else {
+                pcGrid.forceActiveFocus(Qt.TabFocus)
+            }
+        }
+    }
+
+    Timer {
+        id: defaultHostOpenTimer
+        interval: 0
+        repeat: false
+        onTriggered: pcGrid.evaluateDefaultHost()
+    }
+
     // Note: Any initialization done here that is critical for streaming must
     // also be done in CliStartStreamSegue.qml, since this code does not run
     // for command-line initiated streams.
     StackView.onActivated: {
+        activated = true
+
         // Setup signals on CM
         ComputerManager.computerAddCompleted.connect(addComplete)
+        computerModel.dataChanged.connect(tryOpenDefaultHost)
+        computerModel.modelReset.connect(tryOpenDefaultHost)
 
         focusFirstHostIfNeeded()
+        if (firstHostFocusApplied && currentIndex >= 0) {
+            focusSelectedHostSoon()
+        }
 
-        // Highlight the first item if a gamepad is connected
-        if (currentIndex === -1 && SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
-            currentIndex = 0
+        tryOpenDefaultHost()
+    }
+
+    onCountChanged: {
+        focusFirstHostIfNeeded()
+        tryOpenDefaultHost()
+    }
+
+    onCurrentItemChanged: {
+        if (activated && firstHostFocusApplied) {
+            focusSelectedHostSoon()
+        }
+        if (activated && defaultHostAutoOpenPending) {
+            defaultHostOpenTimer.restart()
         }
     }
 
-    onCountChanged: focusFirstHostIfNeeded()
-
     StackView.onDeactivating: {
+        activated = false
         ComputerManager.computerAddCompleted.disconnect(addComplete)
+        computerModel.dataChanged.disconnect(tryOpenDefaultHost)
+        computerModel.modelReset.disconnect(tryOpenDefaultHost)
     }
 
     function pairingComplete(error)
@@ -93,13 +138,94 @@ CenteredGridView {
 
     function focusFirstHostIfNeeded()
     {
-        if (!initialSelectionReset || !focusFirstHostOnLoad ||
-                firstHostFocusApplied || currentIndex !== -1 || count === 0) {
+        if (!initialSelectionReset || firstHostFocusApplied ||
+                currentIndex !== -1 || count === 0) {
+            return
+        }
+
+        if (!focusFirstHostOnLoad &&
+                SdlGamepadKeyNavigation.getConnectedGamepads() === 0) {
             return
         }
 
         currentIndex = 0
         firstHostFocusApplied = true
+        if (activated) {
+            focusSelectedHostSoon()
+        }
+    }
+
+    function focusSelectedHostSoon()
+    {
+        selectedHostFocusTimer.restart()
+    }
+
+    function openComputer(computerIndex, computerName, showHiddenGames)
+    {
+        var component = Qt.createComponent("AppView.qml")
+        var properties = {
+            "computerIndex": computerIndex,
+            "objectName": computerName
+        }
+        if (showHiddenGames === true) {
+            properties.showHiddenGames = true
+        }
+
+        var appView = component.createObject(stackView, properties)
+        stackView.push(appView)
+    }
+
+    function tryOpenDefaultHost()
+    {
+        if (!activated || !defaultHostAutoOpenPending) {
+            return
+        }
+
+        if (ComputerManager.defaultHostUuid.length === 0) {
+            defaultHostAutoOpenPending = false
+            return
+        }
+
+        var defaultHostIndex = computerModel.indexOfComputer(ComputerManager.defaultHostUuid)
+        if (defaultHostIndex < 0) {
+            defaultHostAutoOpenPending = false
+            return
+        }
+
+        currentIndex = defaultHostIndex
+        defaultHostOpenTimer.restart()
+    }
+
+    function evaluateDefaultHost()
+    {
+        if (!activated || !defaultHostAutoOpenPending || !currentItem ||
+                currentItem.hostUuid !== ComputerManager.defaultHostUuid) {
+            return
+        }
+
+        if (currentItem.hostStatusUnknown) {
+            return
+        }
+
+        defaultHostAutoOpenPending = false
+        if (currentItem.hostOnline && currentItem.hostPaired && currentItem.hostServerSupported) {
+            openComputer(currentIndex, currentItem.hostName, false)
+        }
+        else {
+            focusSelectedHostSoon()
+        }
+    }
+
+    function toggleDefaultHost(hostUuid)
+    {
+        defaultHostAutoOpenPending = false
+        if (hostUuid === ComputerManager.defaultHostUuid) {
+            ComputerManager.clearDefaultHost()
+        }
+        else {
+            ComputerManager.setDefaultHost(hostUuid)
+        }
+        focusSelectedHostSoon()
     }
 
     Row {
@@ -131,6 +257,12 @@ CenteredGridView {
         grid: pcGrid
 
         property alias pcContextMenu : pcContextMenuLoader.item
+        readonly property string hostUuid: model.uuid
+        readonly property string hostName: model.name
+        readonly property bool hostOnline: model.online
+        readonly property bool hostPaired: model.paired
+        readonly property bool hostStatusUnknown: model.statusUnknown
+        readonly property bool hostServerSupported: model.serverSupported
 
         Image {
             id: pcIcon
@@ -173,11 +305,21 @@ CenteredGridView {
 
             width: parent.width
             anchors.top: pcIcon.bottom
-            anchors.bottom: parent.bottom
+            anchors.bottom: defaultHostLabel.visible ? defaultHostLabel.top : parent.bottom
             font.pointSize: 36
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.Wrap
             elide: Text.ElideRight
+        }
+
+        Label {
+            id: defaultHostLabel
+            text: qsTr("Default")
+            visible: model.uuid === ComputerManager.defaultHostUuid
+            width: parent.width
+            anchors.bottom: parent.bottom
+            horizontalAlignment: Text.AlignHCenter
+            font.pointSize: 12
         }
 
         Loader {
@@ -194,11 +336,15 @@ CenteredGridView {
                 NavigableMenuItem {
                     text: qsTr("View All Apps")
                     onTriggered: {
-                        var component = Qt.createComponent("AppView.qml")
-                        var appView = component.createObject(stackView, {"computerIndex": index, "objectName": model.name, "showHiddenGames": true})
-                        stackView.push(appView)
+                        pcGrid.defaultHostAutoOpenPending = false
+                        pcGrid.openComputer(index, model.name, true)
                     }
                     visible: model.online && model.paired
+                }
+                NavigableMenuItem {
+                    text: model.uuid === ComputerManager.defaultHostUuid ?
+                              qsTr("Remove Default PC") : qsTr("Set as Default PC")
+                    onTriggered: pcGrid.toggleDefaultHost(model.uuid)
                 }
                 NavigableMenuItem {
                     text: qsTr("Wake PC")
@@ -240,6 +386,7 @@ CenteredGridView {
         }
 
         onClicked: {
+            pcGrid.defaultHostAutoOpenPending = false
             if (model.online) {
                 if (!model.serverSupported) {
                     errorDialog.text = qsTr("The version of GeForce Experience on %1 is not supported by this build of Moonlight. You must update Moonlight to stream from %1.").arg(model.name)
@@ -248,9 +395,7 @@ CenteredGridView {
                 }
                 else if (model.paired) {
                     // go to game view
-                    var component = Qt.createComponent("AppView.qml")
-                    var appView = component.createObject(stackView, {"computerIndex": index, "objectName": model.name})
-                    stackView.push(appView)
+                    pcGrid.openComputer(index, model.name, false)
                 }
                 else {
                     var pin = computerModel.generatePinString()

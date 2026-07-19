@@ -210,6 +210,7 @@ private:
 class ComputerManager : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(QString defaultHostUuid READ defaultHostUuid NOTIFY defaultHostChanged)
 
     friend class DeferredHostDeletionTask;
     friend class PendingAddTask;
@@ -228,6 +229,12 @@ public:
     Q_INVOKABLE void reloadForActiveProfile();
 
     Q_INVOKABLE void addNewHostManually(QString address);
+
+    QString defaultHostUuid() const;
+
+    Q_INVOKABLE bool setDefaultHost(QString uuid);
+
+    Q_INVOKABLE bool clearDefaultHost();
 
     void addNewHost(NvAddress address, bool mdns, QString name = QString(), NvAddress mdnsIpv6Address = NvAddress());
 
@@ -254,6 +261,8 @@ signals:
     void computerAddCompleted(QVariant success, QVariant detectedPortBlocking);
 
     void quitAppCompleted(QVariant error);
+
+    void defaultHostChanged();
 
 private slots:
     void handleAboutToQuit();
@@ -294,4 +303,5 @@ private:
     QWaitCondition m_DelayedFlushCondition;
     bool m_NeedsDelayedFlush;
     QString m_ProfileId;
+    QString m_DefaultHostUuid;
 };
