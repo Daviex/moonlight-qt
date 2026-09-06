@@ -424,9 +424,6 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
         if (!inRange(preferences->bitrateKbps, 500, 500000)) {
             fprintf(stderr, "Warning: Bitrate is out of the supported range (500 - 500000 Kbps). Performance may suffer!\n");
         }
-    } else if (displaySet || parser.isSet("fps")) {
-        preferences->bitrateKbps = preferences->getDefaultBitrate(
-            preferences->width, preferences->height, preferences->fps, preferences->enableYUV444);
     }
 
     // Resolve --packet-size option
@@ -497,6 +494,13 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
 
     // Resolve --yuv444 and --no-yuv444 options
     preferences->enableYUV444 = parser.getToggleOptionValue("yuv444", preferences->enableYUV444);
+
+    // Calculate after all video options, including YUV444, have been applied.
+    if (!parser.isSet("bitrate") && (displaySet || parser.isSet("fps") ||
+        (preferences->autoAdjustBitrate && (parser.isSet("yuv444") || parser.isSet("no-yuv444"))))) {
+        preferences->bitrateKbps = preferences->getDefaultBitrate(
+            preferences->width, preferences->height, preferences->fps, preferences->enableYUV444);
+    }
     
     // Resolve --capture-system-keys option
     if (parser.isSet("capture-system-keys")) {

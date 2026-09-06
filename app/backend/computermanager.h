@@ -249,11 +249,14 @@ public:
     // computer is deleted inside this call
     void deleteHost(NvComputer* computer);
 
+    QString profileId() const { return m_ProfileId; }
+
     void renameHost(NvComputer* computer, QString name);
 
     void clientSideAttributeUpdated(NvComputer* computer);
 
 signals:
+    void hostRemoved(QString uuid);
     void computerStateChanged(NvComputer* computer);
 
     void pairingCompleted(NvComputer* computer, QString error);

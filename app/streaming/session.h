@@ -243,7 +243,7 @@ private:
     static
     int drSubmitDecodeUnit(PDECODE_UNIT du);
 
-    StreamingPreferences* m_Preferences;
+    std::unique_ptr<StreamingPreferences> m_Preferences;
     bool m_IsFullScreen;
     SupportedVideoFormatList m_SupportedVideoFormats; // Sorted in order of descending priority
     STREAM_CONFIGURATION m_StreamConfig;

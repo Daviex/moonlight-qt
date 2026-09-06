@@ -3,6 +3,7 @@
 #include "backend/boxartmanager.h"
 #include "backend/computermanager.h"
 #include "streaming/session.h"
+#include "settings/gamestreamingsettings.h"
 
 #include <QAbstractListModel>
 
@@ -19,6 +20,7 @@ class AppModel : public QAbstractListModel
         AppIdRole,
         DirectLaunchRole,
         AppCollectorGameRole,
+        CustomStreamingSettingsRole,
     };
 
 public:
@@ -28,6 +30,9 @@ public:
     Q_INVOKABLE void initialize(ComputerManager* computerManager, int computerIndex, bool showHiddenGames);
 
     Q_INVOKABLE Session* createSessionForApp(int appIndex);
+    Q_INVOKABLE GameStreamingSettings* createGameSettings(int appId);
+    Q_INVOKABLE bool removeGameSettings(int appId);
+    Q_INVOKABLE int indexOfApp(int appId) const;
 
     Q_INVOKABLE int getDirectLaunchAppIndex();
 

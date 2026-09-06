@@ -2,7 +2,9 @@
 
 Date: 2026-09-06. Inspected baseline: `1fa39f193d8b766bd85dc5df771bb99ce0e77d6f`.
 Study branch: `codex/per-game-streaming-settings`, created from `feature/profile-manager` after the navigation fix.
-Status: feasibility study only; the per-game feature described below is not implemented.
+Status: historical feasibility study. The feature has since been implemented on
+this branch; see [the implementation reference](PER_GAME_STREAMING_SETTINGS.md)
+for current behavior, source locations, verification and remaining hardware checks.
 
 ## 1. Decision and intended behavior
 

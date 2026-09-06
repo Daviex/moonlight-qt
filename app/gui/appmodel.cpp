@@ -41,10 +41,44 @@ QString AppModel::getRunningAppName()
 
 Session* AppModel::createSessionForApp(int appIndex)
 {
-    Q_ASSERT(appIndex < m_VisibleApps.count());
+    if (appIndex < 0 || appIndex >= m_VisibleApps.count()) return nullptr;
     NvApp app = m_VisibleApps.at(appIndex);
 
-    return new Session(m_Computer, app);
+    auto preferences = GameStreamingSettings::resolve(*StreamingPreferences::get(),
+        m_ComputerManager->profileId(), m_Computer->uuid, app.id);
+    return new Session(m_Computer, app, preferences.get());
+}
+
+int AppModel::indexOfApp(int appId) const
+{
+    for (int i = 0; i < m_VisibleApps.count(); ++i) {
+        if (m_VisibleApps[i].id == appId) return i;
+    }
+    return -1;
+}
+
+GameStreamingSettings* AppModel::createGameSettings(int appId)
+{
+    if (indexOfApp(appId) < 0) return nullptr;
+    auto editor = new GameStreamingSettings(m_ComputerManager->profileId(), m_Computer->uuid, appId, this);
+    const auto hostUuid = m_Computer->uuid;
+    connect(m_ComputerManager, &ComputerManager::hostRemoved, editor, [editor, hostUuid](const QString& uuid) {
+        if (uuid == hostUuid) editor->invalidate();
+    });
+    connect(editor, &GameStreamingSettings::saved, this, [this, appId]() {
+        const int row = indexOfApp(appId);
+        if (row >= 0) emit dataChanged(index(row), index(row), {CustomStreamingSettingsRole});
+    });
+    return editor;
+}
+
+bool AppModel::removeGameSettings(int appId)
+{
+    const int row = indexOfApp(appId);
+    if (row < 0) return false;
+    const bool removed = GameStreamingSettings::remove(m_ComputerManager->profileId(), m_Computer->uuid, appId);
+    if (removed) emit dataChanged(index(row), index(row), {CustomStreamingSettingsRole});
+    return removed;
 }
 
 int AppModel::getDirectLaunchAppIndex()
@@ -93,6 +127,8 @@ QVariant AppModel::data(const QModelIndex &index, int role) const
         return app.directLaunch;
     case AppCollectorGameRole:
         return app.isAppCollectorGame;
+    case CustomStreamingSettingsRole:
+        return !GameStreamingSettings::load(m_ComputerManager->profileId(), m_Computer->uuid, app.id).isEmpty();
     default:
         return QVariant();
     }
@@ -109,6 +145,7 @@ QHash<int, QByteArray> AppModel::roleNames() const
     names[AppIdRole] = "appid";
     names[DirectLaunchRole] = "directLaunch";
     names[AppCollectorGameRole] = "appCollectorGame";
+    names[CustomStreamingSettingsRole] = "customStreamingSettings";
 
     return names;
 }

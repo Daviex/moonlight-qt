@@ -11,6 +11,7 @@
 #include <QThreadPool>
 #include <QCoreApplication>
 #include <QRandomGenerator>
+#include "settings/gamestreamingsettings.h"
 
 #define SER_HOSTS "hosts"
 #define SER_HOSTS_BACKUP "hostsbackup"
@@ -657,6 +658,8 @@ private:
 
 void ComputerManager::deleteHost(NvComputer* computer)
 {
+    emit hostRemoved(computer->uuid);
+    GameStreamingSettings::removeHost(m_ProfileId, computer->uuid);
     if (computer->uuid == m_DefaultHostUuid) {
         clearDefaultHost();
     }

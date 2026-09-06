@@ -71,5 +71,8 @@ CLI. These validate packaging and publication sequencing, not compilation of
 Windows/macOS/Linux/Steam Link or a real release upload. Full build results must
 come from the GitHub workflow itself.
 
-The earlier cancelled run for the controller fix remains cancelled. The new
-workflow commit is intended to run normally and publish when all builds succeed.
+The controller-fix run and the premature workflow-only run were cancelled. During
+per-game settings development, intermediate pushes must use `[skip ci]`. The final
+completed implementation may run normally and publish only when every build
+succeeds. Windows first runs `scripts/test-settings.bat`, which builds and executes
+the navigation and per-game suites; failure prevents publication.

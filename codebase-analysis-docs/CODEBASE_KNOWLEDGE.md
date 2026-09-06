@@ -13,6 +13,7 @@ Supplemental Mermaid diagrams are stored in `codebase-analysis-docs/assets/`:
 
 Follow-up studies:
 
+- [Per-game streaming settings implementation](PER_GAME_STREAMING_SETTINGS.md) (2026-09-06): current behavior, sparse profile inheritance, controller editor, reset, session ownership and regression tests.
 - [Per-game streaming settings feasibility and work plan](PER_GAME_STREAMING_SETTINGS_FEASIBILITY.md) (2026-09-06): active-profile inheritance, game overrides, shared editor, Session ownership, CLI precedence, reset and validation plan. Includes the navigation fix baseline and its regression-test results.
 - [GitHub build and release workflow](RELEASE_WORKFLOW.md) (2026-09-06): complete release assets, Windows installer and ZIPs, publication checks, and workflow verification.
 
@@ -675,7 +676,7 @@ Edge cases and hidden dependencies:
 
 ### Known Risks and Open Questions
 
-- There is no single automated test suite visible from the inspected root. Much of the confidence likely comes from manual/platform testing and CI builds.
+- The original baseline had no root-level automated suite. Follow-up work added `tests/navigation`, `tests/game-settings` and `tests/workflows`; the Windows workflow now runs the two Qt suites. Real host and hardware coverage remains necessary.
 - The code has substantial platform-specific branching, especially in video, windowing, input capture, and packaging.
 - Decoder and renderer behavior depends on runtime drivers, window systems, FFmpeg build configuration, and environment variables.
 - Network and host behavior differs between NVIDIA GameStream and Sunshine; validation logic often contains host-specific handling.
