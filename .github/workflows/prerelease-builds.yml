@@ -25,6 +25,12 @@ jobs:
           pattern: Moonlight-*-${{ inputs.ci_version }}
           path: dist
 
+      - name: Download debug symbols
+        uses: actions/download-artifact@v6
+        with:
+          pattern: zDevDbgSyms-*-${{ inputs.ci_version }}
+          path: dist
+
       - name: Prepare release assets
         env:
           CI_VERSION: ${{ inputs.ci_version }}
@@ -35,8 +41,19 @@ jobs:
 
           mkdir -p release-assets
 
+          # Refuse to publish if a successful build failed to deliver a package.
+          for artifact in Moonlight-Windows-x64 Moonlight-Windows-arm64 \
+                          Moonlight-Windows-installer Moonlight-macOS \
+                          Moonlight-LinuxAppImage Moonlight-SteamLink \
+                          zDevDbgSyms-Windows zDevDbgSyms-macOS; do
+            if [[ ! -d "dist/${artifact}-${CI_VERSION}" ]]; then
+              echo "Missing required artifact: ${artifact}-${CI_VERSION}" >&2
+              exit 1
+            fi
+          done
+
           found=0
-          for artifact_dir in dist/Moonlight-*-"${CI_VERSION}"; do
+          for artifact_dir in dist/Moonlight-*-"${CI_VERSION}" dist/zDevDbgSyms-*-"${CI_VERSION}"; do
             if [[ ! -d "${artifact_dir}" ]]; then
               continue
             fi
@@ -49,7 +66,7 @@ jobs:
               exit 1
             fi
 
-            if [[ "${#files[@]}" -eq 1 ]]; then
+            if [[ "${#files[@]}" -eq 1 && "${artifact_name}" != zDevDbgSyms-* ]]; then
               filename="$(basename "${files[0]}")"
               asset_path="release-assets/${filename}"
 
@@ -71,6 +88,7 @@ jobs:
             exit 1
           fi
 
+          (cd release-assets && find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
           find release-assets -maxdepth 1 -type f -print
 
       - name: Publish GitHub prerelease
@@ -107,18 +125,31 @@ jobs:
             echo "Automatic prerelease builds for branch ${BRANCH_NAME}, commit ${GITHUB_SHA}."
             echo
             echo "Built from ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}."
+            echo
+            echo "Windows: MoonlightSetup installs x64 or ARM64 automatically; MoonlightPortable ZIPs contain each architecture's binaries."
+            echo "Also includes the macOS universal DMG, Linux AppImage, Steam Link build, and debug symbols."
+            echo "SHA256SUMS contains checksums for all downloadable packages."
           } > "${notes_file}"
 
           if gh release view "${release_tag}" >/dev/null 2>&1; then
             gh release upload "${release_tag}" "${release_assets[@]}" --clobber
-            gh release edit "${release_tag}" \
-              --title "${release_name}" \
-              --notes-file "${notes_file}" \
-              --prerelease
           else
+            # Keep a newly created release unpublished until every asset is uploaded.
             gh release create "${release_tag}" "${release_assets[@]}" \
               --title "${release_name}" \
               --notes-file "${notes_file}" \
+              --draft \
               --prerelease \
               --target "${GITHUB_SHA}"
           fi
+
+          gh release edit "${release_tag}" \
+            --title "${release_name}" \
+            --notes-file "${notes_file}" \
+            --draft=false \
+            --prerelease \
+            --latest=false
+
+          release_url="$(gh release view "${release_tag}" --json url --jq .url)"
+          echo "Published release: ${release_url}"
+          printf '### GitHub release\n\n[%s](%s)\n' "${release_name}" "${release_url}" >> "${GITHUB_STEP_SUMMARY}"

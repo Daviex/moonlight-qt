@@ -5,6 +5,7 @@ permissions:
 
 on:
   push:
+  workflow_dispatch:
   pull_request:
     branches:
       - master
@@ -47,7 +48,7 @@ jobs:
   publish-prerelease:
     if: >-
       always() &&
-      github.event_name == 'push' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       startsWith(github.ref, 'refs/heads/') &&
       needs.setup.result == 'success' &&
       needs['build-appimage'].result == 'success' &&

@@ -303,9 +303,8 @@ rem and should not be harvested for inclusion in the full installer
 copy "%VC_REDIST_DLL_PATH%\*.dll" %DEPLOY_FOLDER%
 if !ERRORLEVEL! NEQ 0 goto Error
 
-rem Since we don't publish Windows installers for CI builds, let's use the user profile
-rem location of the regular non-portable version by default. We'll place a file in the
-rem the package to allow the user to rename if they want portable behavior.
+rem CI ZIPs use the regular user profile location by default, like the installer.
+rem Include an inactive marker users can rename to enable portable storage.
 if defined CI_VERSION (
     echo. > %DEPLOY_FOLDER%\portable.dat.inactive
     if !ERRORLEVEL! NEQ 0 goto Error
