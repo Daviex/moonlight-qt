@@ -23,7 +23,9 @@ CenteredGridView {
     function computerLost()
     {
         // Go back to the PC view on PC loss
-        stackView.pop()
+        if (activated && stackView.currentItem === appGrid) {
+            stackView.pop()
+        }
     }
 
     Component.onCompleted: {
@@ -63,7 +65,7 @@ CenteredGridView {
 
     function createModel()
     {
-        var model = Qt.createQmlObject('import AppModel 1.0; AppModel {}', parent, '')
+        var model = Qt.createQmlObject('import AppModel 1.0; AppModel {}', appGrid, '')
         model.initialize(ComputerManager, computerIndex, showHiddenGames)
         return model
     }

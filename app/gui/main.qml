@@ -64,7 +64,7 @@ ApplicationWindow {
     }
 
     function enterProfile(profileId, suppressAutoLoginPrompt, focusFirstHostOnLoad) {
-        if (!profileId) {
+        if (!profileId || stackView.busy) {
             return false
         }
 
@@ -106,6 +106,10 @@ ApplicationWindow {
     }
 
     function returnToProfileSelection() {
+        if (stackView.busy) {
+            return
+        }
+
         stopPollingIfNeeded()
 
         if (stackView.depth > 1) {
@@ -163,7 +167,16 @@ ApplicationWindow {
     ToolTip.toolTip.contentWidth: Math.min(tooltipTextLayoutHelper.width, 400)
 
     function goBack() {
-        if (clearOnBack) {
+        // A second pop during the transition can skip pages and leave focus
+        // in a view that is being removed.
+        if (stackView.busy) {
+            return
+        }
+
+        if (stackView.depth <= 1) {
+            quitConfirmationDialog.open()
+        }
+        else if (clearOnBack) {
             // Pop all items except the first one
             stackView.pop(null)
             clearOnBack = false
@@ -207,21 +220,15 @@ ApplicationWindow {
             }
         }
 
-        Keys.onEscapePressed: {
-            if (depth > 1) {
+        Keys.onEscapePressed: function(event) {
+            if (!event.isAutoRepeat) {
                 goBack()
-            }
-            else {
-                quitConfirmationDialog.open()
             }
         }
 
-        Keys.onBackPressed: {
-            if (depth > 1) {
+        Keys.onBackPressed: function(event) {
+            if (!event.isAutoRepeat) {
                 goBack()
-            }
-            else {
-                quitConfirmationDialog.open()
             }
         }
 
@@ -309,6 +316,10 @@ ApplicationWindow {
 
     function navigateTo(url, objectType)
     {
+        if (stackView.busy) {
+            return
+        }
+
         var existingItem = stackView.find(function(item, index) {
             return item instanceof objectType
         })

@@ -39,7 +39,7 @@ CenteredGridView {
         interval: 0
         repeat: false
         onTriggered: {
-            if (!pcGrid.activated) {
+            if (!pcGrid.activated || stackView.currentItem !== pcGrid) {
                 return
             }
             if (pcGrid.currentIndex >= 0 && pcGrid.currentItem) {
@@ -93,6 +93,8 @@ CenteredGridView {
 
     StackView.onDeactivating: {
         activated = false
+        selectedHostFocusTimer.stop()
+        defaultHostOpenTimer.stop()
         ComputerManager.computerAddCompleted.disconnect(addComplete)
         computerModel.dataChanged.disconnect(tryOpenDefaultHost)
         computerModel.modelReset.disconnect(tryOpenDefaultHost)
@@ -129,7 +131,7 @@ CenteredGridView {
 
     function createModel()
     {
-        var model = Qt.createQmlObject('import ComputerModel 1.0; ComputerModel {}', parent, '')
+        var model = Qt.createQmlObject('import ComputerModel 1.0; ComputerModel {}', pcGrid, '')
         model.initialize(ComputerManager)
         model.pairingCompleted.connect(pairingComplete)
         model.connectionTestCompleted.connect(testConnectionDialog.connectionTestComplete)
@@ -162,7 +164,10 @@ CenteredGridView {
 
     function openComputer(computerIndex, computerName, showHiddenGames)
     {
-        var component = Qt.createComponent("AppView.qml")
+        if (!activated || stackView.busy || stackView.currentItem !== pcGrid) {
+            return
+        }
+
         var properties = {
             "computerIndex": computerIndex,
             "objectName": computerName
@@ -171,8 +176,7 @@ CenteredGridView {
             properties.showHiddenGames = true
         }
 
-        var appView = component.createObject(stackView, properties)
-        stackView.push(appView)
+        stackView.push("qrc:/gui/AppView.qml", properties)
     }
 
     function tryOpenDefaultHost()
@@ -198,7 +202,8 @@ CenteredGridView {
 
     function evaluateDefaultHost()
     {
-        if (!activated || !defaultHostAutoOpenPending || !currentItem ||
+        if (!activated || stackView.busy || stackView.currentItem !== pcGrid ||
+                !defaultHostAutoOpenPending || !currentItem ||
                 currentItem.hostUuid !== ComputerManager.defaultHostUuid) {
             return
         }

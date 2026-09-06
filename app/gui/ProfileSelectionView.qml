@@ -82,6 +82,11 @@ FocusScope {
     }
 
     function focusCurrentGridItem() {
+        if (profileRoot.StackView.status !== StackView.Active ||
+                stackView.currentItem !== profileRoot) {
+            return
+        }
+
         if (profileGrid.currentItem) {
             profileGrid.currentItem.forceActiveFocus(Qt.TabFocus)
         }
@@ -100,7 +105,9 @@ FocusScope {
     }
 
     function activateProfile(profileId) {
-        if (!allowActivation) {
+        if (!allowActivation || stackView.busy ||
+                profileRoot.StackView.status !== StackView.Active ||
+                stackView.currentItem !== profileRoot) {
             return
         }
 
@@ -111,6 +118,11 @@ FocusScope {
     }
 
     function switchProfile(profileId) {
+        if (stackView.busy || profileRoot.StackView.status !== StackView.Active ||
+                stackView.currentItem !== profileRoot) {
+            return
+        }
+
         if (!window.enterProfile(profileId)) {
             errorDialog.text = qsTr("Unable to switch to this profile.")
             errorDialog.open()
@@ -123,6 +135,8 @@ FocusScope {
         }
         focusGridTimer.restart()
     }
+
+    StackView.onDeactivating: focusGridTimer.stop()
 
     ColumnLayout {
         anchors.fill: parent
