@@ -1,0 +1,19 @@
+flowchart TD
+    Profile["Active profile preferences"] --> Resolve["Resolve effective settings"]
+    Saved["QSettings: profile ID / host UUID / app ID / overrides"] --> Resolve
+    Flags["Explicit CLI options, when present"] --> Resolve
+    Resolve --> Snapshot["Session-owned preferences snapshot"]
+    Snapshot --> Validate["Existing Session validation and negotiation"]
+    Validate --> Host["Launch or resume request to Sunshine / GFE"]
+    Validate --> Local["Local video, audio and input configuration"]
+    Snapshot --> Cleanup["Deferred session cleanup"]
+
+    Menu["Game context menu: Streaming Settings"] --> Draft["Existing controls with isolated draft"]
+    Profile --> Draft
+    Saved --> Draft
+    Draft --> Commit["Commit only user-edited fields on leaving"]
+    Commit --> Saved
+    Reset["Use Profile Setting / Remove Custom Settings"] --> Saved
+
+    ProfileDeletion["Delete profile"] --> RemoveProfile["Remove complete profile settings subtree"]
+    HostDeletion["Delete host"] --> RemoveHost["Remove that host's game overrides"]

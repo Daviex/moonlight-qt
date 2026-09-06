@@ -11,6 +11,10 @@ Supplemental Mermaid diagrams are stored in `codebase-analysis-docs/assets/`:
 - `assets/host_discovery_pairing.mmd`
 - `assets/build_release.mmd`
 
+Follow-up studies:
+
+- [Per-game streaming settings feasibility and work plan](PER_GAME_STREAMING_SETTINGS_FEASIBILITY.md) (2026-09-06): active-profile inheritance, game overrides, shared editor, Session ownership, CLI precedence, reset and validation plan. Includes the navigation fix baseline and its regression-test results.
+
 ## Phase 1: Explore
 
 ### Repository Shape

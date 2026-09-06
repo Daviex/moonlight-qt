@@ -1,0 +1,27 @@
+{
+  "purpose": "Documentation fixture showing proposed QSettings paths, not a separate persistence format",
+  "profileId": "default",
+  "hostUuid": "6bc2a5e3-b09a-4cbb-a5be-a78bb6b9c120",
+  "appId": 42,
+  "profileValues": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 60,
+    "bitrate": 20000,
+    "autoadjustbitrate": true,
+    "hdr": false
+  },
+  "storedGameOverrides": {
+    "profiles/default/gameStreamingSettings/6bc2a5e3-b09a-4cbb-a5be-a78bb6b9c120/42/fps": 120
+  },
+  "effectiveValues": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 120,
+    "bitrate": 28000,
+    "autoadjustbitrate": true,
+    "hdr": false
+  },
+  "bitrateNote": "Calculated with StreamingPreferences::getDefaultBitrate(1920, 1080, 120, false); not persisted as an override",
+  "resetAllRemovesGroup": "profiles/default/gameStreamingSettings/6bc2a5e3-b09a-4cbb-a5be-a78bb6b9c120/42"
+}
