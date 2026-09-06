@@ -1,6 +1,7 @@
 #include "gamestreamingsettings.h"
 #include "backend/profilemanager.h"
 
+#include <QDebug>
 #include <QMetaMethod>
 #include <QMetaProperty>
 #include <QRegularExpression>
