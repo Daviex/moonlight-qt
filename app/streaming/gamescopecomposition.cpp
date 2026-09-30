@@ -29,8 +29,8 @@ bool GamescopeComposition::runCommand(const QStringList& arguments, QString& out
             output = "gamescopectl and an installed host bridge are unavailable";
             return false;
         }
-        args = {"env", "GAMESCOPE_WAYLAND_DISPLAY=" + qEnvironmentVariable("GAMESCOPE_WAYLAND_DISPLAY"),
-                "XDG_RUNTIME_DIR=" + qEnvironmentVariable("XDG_RUNTIME_DIR"), "gamescopectl"};
+        args = QStringList{"env", "GAMESCOPE_WAYLAND_DISPLAY=" + qEnvironmentVariable("GAMESCOPE_WAYLAND_DISPLAY"),
+                           "XDG_RUNTIME_DIR=" + qEnvironmentVariable("XDG_RUNTIME_DIR"), "gamescopectl"};
         args.append(arguments);
     }
     QProcess process;
