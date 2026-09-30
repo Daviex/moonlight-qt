@@ -9,6 +9,8 @@ contains(CONFIG, tests) {
     SUBDIRS += pyrowave
     SUBDIRS += profiles
     SUBDIRS += navigation
+    gameSettings.subdir = game-settings
+    SUBDIRS += gameSettings
 } else {
     message(VRR tests are disabled; rerun qmake with CONFIG+=tests)
 }

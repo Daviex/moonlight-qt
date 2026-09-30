@@ -3,6 +3,7 @@
 #include "nvhttp.h"
 #include "nvpairingmanager.h"
 #include "profilemanager.h"
+#include "settings/gamestreamingsettings.h"
 
 #include <Limelight.h>
 #include <QtEndian>
@@ -665,6 +666,7 @@ void ComputerManager::deleteHost(NvComputer* computer)
     m_ThreadPool.waitForDone();
 
     emit hostRemoved(computer->uuid);
+    GameStreamingSettings::removeHost(m_ProfileId, computer->uuid);
 
     ComputerPollingEntry* pollingEntry;
     {

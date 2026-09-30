@@ -15,6 +15,8 @@ set "QT_QPA_FONTDIR=%WINDIR%\Fonts"
 call :runSuite navigation tst_navigation
 if errorlevel 1 exit /b 1
 call :runSuite profiles tst_profiles
+if errorlevel 1 exit /b 1
+call :runSuite game-settings tst_game_settings
 exit /b %errorlevel%
 
 :runSuite

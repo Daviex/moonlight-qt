@@ -63,7 +63,7 @@ public:
     StreamCommandLineParser();
     virtual ~StreamCommandLineParser();
 
-    void parse(const QStringList &args, StreamingPreferences *preferences);
+    void parse(const QStringList &args, StreamingPreferences *preferences, bool warnOnRanges = true);
 
     QString getHost() const;
     QString getAppName() const;

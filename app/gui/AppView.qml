@@ -13,6 +13,7 @@ CenteredGridView {
     property bool activated
     property bool showHiddenGames
     property bool showGames
+    property int settingsAppId: -1
 
     id: appGrid
     focus: true
@@ -39,6 +40,12 @@ CenteredGridView {
     StackView.onActivated: {
         appModel.computerLost.connect(computerLost)
         activated = true
+
+        if (settingsAppId >= 0) {
+            var restoredIndex = appModel.indexOfApp(settingsAppId)
+            currentIndex = restoredIndex >= 0 ? restoredIndex : Math.min(currentIndex, count - 1)
+            settingsAppId = -1
+        }
         SdlGamepadKeyNavigation.setUiNavMode(false)
         forceActiveFocus(Qt.TabFocusReason)
 
@@ -74,6 +81,17 @@ CenteredGridView {
     }
 
     model: appModel
+
+    function openGameSettings(appId, gameName) {
+        if (stackView.busy || !activated) return
+        var editor = appModel.createGameSettings(appId)
+        if (!editor) return
+        settingsAppId = appId
+        // A separate page type keeps the profile settings toolbar route distinct.
+        stackView.push("qrc:/gui/GameSettingsView.qml", {
+            "editor": editor, "gameName": gameName, "hostName": objectName
+        })
+    }
 
     delegate: NavigableItemDelegate {
         width: 220; height: 287;
@@ -216,7 +234,7 @@ CenteredGridView {
                     quitAppDialog.appName = appModel.getRunningAppName()
                     quitAppDialog.segueToStream = true
                     quitAppDialog.nextAppName = model.name
-                    quitAppDialog.nextAppIndex = index
+                    quitAppDialog.nextAppId = model.appid
                     quitAppDialog.open()
                 }
 
@@ -302,6 +320,11 @@ CenteredGridView {
             sourceComponent: NavigableMenu {
                 id: appContextMenu
                 initiator: appContextMenuLoader.parent
+                onClosed: Qt.callLater(function() {
+                    if (appGrid.activated && stackView.currentItem === appGrid && !stackView.busy &&
+                            !removeSettingsDialog.visible && !quitAppDialog.visible)
+                        appGrid.forceActiveFocus(Qt.TabFocusReason)
+                })
                 NavigableMenuItem {
                     text: model.running ? qsTr("Resume Game") : qsTr("Launch Game")
                     onTriggered: launchOrResumeSelectedApp(true)
@@ -310,6 +333,19 @@ CenteredGridView {
                     text: qsTr("Quit Game")
                     onTriggered: doQuitGame()
                     visible: model.running
+                }
+                NavigableMenuItem {
+                    text: model.customStreamingSettings ? qsTr("Streaming Settings (Custom)") : qsTr("Streaming Settings")
+                    onTriggered: appGrid.openGameSettings(model.appid, model.name)
+                }
+                NavigableMenuItem {
+                    text: qsTr("Remove Custom Settings")
+                    visible: model.customStreamingSettings
+                    onTriggered: {
+                        removeSettingsDialog.appId = model.appid
+                        removeSettingsDialog.gameName = model.name
+                        removeSettingsDialog.open()
+                    }
                 }
                 NavigableMenuItem {
                     checkable: true
@@ -353,11 +389,24 @@ CenteredGridView {
     }
 
     NavigableMessageDialog {
+        id: removeSettingsDialog
+        property int appId
+        property string gameName
+        text: qsTr("Remove all custom streaming settings for %1?").arg(gameName)
+        standardButtons: Dialog.Yes | Dialog.No
+        onAccepted: appModel.removeGameSettings(appId)
+        onClosed: Qt.callLater(function() {
+            if (appGrid.activated && stackView.currentItem === appGrid)
+                appGrid.forceActiveFocus(Qt.TabFocusReason)
+        })
+    }
+
+    NavigableMessageDialog {
         id: quitAppDialog
         property string appName : ""
         property bool segueToStream : false
         property string nextAppName: ""
-        property int nextAppIndex: 0
+        property int nextAppId: 0
         text:qsTr("Are you sure you want to quit %1? Any unsaved progress will be lost.").arg(appName)
         standardButtons: Dialog.Yes | Dialog.No
 
@@ -368,7 +417,7 @@ CenteredGridView {
                 // Store the session and app name if we're going to stream after
                 // successfully quitting the old app.
                 params.nextAppName = nextAppName
-                params.nextSession = appModel.createSessionForApp(nextAppIndex)
+                params.nextSession = appModel.createSessionForApp(appModel.indexOfApp(nextAppId))
                 if (!params.nextSession) return
             }
             else {

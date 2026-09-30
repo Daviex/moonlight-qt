@@ -192,6 +192,7 @@ SOURCES += \
     settings/compatfetcher.cpp \
     settings/mappingfetcher.cpp \
     settings/streamingpreferences.cpp \
+    settings/gamestreamingsettings.cpp \
     diagnostics/diagnosticcapture.cpp \
     diagnostics/gputrace.cpp \
     diagnostics/diagnosticzip.cpp \
@@ -248,6 +249,7 @@ HEADERS += \
     cli/quitstream.h \
     cli/startstream.h \
     settings/streamingpreferences.h \
+    settings/gamestreamingsettings.h \
     diagnostics/diagnosticcapture.h \
     diagnostics/gputrace.h \
     diagnostics/diagnosticzip.h \

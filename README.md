@@ -33,6 +33,20 @@ whether that profile opens automatically at startup.
 Command-line actions accept `--profile <name-or-id>`; without it, they use the
 default profile.
 
+### Per-game streaming settings
+
+Open an application's context menu and choose **Streaming Settings** to customize
+that game. Values inherit from the current profile until changed. **Use Profile
+Setting** restores inheritance for an individual setting; **Reset All** removes
+all overrides for that game. The application menu also offers **Remove Custom
+Settings**.
+
+Overrides are separate for each profile, host and application. They support the
+fork's VRR latency/smoothing options and PyroWave codec/bitrate choices. Diagnostics,
+calibration and network-adapter tools remain in the general settings screen.
+Explicit streaming CLI options take precedence over per-game values without
+saving those command-line choices.
+
 ## Downloads
 - [Windows, macOS, and Steam Link](https://github.com/moonlight-stream/moonlight-qt/releases)
 - [Snap (for Ubuntu-based Linux distros)](https://snapcraft.io/moonlight)

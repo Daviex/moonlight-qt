@@ -246,6 +246,8 @@ public:
     // computer is deleted inside this call
     void deleteHost(NvComputer* computer);
 
+    QString profileId() const { return m_ProfileId; }
+
     void renameHost(NvComputer* computer, QString name);
 
     void clientSideAttributeUpdated(NvComputer* computer);

@@ -69,7 +69,8 @@ QtObject {
     property string fixDescription: ""
     property string manualHint: ""
     property string manualCommand: ""
-    function refresh() {}
+    property int refreshCount: 0
+    function refresh() { refreshCount++ }
     function apply() {}
     function copyCommand() {}
 }

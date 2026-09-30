@@ -127,7 +127,7 @@ jobs:
           python tests/vrr/check_diagnostic_zip.py build/diagnostic-fixture.zip
           if ($LASTEXITCODE -ne 0) { throw "Diagnostic export ZIP validation failed" }
 
-      - name: Test profiles and navigation (Windows x64)
+      - name: Test profiles, navigation and game settings (Windows x64)
         timeout-minutes: 2
         if: runner.os == 'Windows'
         shell: pwsh
@@ -141,7 +141,7 @@ jobs:
           $deploy = (Resolve-Path build/deploy-x64-release).Path
           $env:Path = "$deploy;$env:QT_PATH;$env:Path"
           $env:QT_QPA_FONTDIR = "$env:WINDIR/Fonts"
-          foreach ($path in @('build/tests-vrr/profiles/release/tst_profiles.exe', 'build/tests-vrr/navigation/release/tst_navigation.exe')) {
+          foreach ($path in @('build/tests-vrr/profiles/release/tst_profiles.exe', 'build/tests-vrr/navigation/release/tst_navigation.exe', 'build/tests-vrr/game-settings/release/tst_game_settings.exe')) {
             $test = (Resolve-Path $path).Path
             Write-Host "Running $test"
             & $test -o '-,txt'

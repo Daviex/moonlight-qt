@@ -556,7 +556,7 @@ ApplicationWindow {
 
             NavigableToolButton {
                 id: settingsButton
-                visible: !currentItemSuppressesPolling()
+                visible: !currentItemSuppressesPolling() && !(stackView.currentItem instanceof GameSettingsView)
 
                 iconSource:  "qrc:/res/settings.svg"
 

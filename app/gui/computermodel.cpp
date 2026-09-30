@@ -1,5 +1,6 @@
 #include "computermodel.h"
 #include "backend/profilemanager.h"
+#include "settings/gamestreamingsettings.h"
 
 #include <QThreadPool>
 
@@ -147,7 +148,9 @@ Session* ComputerModel::createSessionForCurrentGame(int computerIndex)
 
     for (NvApp& app : computer->appList) {
         if (app.id == computer->currentGameId) {
-            return new Session(computer, app);
+            auto preferences = GameStreamingSettings::resolve(*StreamingPreferences::get(),
+                m_ComputerManager->profileId(), computer->uuid, app.id);
+            return new Session(computer, app, preferences.get());
         }
     }
 

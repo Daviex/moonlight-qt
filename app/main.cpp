@@ -1008,6 +1008,8 @@ int main(int argc, char *argv[])
     // Register our C++ types for QML
     qmlRegisterType<ComputerModel>("ComputerModel", 1, 0, "ComputerModel");
     qmlRegisterType<AppModel>("AppModel", 1, 0, "AppModel");
+    qmlRegisterUncreatableType<GameStreamingSettings>("GameStreamingSettings", 1, 0,
+        "GameStreamingSettings", "Created by AppModel");
     qmlRegisterUncreatableType<Session>("Session", 1, 0, "Session", "Session cannot be created from QML");
     qmlRegisterSingletonType<ProfileManager>("ProfileManager", 1, 0,
                                              "ProfileManager",
@@ -1093,12 +1095,14 @@ int main(int argc, char *argv[])
     case GlobalCommandLineParser::StreamRequested:
         {
             initialView = "qrc:/gui/CliStartStreamSegue.qml";
-            StreamingPreferences* preferences = StreamingPreferences::get();
+            auto preferences = StreamingPreferences::get()->createTransientCopy();
             StreamCommandLineParser streamParser;
-            streamParser.parse(app.arguments(), preferences);
+            // Extract the target first; range warnings use the resolved game
+            // configuration when the launcher parses the options again.
+            streamParser.parse(app.arguments(), preferences.get(), false);
             QString host    = streamParser.getHost();
             QString appName = streamParser.getAppName();
-            auto launcher   = new CliStartStream::Launcher(host, appName, preferences, &app);
+            auto launcher   = new CliStartStream::Launcher(host, appName, app.arguments(), &app);
             engine.rootContext()->setContextProperty("launcher", launcher);
             break;
         }
