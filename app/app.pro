@@ -290,6 +290,7 @@ ffmpeg {
         streaming/video/ffmpeg-renderers/swframemapper.cpp \
         streaming/video/ffmpeg-renderers/pacer/pacer.cpp \
         streaming/video/ffmpeg-renderers/pacer/vrrpacingworker.cpp \
+        streaming/video/ffmpeg-renderers/pacer/vrr/profile.cpp \
         streaming/video/ffmpeg-renderers/pacer/vrr/vrrtimingcontroller.cpp \
         streaming/video/ffmpeg-renderers/pacer/vrr/vrrtargetwaiter.cpp
 
@@ -703,5 +704,3 @@ PE_VERSION = $$(MOONLIGHT_PE_VERSION)
     VERSION = "$$PE_VERSION"
 }
 DEFINES += VERSION_STR=\\\"$$MOONLIGHT_VERSION\\\"
-
-SOURCES += $$PWD/streaming/video/ffmpeg-renderers/pacer/vrr/profile.cpp
