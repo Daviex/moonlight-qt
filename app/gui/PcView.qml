@@ -15,6 +15,7 @@ CenteredGridView {
     property bool firstHostFocusApplied: false
     property bool initialSelectionReset: false
     property bool defaultHostAutoOpenPending: true
+    property bool defaultHostSelected: false
     property bool activated: false
 
     id: pcGrid
@@ -43,10 +44,10 @@ CenteredGridView {
                 return
             }
             if (pcGrid.currentIndex >= 0 && pcGrid.currentItem) {
-                pcGrid.currentItem.forceActiveFocus(Qt.TabFocus)
+                pcGrid.currentItem.forceActiveFocus(Qt.TabFocusReason)
             }
             else {
-                pcGrid.forceActiveFocus(Qt.TabFocus)
+                pcGrid.forceActiveFocus(Qt.TabFocusReason)
             }
         }
     }
@@ -93,6 +94,7 @@ CenteredGridView {
 
     StackView.onDeactivating: {
         activated = false
+        defaultHostAutoOpenPending = false
         selectedHostFocusTimer.stop()
         defaultHostOpenTimer.stop()
         ComputerManager.computerAddCompleted.disconnect(addComplete)
@@ -196,7 +198,14 @@ CenteredGridView {
             return
         }
 
+        // Once selected, respect navigation performed while the first poll is pending.
+        if (defaultHostSelected && currentIndex !== defaultHostIndex) {
+            defaultHostAutoOpenPending = false
+            return
+        }
+
         currentIndex = defaultHostIndex
+        defaultHostSelected = true
         defaultHostOpenTimer.restart()
     }
 
@@ -419,6 +428,7 @@ CenteredGridView {
         }
 
         onPressAndHold: {
+            pcGrid.defaultHostAutoOpenPending = false
             // popup() ensures the menu appears under the mouse cursor
             if (pcContextMenu.popup) {
                 pcContextMenu.popup()
@@ -438,12 +448,14 @@ CenteredGridView {
         }
 
         Keys.onMenuPressed: {
+            pcGrid.defaultHostAutoOpenPending = false
             // We must use open() here so the menu is positioned on
             // the ItemDelegate and not where the mouse cursor is
             pcContextMenu.open()
         }
 
         Keys.onDeletePressed: {
+            pcGrid.defaultHostAutoOpenPending = false
             deletePcDialog.pcIndex = index
             deletePcDialog.pcName = model.name
             deletePcDialog.open()

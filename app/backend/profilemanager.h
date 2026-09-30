@@ -5,6 +5,7 @@
 #include <QString>
 #include <QSettings>
 #include <QVector>
+#include <atomic>
 
 class ProfileManager : public QObject
 {
@@ -42,6 +43,11 @@ public:
 
     static void
     beginProfileSettings(QSettings& settings, QString profileId);
+
+    void suspendRequests();
+    void resumeRequests();
+    bool requestsAllowed() const { return m_RequestsAllowed.load(); }
+    void deactivateProfile();
 
     QVariantList
     profiles() const;
@@ -107,6 +113,8 @@ public:
     isAutoLoginProfile(QString id) const;
 
 signals:
+    void pendingRequestsCanceled();
+    void activeProfileAboutToChange();
     void profilesChanged();
     void activeProfileChanged();
 
@@ -143,4 +151,5 @@ private:
     QVector<Profile> m_Profiles;
     QString m_DefaultProfileId;
     QString m_AutoLoginProfileId;
+    std::atomic_bool m_RequestsAllowed{true};
 };

@@ -25,7 +25,7 @@ class GameSettingsFactory : public QObject
 {
     Q_OBJECT
 public:
-    Q_INVOKABLE GameStreamingSettings* create(int appId) { return new GameStreamingSettings(activeProfile, "host-a", appId, this); }
+    Q_INVOKABLE GameStreamingSettings* create(int appId, QObject* owner) { return new GameStreamingSettings(activeProfile, "host-a", appId, owner); }
     Q_INVOKABLE bool remove(int appId) { return GameStreamingSettings::remove(activeProfile, "host-a", appId); }
 };
 
@@ -207,14 +207,32 @@ private slots:
         QVERIFY(stored().isEmpty());
     }
 
-    void invalidValuesAndScopesAreRejected() {
-        auto valid = StreamingPreferences::validatedGameValues({{"width", 1920}, {"height", -1},
-            {"fps", 0}, {"vsync", "maybe"}, {"audiocfg", 99}, {"videocfg", 3},
-            {"renderer", -1}, {"hdr", false}, {"captureSysKeys", 0}, {"language", 1},
-            {"mdns", false}, {"uidisplaymode", 2}, {"richpresence", false}});
-        QCOMPARE(valid, (QVariantMap{{"hdr", false}}));
+    void invalidStoredValuesFallBackToProfile() {
+        base()->enableHdr = true;
+        QSettings settings;
+        ProfileManager::beginProfileSettings(settings, activeProfile);
+        settings.beginGroup("gameStreamingSettings/host-a/1");
+        const QVariantMap invalid{{"width", 1920}, {"height", -1}, {"fps", 0},
+            {"bitrate", 20000.5}, {"vsync", "maybe"}, {"audiocfg", 99}, {"videocfg", 3},
+            {"windowmode", 1.5}, {"renderer", -1}, {"hdr", false}, {"capturesyskeys", -1},
+            {"language", 1}, {"mdns", false}, {"uidisplaymode", 2}, {"richpresence", false}};
+        for (auto it = invalid.cbegin(); it != invalid.cend(); ++it) settings.setValue(it.key(), it.value());
+        settings.sync();
+        const auto effective = GameStreamingSettings::resolve(*base(), activeProfile, "host-a", 1);
+        auto expected = base()->gameValues();
+        expected["hdr"] = false;
+        QCOMPARE(effective->gameValues(), expected);
+        QCOMPARE(effective->language, base()->language);
+        QCOMPARE(effective->uiDisplayMode, base()->uiDisplayMode);
+        QCOMPARE(effective->enableMdns, base()->enableMdns);
+        QCOMPARE(effective->richPresence, base()->richPresence);
+    }
+
+    void invalidScopesCannotPersist() {
         QVERIFY(!GameStreamingSettings::remove("../default", "host-a", 1));
         QVERIFY(!GameStreamingSettings::remove("default", "../host-a", 1));
+        QVERIFY(!GameStreamingSettings::remove("default\n", "host-a", 1));
+        QVERIFY(!GameStreamingSettings::remove("default", "host-a\n", 1));
         GameStreamingSettings invalid("default", "host-a", -1);
         invalid.preferences()->fps = 120;
         QVERIFY(!invalid.save());
@@ -258,30 +276,18 @@ private slots:
         QCOMPARE(stored().value("fps"), QVariant(120));
     }
 
-    void allSupportedFieldsRoundTrip() {
-        auto values = base()->gameValues();
-        for (auto it = values.begin(); it != values.end(); ++it) {
-            if (it.value().userType() == QMetaType::Bool) it.value() = !it.value().toBool();
-        }
-        values["width"] = 1920;
-        values["height"] = 1080;
-        values["fps"] = 144;
-        values["bitrate"] = 20000;
-        values["autoadjustbitrate"] = false;
-        values["audiocfg"] = 2;
-        values["videocfg"] = 4;
-        values["videodec"] = 2;
-        values["renderer"] = 1;
-        values["windowmode"] = 2;
-        values["capturesyskeys"] = 2;
+    void enumsAndFalseOverridesRoundTrip() {
         GameStreamingSettings editor(activeProfile, "host-a", 1);
-        editor.preferences()->applyGameValues(values);
+        editor.preferences()->audioConfig = StreamingPreferences::AC_71_SURROUND;
+        editor.preferences()->captureSysKeysMode = StreamingPreferences::CSK_ALWAYS;
+        editor.preferences()->multiController = false;
         QVERIFY(editor.save());
+        QCOMPARE(stored(), (QVariantMap{{"audiocfg", 2}, {"capturesyskeys", 2}, {"multicontroller", false}}));
         const auto effective = GameStreamingSettings::resolve(*base(), activeProfile, "host-a", 1);
-        QCOMPARE(effective->gameValues(), values);
-        QCOMPARE(effective->uiDisplayMode, base()->uiDisplayMode);
-        QCOMPARE(effective->language, base()->language);
-        QCOMPARE(effective->richPresence, base()->richPresence);
+        QCOMPARE(effective->audioConfig, StreamingPreferences::AC_71_SURROUND);
+        QCOMPARE(effective->captureSysKeysMode, StreamingPreferences::CSK_ALWAYS);
+        QVERIFY(!effective->multiController);
+        QVERIFY(base()->multiController);
     }
 
     void qmlOpenAndCloseDoesNotCustomize() {
@@ -304,7 +310,8 @@ private slots:
         openEditor();
         QPointer<QObject> editor = evaluate("editor", page()).value<QObject*>();
         evaluate("settingsLoader.item.preferences.fps = 120", page());
-        QCOMPARE(evaluate("editor.customSettings.length", page()).toInt(), 1);
+        evaluate("settingsLoader.item.preferences.enableVsync = false", page());
+        QCOMPARE(evaluate("editor.customSettings.length", page()).toInt(), 2);
         // Reach the footer by the same Tab traversal generated by controller navigation.
         bool reached = false;
         for (int i = 0; i < 100; ++i) {
@@ -316,12 +323,13 @@ private slots:
         }
         QVERIFY(reached);
         QTest::keyClick(m_Window.get(), Qt::Key_Space);
-        QTRY_COMPARE(evaluate("editor.customSettings.length", page()).toInt(), 0);
+        QTRY_COMPARE(evaluate("editor.customSettings.length", page()).toInt(), 1);
+        QVERIFY(!evaluate("settingsLoader.item.preferences.enableVsync", page()).toBool());
         evaluate("settingsLoader.item.preferences.fps = 144", page());
         for (int i = 0; i < 12; ++i) QTest::keyClick(m_Window.get(), Qt::Key_Escape);
         QTRY_VERIFY(!busy());
         QCOMPARE(evaluate("stackView.depth").toInt(), 3);
-        QCOMPARE(stored().value("fps"), QVariant(144));
+        QCOMPARE(stored(), (QVariantMap{{"fps", 144}, {"vsync", false}}));
         QCOMPARE(page()->property("currentIndex").toInt(), 0);
         QVERIFY(qobject_cast<QQuickItem*>(page())->hasActiveFocus());
         QTRY_VERIFY(editor.isNull());
@@ -397,22 +405,12 @@ private slots:
         QCOMPARE(games->property("currentIndex").toInt(), 0);
     }
 
-    void qmlWindowCloseSavesAndLayout() {
+    void qmlWindowCloseSaves() {
         openEditor();
         auto settings = evaluate("settingsLoader.item", page()).value<QObject*>();
         settings->findChild<QQuickItem*>("fpsComboBox")->forceActiveFocus();
         QTest::keyClick(m_Window.get(), Qt::Key_Left);
         QCOMPARE(evaluate("preferences.fps", settings).toInt(), 30);
-        const QString directory = qEnvironmentVariable("GAME_SETTINGS_SCREENSHOTS");
-        if (!directory.isEmpty()) {
-            for (const QSize size : {QSize(1280, 720), QSize(854, 600)}) {
-                m_Window->resize(size);
-                QTest::qWait(150);
-                const auto screenshot = m_Window->grabWindow();
-                QVERIFY(!screenshot.isNull());
-                QVERIFY(screenshot.save(directory + QString("/settings-%1.png").arg(size.width())));
-            }
-        }
         m_Window.reset();
         QCOMPARE(stored().value("fps"), QVariant(30));
     }

@@ -18,6 +18,17 @@ BoxArtManager::BoxArtManager(QObject *parent) :
     if (!m_BoxArtDir.exists()) {
         m_BoxArtDir.mkpath(".");
     }
+
+    connect(ProfileManager::get(), &ProfileManager::activeProfileAboutToChange, this, &BoxArtManager::stop);
+}
+
+void BoxArtManager::stop()
+{
+    // Stop using the old computer pointers and identity before hosts are
+    // deleted or reloaded. Discard late queued completions.
+    m_ProfileActive = false;
+    m_ThreadPool.clear();
+    m_ThreadPool.waitForDone();
 }
 
 QString
@@ -72,6 +83,9 @@ private:
 
 QUrl BoxArtManager::loadBoxArt(NvComputer* computer, NvApp& app)
 {
+    if (!m_ProfileActive) {
+        return QUrl("qrc:/res/no_app_image.png");
+    }
     // Try to open the cached file if it exists and contains data
     QFile cacheFile(getFilePathForBoxArt(computer, app.id));
     if (cacheFile.exists() && cacheFile.size() > 0) {
@@ -88,19 +102,19 @@ QUrl BoxArtManager::loadBoxArt(NvComputer* computer, NvApp& app)
     return QUrl("qrc:/res/no_app_image.png");
 }
 
-void BoxArtManager::deleteBoxArt(NvComputer* computer)
+void BoxArtManager::deleteBoxArt(NvComputer* computer, const QString& profileId)
 {
     QDir dir(Path::getBoxArtCacheDir());
 
     // Delete everything in this computer's box art directory
-    if (dir.cd(computer->uuid)) {
+    if (!profileId.isEmpty() && dir.cd(profileId) && dir.cd(computer->uuid)) {
         dir.removeRecursively();
     }
 }
 
 void BoxArtManager::handleBoxArtLoadComplete(NvComputer* computer, NvApp app, QUrl image)
 {
-    if (!image.isEmpty()) {
+    if (m_ProfileActive && !image.isEmpty()) {
         emit boxArtLoadComplete(computer, app, image);
     }
 }

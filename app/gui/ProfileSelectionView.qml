@@ -10,9 +10,7 @@ FocusScope {
     id: profileRoot
 
     property bool suppressPolling: true
-    property bool allowActivation: true
-
-    objectName: allowActivation ? qsTr("Profiles") : qsTr("Manage Profiles")
+    objectName: qsTr("Profiles")
     focus: true
     activeFocusOnTab: true
 
@@ -42,31 +40,10 @@ FocusScope {
         interval: 0
         repeat: false
         onTriggered: {
-            if (!editProfileDialog.opened && !deleteProfileDialog.opened && !errorDialog.opened) {
+            if (!editProfileDialog.visible && !deleteProfileDialog.visible && !errorDialog.visible) {
                 profileRoot.focusCurrentGridItem()
             }
         }
-    }
-
-    function findProfile(profileId) {
-        var profiles = ProfileManager.profiles
-        for (var i = 0; i < profiles.length; i++) {
-            if (profiles[i].id === profileId) {
-                return profiles[i]
-            }
-        }
-        return null
-    }
-
-    function currentProfile() {
-        if (profileGrid.currentIndex < 0 || profileGrid.currentIndex >= profileGrid.count) {
-            return null
-        }
-        var data = profileGrid.model[profileGrid.currentIndex]
-        if (data && data.isAddProfile) {
-            return null
-        }
-        return data
     }
 
     function gridColumns() {
@@ -88,10 +65,10 @@ FocusScope {
         }
 
         if (profileGrid.currentItem) {
-            profileGrid.currentItem.forceActiveFocus(Qt.TabFocus)
+            profileGrid.currentItem.forceActiveFocus(Qt.TabFocusReason)
         }
         else {
-            profileGrid.forceActiveFocus(Qt.TabFocus)
+            profileGrid.forceActiveFocus(Qt.TabFocusReason)
         }
     }
 
@@ -105,7 +82,7 @@ FocusScope {
     }
 
     function activateProfile(profileId) {
-        if (!allowActivation || stackView.busy ||
+        if (stackView.busy ||
                 profileRoot.StackView.status !== StackView.Active ||
                 stackView.currentItem !== profileRoot) {
             return
@@ -113,18 +90,6 @@ FocusScope {
 
         if (!window.enterProfile(profileId)) {
             errorDialog.text = qsTr("Unable to activate this profile.")
-            errorDialog.open()
-        }
-    }
-
-    function switchProfile(profileId) {
-        if (stackView.busy || profileRoot.StackView.status !== StackView.Active ||
-                stackView.currentItem !== profileRoot) {
-            return
-        }
-
-        if (!window.enterProfile(profileId)) {
-            errorDialog.text = qsTr("Unable to switch to this profile.")
             errorDialog.open()
         }
     }
@@ -144,7 +109,7 @@ FocusScope {
         spacing: 18
 
         Label {
-            text: profileRoot.allowActivation ? qsTr("Choose a profile") : qsTr("Manage profiles")
+            text: qsTr("Choose a profile")
             font.pointSize: 30
             horizontalAlignment: Text.AlignHCenter
             Layout.fillWidth: true
@@ -270,15 +235,7 @@ FocusScope {
                         editProfileDialog.open()
                         return
                     }
-                    if (profileRoot.allowActivation) {
-                        activateProfile(profile.id)
-                    }
-                    else if (profile.id !== ProfileManager.activeProfileId) {
-                        switchProfile(profile.id)
-                    }
-                    else {
-                        profileContextMenu.open()
-                    }
+                    activateProfile(profile.id)
                 }
 
                 onPressAndHold: {
@@ -328,7 +285,7 @@ FocusScope {
                     else {
                         var target = profileRoot.footerFocusTarget()
                         if (target) {
-                            target.forceActiveFocus(Qt.TabFocus)
+                            target.forceActiveFocus(Qt.TabFocusReason)
                         }
                         else {
                             profileRoot.focusCurrentGridItem()

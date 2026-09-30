@@ -13,6 +13,7 @@
 #include <QElapsedTimer>
 #include <QTemporaryFile>
 #include <QRegularExpression>
+#include <memory>
 
 #ifdef Q_OS_UNIX
 #include <sys/socket.h>
@@ -808,7 +809,6 @@ int main(int argc, char *argv[])
     GlobalCommandLineParser::ParseResult commandLineParserResult = parser.parse(app.arguments());
 
     ProfileManager* profileManager = ProfileManager::get();
-    bool profileSelectionRequired = false;
     if (!parser.getProfile().isEmpty()) {
         QString profileError;
         if (!profileManager->activateProfileByNameOrId(parser.getProfile(), &profileError)) {
@@ -817,9 +817,7 @@ int main(int argc, char *argv[])
         }
     }
     else if (commandLineParserResult == GlobalCommandLineParser::NormalStartRequested) {
-        if (!profileManager->activateAutoLoginProfile()) {
-            profileSelectionRequired = true;
-        }
+        profileManager->activateAutoLoginProfile();
     }
     else {
         profileManager->activateDefaultProfile();
@@ -970,7 +968,9 @@ int main(int argc, char *argv[])
     qmlRegisterSingletonType<ComputerManager>("ComputerManager", 1, 0,
                                               "ComputerManager",
                                               [](QQmlEngine* qmlEngine, QJSEngine*) -> QObject* {
-                                                  return new ComputerManager(StreamingPreferences::get(qmlEngine));
+                                                  auto manager = new ComputerManager(StreamingPreferences::get(qmlEngine));
+                                                  manager->setParent(qmlEngine);
+                                                  return manager;
                                               });
     qmlRegisterSingletonType<AutoUpdateChecker>("AutoUpdateChecker", 1, 0,
                                                 "AutoUpdateChecker",
@@ -1023,10 +1023,10 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
     QString initialView;
     bool hasGUI = true;
+    std::unique_ptr<ComputerManager> cliComputerManager;
 
     switch (commandLineParserResult) {
     case GlobalCommandLineParser::NormalStartRequested:
-        Q_UNUSED(profileSelectionRequired);
         initialView = "qrc:/gui/ProfileSelectionView.qml";
         break;
     case GlobalCommandLineParser::StreamRequested:
@@ -1064,7 +1064,8 @@ int main(int argc, char *argv[])
             ListCommandLineParser listParser;
             listParser.parse(app.arguments());
             auto launcher = new CliListApps::Launcher(listParser.getHost(), listParser, &app);
-            launcher->execute(new ComputerManager(StreamingPreferences::get()));
+            cliComputerManager = std::make_unique<ComputerManager>(StreamingPreferences::get());
+            launcher->execute(cliComputerManager.get());
             hasGUI = false;
             break;
         }
@@ -1081,6 +1082,15 @@ int main(int argc, char *argv[])
     }
 
     int err = app.exec();
+
+    // Persist QML editors while their profile is still active. Suspending
+    // requests lets artwork workers finish quickly during view destruction.
+    profileManager->suspendRequests();
+    qDeleteAll(engine.rootObjects());
+
+    // Drain all profile workers, including CLI artwork, before freeing hosts
+    // or restoring log handlers. Requests remain suspended during shutdown.
+    profileManager->deactivateProfile();
 
     // Give worker tasks time to properly exit. Fixes PendingQuitTask
     // sometimes freezing and blocking process exit.

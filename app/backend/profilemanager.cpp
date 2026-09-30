@@ -179,7 +179,7 @@ ProfileManager::migrateLegacyProfileData(QString profileId)
     static const QSet<QString> legacyTopLevelKeys = {
         "uniqueid", "certificate", "key",
         "hosts", "hostsbackup",
-        "gamepadmappings",
+        "gcmapping",
         "width", "height", "fps", "bitrate", "unlockbitrate", "autoadjustbitrate",
         "fullscreen", "vsync", "gameopts", "hostaudio", "multicontroller",
         "audiocfg", "videocfg", "hdr", "yuv444", "videodec", "windowmode",
@@ -188,7 +188,7 @@ ProfileManager::migrateLegacyProfileData(QString profileId)
         "uidisplaymode", "richpresence", "gamepadmouse", "defaultver",
         "packetsize", "detectnetblocking", "showperfoverlay", "swapmousebuttons",
         "muteonfocusloss", "backgroundgamepad", "reversescroll", "swapfacebuttons",
-        "capturesyskeys", "keepawake", "language"
+        "capturesyskeys", "keepawake", "language", "renderer"
     };
 
     QSettings settings;
@@ -285,6 +285,30 @@ ProfileManager::autoLoginEnabled() const
     return !m_AutoLoginProfileId.isEmpty();
 }
 
+void ProfileManager::suspendRequests()
+{
+    m_RequestsAllowed = false;
+    emit pendingRequestsCanceled();
+}
+
+void ProfileManager::resumeRequests()
+{
+    m_RequestsAllowed = true;
+}
+
+void ProfileManager::deactivateProfile()
+{
+    suspendRequests();
+    if (s_ActiveProfileId.isEmpty()) {
+        return;
+    }
+
+    emit activeProfileAboutToChange();
+    s_ActiveProfileId.clear();
+    IdentityManager::reset();
+    emit activeProfileChanged();
+}
+
 bool
 ProfileManager::activateProfile(QString id)
 {
@@ -297,11 +321,14 @@ ProfileManager::activateProfile(QString id)
         return true;
     }
 
+    suspendRequests();
+    emit activeProfileAboutToChange();
     s_ActiveProfileId = id;
 
     IdentityManager::reset();
     IdentityManager::get();
     StreamingPreferences::get()->reload();
+    resumeRequests();
 
     qInfo() << "Activated Moonlight profile" << id << activeProfileName();
     emit activeProfileChanged();
@@ -326,10 +353,17 @@ ProfileManager::activateProfileByNameOrId(QString nameOrId, QString* error)
         return false;
     }
 
+    // IDs take precedence over names so every profile can be addressed even
+    // when another profile happens to use its ID as a display name.
+    for (const Profile& profile : m_Profiles) {
+        if (profile.id.compare(value, Qt::CaseInsensitive) == 0) {
+            return activateProfile(profile.id);
+        }
+    }
+
     int foundIndex = -1;
     for (int i = 0; i < m_Profiles.count(); i++) {
-        if (m_Profiles[i].id.compare(value, Qt::CaseInsensitive) == 0 ||
-                m_Profiles[i].name.compare(value, Qt::CaseInsensitive) == 0) {
+        if (m_Profiles[i].name.compare(value, Qt::CaseInsensitive) == 0) {
             if (foundIndex >= 0) {
                 if (error) {
                     *error = tr("More than one profile matches '%1'. Use the profile ID instead.").arg(value);
@@ -431,6 +465,10 @@ ProfileManager::removeProfile(QString id)
     }
 
     bool removingActiveProfile = s_ActiveProfileId == id;
+    if (removingActiveProfile) {
+        suspendRequests();
+        emit activeProfileAboutToChange();
+    }
     bool wasAutoLoginEnabled = autoLoginEnabled();
     m_Profiles.removeAt(index);
 

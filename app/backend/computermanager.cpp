@@ -11,6 +11,7 @@
 #include <QThreadPool>
 #include <QCoreApplication>
 #include <QRandomGenerator>
+#include <algorithm>
 #include "settings/gamestreamingsettings.h"
 
 #define SER_HOSTS "hosts"
@@ -185,16 +186,52 @@ ComputerManager::ComputerManager(StreamingPreferences* prefs)
     // while quitting, however this is a one time signal - additional
     // requests would not be aborted and block termination.
     connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &ComputerManager::handleAboutToQuit);
+    connect(ProfileManager::get(), &ProfileManager::activeProfileAboutToChange,
+            this, &ComputerManager::stop);
 }
 
 ComputerManager::~ComputerManager()
 {
-    // Stop the delayed flush thread before acquiring the lock in write mode
-    // to avoid deadlocking with a flush that needs the lock in read mode.
-    stopDelayedFlushThread();
+    stop();
 
     QWriteLocker lock(&m_Lock);
     clearHostsAndDiscovery();
+}
+
+void ComputerManager::stop()
+{
+    m_Stopping = true;
+    ProfileManager::get()->suspendRequests();
+
+    // Finish host operations while their computers, credentials and settings
+    // still belong to the old profile. The UI cannot enqueue more work here.
+    m_ThreadPool.waitForDone();
+
+    {
+        QWriteLocker lock(&m_Lock);
+        delete m_MdnsBrowser;
+        m_MdnsBrowser = nullptr;
+        m_MdnsServer.reset();
+        qDeleteAll(m_PendingResolution);
+        m_PendingResolution.clear();
+        for (ComputerPollingEntry* entry : std::as_const(m_PollEntries)) {
+            entry->interrupt();
+        }
+        qDeleteAll(m_PollEntries);
+        m_PollEntries.clear();
+        m_PollingRef = 0;
+
+        // Worker signals already queued on the UI thread must not reach the
+        // next profile, including after switching back to the same profile.
+        ++m_ProfileGeneration;
+    }
+
+    // Stop the delayed flush thread before acquiring the lock in write mode
+    // to avoid deadlocking with a flush that needs the lock in read mode.
+    if (m_DelayedFlushThread != nullptr) {
+        saveHosts();
+    }
+    stopDelayedFlushThread();
 }
 
 void ComputerManager::loadHosts()
@@ -311,6 +348,7 @@ void ComputerManager::reloadForActiveProfile()
         clearHostsAndDiscovery();
         m_ProfileId = ProfileManager::activeProfileId();
         loadHosts();
+        m_Stopping = false;
     }
 
     startDelayedFlushThread();
@@ -380,6 +418,13 @@ void DelayedFlushThread::run() {
                 Q_ASSERT(QThread::currentThread()->isInterruptionRequested());
                 break;
             }
+        }
+
+        {
+            // Protect the host map while taking the serialization snapshot.
+            // Match clearHostsAndDiscovery's manager-lock/mutex ordering.
+            QReadLocker hostsLock(&m_ComputerManager->m_Lock);
+            QMutexLocker locker(&m_ComputerManager->m_DelayedFlushMutex);
 
             // Reset the delayed flush flag to ensure any racing saveHosts() call will set it again
             m_ComputerManager->m_NeedsDelayedFlush = false;
@@ -514,7 +559,7 @@ void ComputerManager::startPolling()
 // Must hold m_Lock for write
 void ComputerManager::startPollingComputer(NvComputer* computer)
 {
-    if (m_PollingRef == 0) {
+    if (m_PollingRef == 0 || m_Stopping) {
         return;
     }
 
@@ -530,7 +575,11 @@ void ComputerManager::startPollingComputer(NvComputer* computer)
     if (!pollingEntry->isActive()) {
         PcMonitorThread* thread = new PcMonitorThread(computer);
         connect(thread, &PcMonitorThread::computerStateChanged,
-                this, &ComputerManager::handleComputerStateChanged);
+                this, [this, generation = m_ProfileGeneration](NvComputer* changedComputer) {
+            if (generation == m_ProfileGeneration) {
+                handleComputerStateChanged(changedComputer);
+            }
+        });
         pollingEntry->setActiveThread(thread);
         thread->start();
     }
@@ -591,17 +640,34 @@ void ComputerManager::saveHost(NvComputer *computer)
     }
 }
 
+bool ComputerManager::containsComputer(NvComputer* computer)
+{
+    QReadLocker lock(&m_Lock);
+    return std::any_of(m_KnownHosts.cbegin(), m_KnownHosts.cend(),
+                       [computer](NvComputer* host) { return host == computer; });
+}
+
 void ComputerManager::handleComputerStateChanged(NvComputer* computer)
 {
-    emit computerStateChanged(computer);
+    // A monitor signal may already be queued when its host is removed. Compare
+    // pointer values without dereferencing a computer that may have been freed.
+    if (!containsComputer(computer)) {
+        return;
+    }
 
-    if (computer->pendingQuit && computer->currentGameId == 0) {
+    const bool quitCompleted = computer->pendingQuit && computer->currentGameId == 0;
+    if (quitCompleted) {
         computer->pendingQuit = false;
-        emit quitAppCompleted(QVariant());
     }
 
     // Save updates to this host
     saveHost(computer);
+
+    // Callbacks can delete this host, so do not access it after emitting.
+    emit computerStateChanged(computer);
+    if (quitCompleted) {
+        emit quitAppCompleted(QVariant());
+    }
 }
 
 QVector<NvComputer*> ComputerManager::getComputers()
@@ -619,32 +685,18 @@ QVector<NvComputer*> ComputerManager::getComputers()
 class DeferredHostDeletionTask : public QRunnable
 {
 public:
-    DeferredHostDeletionTask(ComputerManager* cm, NvComputer* computer)
+    DeferredHostDeletionTask(NvComputer* computer, ComputerPollingEntry* pollingEntry, QString profileId)
         : m_Computer(computer),
-          m_ComputerManager(cm) {}
+          m_PollingEntry(pollingEntry),
+          m_ProfileId(profileId) {}
 
     void run()
     {
-        ComputerPollingEntry* pollingEntry;
-
-        // Only do the minimum amount of work while holding the writer lock.
-        // We must release it before calling saveHosts().
-        {
-            QWriteLocker lock(&m_ComputerManager->m_Lock);
-
-            pollingEntry = m_ComputerManager->m_PollEntries.take(m_Computer->uuid);
-
-            m_ComputerManager->m_KnownHosts.remove(m_Computer->uuid);
-        }
-
-        // Persist the new host list with this computer deleted
-        m_ComputerManager->saveHosts();
-
         // Delete the polling entry first. This will stop all polling threads too.
-        delete pollingEntry;
+        delete m_PollingEntry;
 
         // Delete cached box art
-        BoxArtManager::deleteBoxArt(m_Computer);
+        BoxArtManager::deleteBoxArt(m_Computer, m_ProfileId);
 
         // Finally, delete the computer itself. This must be done
         // last because the polling thread might be using it.
@@ -653,20 +705,41 @@ public:
 
 private:
     NvComputer* m_Computer;
-    ComputerManager* m_ComputerManager;
+    ComputerPollingEntry* m_PollingEntry;
+    QString m_ProfileId;
 };
 
 void ComputerManager::deleteHost(NvComputer* computer)
 {
+    if (!containsComputer(computer)) {
+        return;
+    }
+
+    // A cancelled PIN dialog can leave pairing in progress. Abort requests
+    // before draining operations that still hold this computer pointer.
+    m_Stopping = true;
+    ProfileManager::get()->suspendRequests();
+    m_ThreadPool.waitForDone();
+
     emit hostRemoved(computer->uuid);
     GameStreamingSettings::removeHost(m_ProfileId, computer->uuid);
     if (computer->uuid == m_DefaultHostUuid) {
         clearDefaultHost();
     }
 
+    ComputerPollingEntry* pollingEntry;
+    {
+        QWriteLocker lock(&m_Lock);
+        pollingEntry = m_PollEntries.take(computer->uuid);
+        m_KnownHosts.remove(computer->uuid);
+    }
+    saveHosts();
+    m_Stopping = false;
+    ProfileManager::get()->resumeRequests();
+
     // Punt to a worker thread to avoid stalling the
     // UI while waiting for the polling thread to die
-    QThreadPool::globalInstance()->start(new DeferredHostDeletionTask(this, computer));
+    m_ThreadPool.start(new DeferredHostDeletionTask(computer, pollingEntry, m_ProfileId));
 }
 
 void ComputerManager::renameHost(NvComputer* computer, QString name)
@@ -710,7 +783,11 @@ public:
           m_Pin(pin)
     {
         connect(this, &PendingPairingTask::pairingCompleted,
-                computerManager, &ComputerManager::pairingCompleted);
+                computerManager, [computerManager, generation = computerManager->m_ProfileGeneration](NvComputer* computer, QString error) {
+            if (generation == computerManager->m_ProfileGeneration && computerManager->containsComputer(computer)) {
+                emit computerManager->pairingCompleted(computer, error);
+            }
+        });
     }
 
 signals:
@@ -719,6 +796,9 @@ signals:
 private:
     void run()
     {
+        if (m_ComputerManager->m_Stopping) {
+            return;
+        }
         NvPairingManager pairingManager(m_Computer);
 
         try {
@@ -763,7 +843,7 @@ void ComputerManager::pairHost(NvComputer* computer, QString pin)
     // Punt to a worker thread to avoid stalling the
     // UI while waiting for pairing to complete
     PendingPairingTask* pairing = new PendingPairingTask(this, computer, pin);
-    QThreadPool::globalInstance()->start(pairing);
+    m_ThreadPool.start(pairing);
 }
 
 class PendingQuitTask : public QObject, public QRunnable
@@ -775,7 +855,11 @@ public:
         : m_Computer(computer)
     {
         connect(this, &PendingQuitTask::quitAppFailed,
-                computerManager, &ComputerManager::quitAppCompleted);
+                computerManager, [computerManager, computer, generation = computerManager->m_ProfileGeneration](QString error) {
+            if (generation == computerManager->m_ProfileGeneration && computerManager->containsComputer(computer)) {
+                emit computerManager->quitAppCompleted(error);
+            }
+        });
     }
 
 signals:
@@ -821,7 +905,7 @@ void ComputerManager::quitRunningApp(NvComputer* computer)
     computer->pendingQuit = true;
 
     PendingQuitTask* quit = new PendingQuitTask(this, computer);
-    QThreadPool::globalInstance()->start(quit);
+    m_ThreadPool.start(quit);
 }
 
 void ComputerManager::stopPollingAsync()
@@ -881,9 +965,17 @@ public:
           m_AboutToQuit(false)
     {
         connect(this, &PendingAddTask::computerAddCompleted,
-                computerManager, &ComputerManager::computerAddCompleted);
+                computerManager, [computerManager, generation = computerManager->m_ProfileGeneration](QVariant success, QVariant detectedPortBlocking) {
+            if (generation == computerManager->m_ProfileGeneration) {
+                emit computerManager->computerAddCompleted(success, detectedPortBlocking);
+            }
+        });
         connect(this, &PendingAddTask::computerStateChanged,
-                computerManager, &ComputerManager::handleComputerStateChanged);
+                computerManager, [computerManager, generation = computerManager->m_ProfileGeneration](NvComputer* computer) {
+            if (generation == computerManager->m_ProfileGeneration) {
+                computerManager->handleComputerStateChanged(computer);
+            }
+        });
         connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit,
                 this, &PendingAddTask::handleAboutToQuit);
     }
@@ -929,6 +1021,9 @@ private:
             }
             return serverInfo;
         } catch (...) {
+            if (m_ComputerManager->m_Stopping) {
+                return QString();
+            }
             if (!m_Mdns) {
                 unsigned int portTestResult;
 
@@ -950,6 +1045,9 @@ private:
 
     void run()
     {
+        if (m_ComputerManager->m_Stopping) {
+            return;
+        }
         // Use the placeholder UID for the initial poll, then we'll switch to the real one if it's not GFE
         NvHTTP http(m_Address, 0, QSslCertificate(), false);
 
@@ -1125,7 +1223,7 @@ void ComputerManager::addNewHost(NvAddress address, bool mdns, QString name, NvA
     // Punt to a worker thread to avoid stalling the
     // UI while waiting for serverinfo query to complete
     PendingAddTask* addTask = new PendingAddTask(this, name, address, mdnsIpv6Address, mdns);
-    QThreadPool::globalInstance()->start(addTask);
+    m_ThreadPool.start(addTask);
 }
 
 QString ComputerManager::generatePinString()

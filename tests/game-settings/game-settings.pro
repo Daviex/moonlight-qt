@@ -7,4 +7,4 @@ SOURCES += tst_game_settings.cpp \
     ../../app/settings/gamestreamingsettings.cpp \
     ../../app/cli/commandlineparser.cpp
 HEADERS += ../../app/settings/streamingpreferences.h ../../app/settings/gamestreamingsettings.h
-RESOURCES += ../../app/qml.qrc ../../app/resources.qrc ../navigation/mocks.qrc
+RESOURCES += ../../app/qml.qrc ../gui-resources.qrc ../navigation/mocks.qrc

@@ -1,6 +1,6 @@
 # Navigation regression tests
 
-This standalone Qt Test target loads the production QML screens and resources.
+This standalone Qt Test target loads the production QML screens and GUI artwork.
 Only the backend singletons and host/game models are replaced by in-memory QML
 fixtures. It does not read user profiles, connect to hosts, or start streams.
 
@@ -31,6 +31,8 @@ Coverage:
 - Profile/host/settings navigation cannot interrupt an ongoing transition.
 - Dismissing the quit dialog restores controller navigation on profiles.
 - The default host opens on entry but does not open again when backing out.
+- Automatic opening waits for the first host status update and respects a host
+  selected with the keyboard while that update is pending.
 
 The four original failures were reproduced on Qt 6.11.0 before applying the fix.
 The tests exercise the Qt keys emitted by `SdlGamepadKeyNavigation`, not a physical

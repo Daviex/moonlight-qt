@@ -2,8 +2,9 @@
 
 These tests compile the production `StreamingPreferences`, `GameStreamingSettings`
 and CLI parser. UI cases load the production `main.qml`, `AppView.qml`,
-`GameSettingsView.qml`, and `SettingsView.qml`. Host discovery, profile selection,
-controller enumeration and platform probes use deterministic doubles. QSettings
+`GameSettingsView.qml`, and `SettingsView.qml`, with only their artwork resources.
+The test target needs no streaming submodules or generated shaders. Host discovery,
+profile selection, controller enumeration and platform probes use deterministic doubles. QSettings
 uses a temporary INI directory; tests never modify real profiles or contact Sunshine.
 
 ## Run
@@ -20,12 +21,9 @@ QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Mate
 
 Use `mingw32-make` and `release/tst_game_settings.exe` with Windows MinGW.
 With an x64 MSVC Qt `bin` directory on PATH, the repository-root command
-`scripts\test-settings.bat` builds and runs this suite and the navigation suite.
+`scripts\test-settings.bat` builds and runs this suite, the navigation suite,
+and the profile suite.
 The Windows workflow uses that script before packaging.
-
-Set `GAME_SETTINGS_SCREENSHOTS` to an existing output directory to save rendered
-1280px and 854px screenshots. Set `QT_QUICK_CONTROLS_MATERIAL_THEME=Dark` to match
-the application's theme.
 
 ## Coverage
 
@@ -33,14 +31,16 @@ the application's theme.
 - Active-profile inheritance and separation by profile, host UUID and app ID.
 - Sparse values, explicit false values, atomic resolution and bitrate policy.
 - Reset one/all, repeated save and intentional matching overrides.
-- Invalid types/ranges/enums, profile-only fields and unsafe identifiers.
+- Corrupt stored types/ranges/enums fall back to profile values; profile-only
+  fields cannot be overridden. Unsafe storage identifiers are rejected.
 - Stale profile context, invalidated editors and host-scoped cleanup.
 - CLI precedence, flags equal to the base, explicit bitrate and YUV444 calculation.
-- Round-trip of every supported streaming field, including enum properties.
+- Sparse round-trip of enum properties and explicit false values.
 - Opening/closing QML without accidental overrides and saving on window close.
 - Actual checkbox, FPS, bitrate and system-key controls.
 - Controller-equivalent Tab/Space/Return/Menu/Escape input, reset confirmation,
   rapid Back, editor destruction, context-menu removal and focus after reordering.
+  Resetting one setting preserves other pending edits.
 
 These are not hardware-controller, real-host, decoder or live-stream tests. Full
 app compilation checks the production AppModel/CLI/Session integration separately;

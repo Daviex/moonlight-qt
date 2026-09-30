@@ -37,28 +37,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          shopt -s nullglob
 
           mkdir -p release-assets
 
+          artifacts=(Moonlight-Windows-x64 Moonlight-Windows-arm64
+                     Moonlight-Windows-installer Moonlight-macOS
+                     Moonlight-LinuxAppImage Moonlight-SteamLink
+                     zDevDbgSyms-Windows zDevDbgSyms-macOS)
+
           # Refuse to publish if a successful build failed to deliver a package.
-          for artifact in Moonlight-Windows-x64 Moonlight-Windows-arm64 \
-                          Moonlight-Windows-installer Moonlight-macOS \
-                          Moonlight-LinuxAppImage Moonlight-SteamLink \
-                          zDevDbgSyms-Windows zDevDbgSyms-macOS; do
+          for artifact in "${artifacts[@]}"; do
             if [[ ! -d "dist/${artifact}-${CI_VERSION}" ]]; then
               echo "Missing required artifact: ${artifact}-${CI_VERSION}" >&2
               exit 1
             fi
           done
 
-          found=0
-          for artifact_dir in dist/Moonlight-*-"${CI_VERSION}" dist/zDevDbgSyms-*-"${CI_VERSION}"; do
-            if [[ ! -d "${artifact_dir}" ]]; then
-              continue
-            fi
-
-            artifact_name="$(basename "${artifact_dir}")"
+          for artifact in "${artifacts[@]}"; do
+            artifact_name="${artifact}-${CI_VERSION}"
+            artifact_dir="dist/${artifact_name}"
             mapfile -d '' files < <(find "${artifact_dir}" -type f -print0)
 
             if [[ "${#files[@]}" -eq 0 ]]; then
@@ -78,15 +75,7 @@ jobs:
             else
               (cd "${artifact_dir}" && zip -qr "../../release-assets/${artifact_name}.zip" .)
             fi
-
-            found=$((found + 1))
           done
-
-          if [[ "${found}" -eq 0 ]]; then
-            echo "No release artifacts found for CI version ${CI_VERSION}" >&2
-            find dist -maxdepth 2 -type f -print >&2
-            exit 1
-          fi
 
           (cd release-assets && find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
           find release-assets -maxdepth 1 -type f -print

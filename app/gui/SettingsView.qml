@@ -80,7 +80,7 @@ Flickable {
 
         // Highlight the first item if a gamepad is connected
         if (SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
-            resolutionComboBox.forceActiveFocus(Qt.TabFocus)
+            resolutionComboBox.forceActiveFocus(Qt.TabFocusReason)
         }
     }
 
@@ -98,6 +98,14 @@ Flickable {
         // Also save preferences on destruction, since we won't get a
         // deactivating callback if the user just closes Moonlight
         if (!gameMode) preferences.save()
+    }
+
+    function updateAutomaticBitrate() {
+        if (preferences.autoAdjustBitrate) {
+            preferences.bitrateKbps = StreamingPreferences.getDefaultBitrate(
+                preferences.width, preferences.height, preferences.fps, preferences.enableYUV444)
+            slider.value = preferences.bitrateKbps
+        }
     }
 
     Column {
@@ -288,13 +296,7 @@ Flickable {
                                 preferences.width = selectedWidth
                                 preferences.height = selectedHeight
 
-                                if (preferences.autoAdjustBitrate) {
-                                    preferences.bitrateKbps = StreamingPreferences.getDefaultBitrate(preferences.width,
-                                                                                                              preferences.height,
-                                                                                                              preferences.fps,
-                                                                                                              preferences.enableYUV444);
-                                    slider.value = preferences.bitrateKbps
-                                }
+                                updateAutomaticBitrate()
                             }
 
                             lastIndexValue = currentIndex
@@ -456,13 +458,7 @@ Flickable {
                             if (preferences.fps !== selectedFps) {
                                 preferences.fps = selectedFps
 
-                                if (preferences.autoAdjustBitrate) {
-                                    preferences.bitrateKbps = StreamingPreferences.getDefaultBitrate(preferences.width,
-                                                                                                              preferences.height,
-                                                                                                              preferences.fps,
-                                                                                                              preferences.enableYUV444);
-                                    slider.value = preferences.bitrateKbps
-                                }
+                                updateAutomaticBitrate()
                             }
 
                             lastIndexValue = currentIndex
@@ -1736,16 +1732,9 @@ Flickable {
 
                     checked: preferences.enableYUV444
                     onToggled: {
-                        // This is called on init, so only reset to default bitrate when checked state changes.
                         if (preferences.enableYUV444 != checked) {
                             preferences.enableYUV444 = checked
-                            if (preferences.autoAdjustBitrate) {
-                                preferences.bitrateKbps = StreamingPreferences.getDefaultBitrate(preferences.width,
-                                                                                                          preferences.height,
-                                                                                                          preferences.fps,
-                                                                                                          preferences.enableYUV444);
-                                slider.value = preferences.bitrateKbps
-                            }
+                            updateAutomaticBitrate()
                         }
                     }
 
@@ -1786,8 +1775,6 @@ Flickable {
                     font.pointSize: 12
                     checked: preferences.enableMdns
                     onToggled: {
-                        // This is called on init, so only do the work if we've
-                        // actually changed the value.
                         if (preferences.enableMdns != checked) {
                             preferences.enableMdns = checked
 

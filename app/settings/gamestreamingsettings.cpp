@@ -20,7 +20,7 @@ QStringList groupKeys(const QString& key)
 
 QString GameStreamingSettings::settingsGroup(const QString& profileId, const QString& hostUuid, int appId)
 {
-    static const QRegularExpression segment("^[a-zA-Z0-9_{}-]+$");
+    static const QRegularExpression segment("\\A[a-zA-Z0-9_{}-]+\\z");
     if (!segment.match(profileId).hasMatch() || !segment.match(hostUuid).hasMatch() || appId <= 0) return {};
     return QString("gameStreamingSettings/%1/%2").arg(hostUuid).arg(appId);
 }

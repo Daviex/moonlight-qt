@@ -11,12 +11,14 @@
 #include <qmdnsengine/resolver.h>
 
 #include <QThread>
+#include <QThreadPool>
 #include <QReadWriteLock>
 #include <QSettings>
 #include <QRunnable>
 #include <QTimer>
 #include <QMutex>
 #include <QWaitCondition>
+#include <atomic>
 
 class ComputerManager;
 
@@ -212,15 +214,17 @@ class ComputerManager : public QObject
     Q_OBJECT
     Q_PROPERTY(QString defaultHostUuid READ defaultHostUuid NOTIFY defaultHostChanged)
 
-    friend class DeferredHostDeletionTask;
     friend class PendingAddTask;
     friend class PendingPairingTask;
+    friend class PendingQuitTask;
     friend class DelayedFlushThread;
 
 public:
     explicit ComputerManager(StreamingPreferences* prefs);
 
     virtual ~ComputerManager();
+
+    void stop();
 
     Q_INVOKABLE void startPolling();
 
@@ -291,6 +295,8 @@ private:
 
     void startPollingComputer(NvComputer* computer);
 
+    bool containsComputer(NvComputer* computer);
+
     StreamingPreferences* m_Prefs;
     int m_PollingRef;
     QReadWriteLock m_Lock;
@@ -307,4 +313,7 @@ private:
     bool m_NeedsDelayedFlush;
     QString m_ProfileId;
     QString m_DefaultHostUuid;
+    QThreadPool m_ThreadPool;
+    quint64 m_ProfileGeneration = 0;
+    std::atomic_bool m_Stopping{false};
 };

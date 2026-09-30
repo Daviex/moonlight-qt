@@ -30,6 +30,7 @@ QtObject {
 
     property bool uiNavMode: false
     function enable() {}
+    function disable() {}
     function notifyWindowFocus(focused) {}
     function getConnectedGamepads() { return 1 }
     function setUiNavMode(enabled) { uiNavMode = enabled }

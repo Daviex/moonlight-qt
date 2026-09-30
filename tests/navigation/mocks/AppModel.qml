@@ -12,7 +12,7 @@ ListModel {
         for (var i = 0; i < count; i++) if (get(i).appid === appId) return i
         return -1
     }
-    function createGameSettings(appId) { return gameSettingsFactory.create(appId) }
+    function createGameSettings(appId) { return gameSettingsFactory.create(appId, this) }
     function removeGameSettings(appId) {
         var result = gameSettingsFactory.remove(appId)
         setProperty(indexOfApp(appId), "customStreamingSettings", false)

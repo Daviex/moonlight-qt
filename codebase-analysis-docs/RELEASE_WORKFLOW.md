@@ -75,4 +75,4 @@ The controller-fix run and the premature workflow-only run were cancelled. Durin
 per-game settings development, intermediate pushes must use `[skip ci]`. The final
 completed implementation may run normally and publish only when every build
 succeeds. Windows first runs `scripts/test-settings.bat`, which builds and executes
-the navigation and per-game suites; failure prevents publication.
+the navigation, per-game and profile suites; failure prevents publication.

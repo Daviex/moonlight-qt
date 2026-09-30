@@ -80,6 +80,9 @@ ApplicationWindow {
 
         StreamingPreferences.retranslate()
         showWindowWithCurrentDisplayMode()
+        // Reopen controllers with the selected profile's mappings.
+        SdlGamepadKeyNavigation.disable()
+        SdlGamepadKeyNavigation.enable()
         SdlGamepadKeyNavigation.setUiNavMode(false)
         ComputerManager.reloadForActiveProfile()
 
