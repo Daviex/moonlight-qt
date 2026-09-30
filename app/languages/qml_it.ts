@@ -216,6 +216,18 @@
 <context>
     <name>PcView</name>
     <message>
+        <source>Default</source>
+        <translation>Predefinito</translation>
+    </message>
+    <message>
+        <source>Set as Default PC</source>
+        <translation>Imposta come PC predefinito</translation>
+    </message>
+    <message>
+        <source>Remove Default PC</source>
+        <translation>Rimuovi PC predefinito</translation>
+    </message>
+    <message>
         <location filename="../gui/PcView.qml" line="21"/>
         <source>Computers</source>
         <translation>Lista Computer</translation>

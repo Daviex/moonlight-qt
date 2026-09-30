@@ -31,6 +31,9 @@ Coverage:
 - Removed game pages and their models are destroyed.
 - Profile/host/settings navigation cannot interrupt an ongoing transition.
 - Dismissing the quit dialog restores controller navigation on profiles.
+- The default host opens once, waits for its status, and respects selection of
+  another host. Returning to the host grid does not automatically reopen it.
+
 The tests exercise the Qt keys emitted by `SdlGamepadKeyNavigation`, not a physical
 controller or SDL device polling. A device-level check with Sunshine is still a
 useful release check. They run separately from the streaming application's build.
