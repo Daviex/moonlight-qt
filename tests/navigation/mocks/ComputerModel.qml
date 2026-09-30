@@ -9,4 +9,10 @@ ListModel {
         append({ uuid: "pc-2", name: "Other PC", online: true, paired: true,
                  statusUnknown: false, serverSupported: true, wakeable: true, details: "" })
     }
+    function indexOfComputer(uuid) {
+        for (var i = 0; i < count; i++) {
+            if (get(i).uuid === uuid) return i
+        }
+        return -1
+    }
 }

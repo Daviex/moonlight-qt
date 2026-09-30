@@ -14,6 +14,8 @@ CenteredGridView {
     property bool focusFirstHostOnLoad: false
     property bool firstHostFocusApplied: false
     property bool initialSelectionReset: false
+    property bool defaultHostAutoOpenPending: true
+    property bool defaultHostSelected: false
     property bool activated: false
 
     id: pcGrid
@@ -50,6 +52,13 @@ CenteredGridView {
         }
     }
 
+    Timer {
+        id: defaultHostOpenTimer
+        interval: 0
+        repeat: false
+        onTriggered: pcGrid.evaluateDefaultHost()
+    }
+
     // Note: Any initialization done here that is critical for streaming must
     // also be done in CliStartStreamSegue.qml, since this code does not run
     // for command-line initiated streams.
@@ -58,27 +67,39 @@ CenteredGridView {
 
         // Setup signals on CM
         ComputerManager.computerAddCompleted.connect(addComplete)
+        computerModel.dataChanged.connect(tryOpenDefaultHost)
+        computerModel.modelReset.connect(tryOpenDefaultHost)
 
         focusFirstHostIfNeeded()
         if (firstHostFocusApplied && currentIndex >= 0) {
             focusSelectedHostSoon()
         }
+
+        tryOpenDefaultHost()
     }
 
     onCountChanged: {
         focusFirstHostIfNeeded()
+        tryOpenDefaultHost()
     }
 
     onCurrentItemChanged: {
         if (activated && firstHostFocusApplied) {
             focusSelectedHostSoon()
         }
+        if (activated && defaultHostAutoOpenPending) {
+            defaultHostOpenTimer.restart()
+        }
     }
 
     StackView.onDeactivating: {
         activated = false
+        defaultHostAutoOpenPending = false
         selectedHostFocusTimer.stop()
+        defaultHostOpenTimer.stop()
         ComputerManager.computerAddCompleted.disconnect(addComplete)
+        computerModel.dataChanged.disconnect(tryOpenDefaultHost)
+        computerModel.modelReset.disconnect(tryOpenDefaultHost)
     }
 
     function pairingComplete(error)
@@ -160,6 +181,67 @@ CenteredGridView {
         stackView.push("qrc:/gui/AppView.qml", properties)
     }
 
+    function tryOpenDefaultHost()
+    {
+        if (!activated || !defaultHostAutoOpenPending) {
+            return
+        }
+
+        if (ComputerManager.defaultHostUuid.length === 0) {
+            defaultHostAutoOpenPending = false
+            return
+        }
+
+        var defaultHostIndex = computerModel.indexOfComputer(ComputerManager.defaultHostUuid)
+        if (defaultHostIndex < 0) {
+            defaultHostAutoOpenPending = false
+            return
+        }
+
+        // Once selected, respect navigation performed while the first poll is pending.
+        if (defaultHostSelected && currentIndex !== defaultHostIndex) {
+            defaultHostAutoOpenPending = false
+            return
+        }
+
+        currentIndex = defaultHostIndex
+        defaultHostSelected = true
+        defaultHostOpenTimer.restart()
+    }
+
+    function evaluateDefaultHost()
+    {
+        if (!activated || stackView.busy || stackView.currentItem !== pcGrid ||
+                !defaultHostAutoOpenPending || !currentItem ||
+                currentItem.hostUuid !== ComputerManager.defaultHostUuid) {
+            return
+        }
+
+        if (currentItem.hostStatusUnknown) {
+            return
+        }
+
+        defaultHostAutoOpenPending = false
+        if (currentItem.hostOnline && currentItem.hostPaired && currentItem.hostServerSupported) {
+            openComputer(currentIndex, currentItem.hostName, false)
+        }
+        else {
+            focusSelectedHostSoon()
+        }
+    }
+
+    function toggleDefaultHost(hostUuid)
+    {
+        defaultHostAutoOpenPending = false
+        if (hostUuid === ComputerManager.defaultHostUuid) {
+            ComputerManager.clearDefaultHost()
+        }
+        else {
+            ComputerManager.setDefaultHost(hostUuid)
+        }
+        focusSelectedHostSoon()
+    }
+
     Row {
         anchors.centerIn: parent
         spacing: 5
@@ -189,6 +271,12 @@ CenteredGridView {
         grid: pcGrid
 
         property alias pcContextMenu : pcContextMenuLoader.item
+        readonly property string hostUuid: model.uuid
+        readonly property string hostName: model.name
+        readonly property bool hostOnline: model.online
+        readonly property bool hostPaired: model.paired
+        readonly property bool hostStatusUnknown: model.statusUnknown
+        readonly property bool hostServerSupported: model.serverSupported
 
         Image {
             id: pcIcon
@@ -231,11 +319,21 @@ CenteredGridView {
 
             width: parent.width
             anchors.top: pcIcon.bottom
-            anchors.bottom: parent.bottom
+            anchors.bottom: defaultHostLabel.visible ? defaultHostLabel.top : parent.bottom
             font.pointSize: 36
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.Wrap
             elide: Text.ElideRight
+        }
+
+        Label {
+            id: defaultHostLabel
+            text: qsTr("Default")
+            visible: model.uuid === ComputerManager.defaultHostUuid
+            width: parent.width
+            anchors.bottom: parent.bottom
+            horizontalAlignment: Text.AlignHCenter
+            font.pointSize: 12
         }
 
         Loader {
@@ -252,9 +350,15 @@ CenteredGridView {
                 NavigableMenuItem {
                     text: qsTr("View All Apps")
                     onTriggered: {
+                        pcGrid.defaultHostAutoOpenPending = false
                         pcGrid.openComputer(index, model.name, true)
                     }
                     visible: model.online && model.paired
+                }
+                NavigableMenuItem {
+                    text: model.uuid === ComputerManager.defaultHostUuid ?
+                              qsTr("Remove Default PC") : qsTr("Set as Default PC")
+                    onTriggered: pcGrid.toggleDefaultHost(model.uuid)
                 }
                 NavigableMenuItem {
                     text: qsTr("Wake PC")
@@ -296,6 +400,7 @@ CenteredGridView {
         }
 
         onClicked: {
+            pcGrid.defaultHostAutoOpenPending = false
             if (model.online) {
                 if (!model.serverSupported) {
                     errorDialog.text = qsTr("The version of GeForce Experience on %1 is not supported by this build of Moonlight. You must update Moonlight to stream from %1.").arg(model.name)
@@ -323,6 +428,7 @@ CenteredGridView {
         }
 
         onPressAndHold: {
+            pcGrid.defaultHostAutoOpenPending = false
             // popup() ensures the menu appears under the mouse cursor
             if (pcContextMenu.popup) {
                 pcContextMenu.popup()
@@ -342,12 +448,14 @@ CenteredGridView {
         }
 
         Keys.onMenuPressed: {
+            pcGrid.defaultHostAutoOpenPending = false
             // We must use open() here so the menu is positioned on
             // the ItemDelegate and not where the mouse cursor is
             pcContextMenu.open()
         }
 
         Keys.onDeletePressed: {
+            pcGrid.defaultHostAutoOpenPending = false
             deletePcDialog.pcIndex = index
             deletePcDialog.pcName = model.name
             deletePcDialog.open()

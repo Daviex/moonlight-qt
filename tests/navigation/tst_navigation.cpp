@@ -165,6 +165,57 @@ private slots:
         QCOMPARE(evaluate("ProfileManager.activeProfileId").toString(), QString("second"));
     }
 
+    void defaultHostDoesNotReopenOnBack()
+    {
+        evaluate("ComputerManager.defaultHostUuid = 'pc-1'");
+        evaluate("window.returnToProfileSelection()");
+        QTRY_VERIFY(!busy());
+        evaluate("window.enterProfile('default', true, true)");
+        QTRY_COMPARE(depth(), 3);
+        QTRY_VERIFY(!busy());
+        QTest::keyClick(m_Window.get(), Qt::Key_Escape);
+        QTRY_VERIFY(!busy());
+        QTest::qWait(40);
+        QCOMPARE(depth(), 2);
+        QVERIFY(qobject_cast<QQuickItem*>(page())->hasActiveFocus());
+    }
+
+    void defaultHostWaitsForStatus_data()
+    {
+        QTest::addColumn<bool>("selectAnotherHost");
+        QTest::newRow("default-host") << false;
+        QTest::newRow("user-selected-another-host") << true;
+    }
+
+    void defaultHostWaitsForStatus()
+    {
+        QFETCH(bool, selectAnotherHost);
+        evaluate("window.returnToProfileSelection()");
+        QTRY_VERIFY(!busy());
+        evaluate("ComputerManager.defaultHostUuid = 'pc-1'");
+        evaluate("window.enterProfile('default', true, true)");
+        auto hostPage = page();
+        evaluate("computerModel.setProperty(0, 'statusUnknown', true)", hostPage);
+        QTRY_VERIFY(!busy());
+        QCOMPARE(depth(), 2);
+
+        if (selectAnotherHost) {
+            QTest::keyClick(m_Window.get(), Qt::Key_Right);
+            QCOMPARE(hostPage->property("currentIndex").toInt(), 1);
+        }
+        evaluate("computerModel.setProperty(0, 'statusUnknown', false)", hostPage);
+
+        if (selectAnotherHost) {
+            QCOMPARE(hostPage->property("currentIndex").toInt(), 1);
+            QTest::qWait(40);
+            QCOMPARE(depth(), 2);
+        }
+        else {
+            QTRY_COMPARE(depth(), 3);
+            QTRY_VERIFY(!busy());
+        }
+    }
+
 };
 
 QTEST_MAIN(NavigationTest)

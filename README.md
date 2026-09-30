@@ -47,6 +47,13 @@ calibration and network-adapter tools remain in the general settings screen.
 Explicit streaming CLI options take precedence over per-game values without
 saving those command-line choices.
 
+### Default PC
+
+Choose **Set as Default PC** in a computer's context menu to open its applications
+automatically when the profile opens and the computer becomes available. The
+choice is separate for each profile. Returning to the computer list keeps it
+open; **Remove Default PC** disables automatic opening.
+
 ## Downloads
 - [Windows, macOS, and Steam Link](https://github.com/moonlight-stream/moonlight-qt/releases)
 - [Snap (for Ubuntu-based Linux distros)](https://snapcraft.io/moonlight)

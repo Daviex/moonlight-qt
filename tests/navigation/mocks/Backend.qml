@@ -22,6 +22,7 @@ QtObject {
     function setAutoLoginEnabled(enabled) { autoLoginEnabled = enabled }
     function retranslate() {}
 
+    property string defaultHostUuid: ""
     signal computerAddCompleted(bool success, bool detectedPortBlocking)
     function reloadForActiveProfile() {}
     function startPolling() {}
