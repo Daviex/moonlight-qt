@@ -139,13 +139,19 @@ jobs:
           QT_QUICK_CONTROLS_MATERIAL_THEME: Dark
         run: |
           $deploy = (Resolve-Path build/deploy-x64-release).Path
-          $env:Path = "$deploy;$env:QT_PATH;$env:Path"
+          $env:Path = "$env:QT_PATH;$deploy;$env:Path"
+          $env:QT_PLUGIN_PATH = (Resolve-Path "$env:QT_PATH/../plugins").Path
           $env:QT_QPA_FONTDIR = "$env:WINDIR/Fonts"
           foreach ($path in @('build/tests-vrr/profiles/release/tst_profiles.exe', 'build/tests-vrr/navigation/release/tst_navigation.exe')) {
             $test = (Resolve-Path $path).Path
+            $report = Join-Path (Split-Path $test -Parent) 'results.txt'
+            Remove-Item -LiteralPath $report -ErrorAction SilentlyContinue
             Write-Host "Running $test"
-            & $test -o '-,txt'
-            if ($LASTEXITCODE -ne 0) { throw "$test failed: $LASTEXITCODE" }
+            & $test -o "$report,txt"
+            $testExitCode = $LASTEXITCODE
+            if (Test-Path $report) { Get-Content $report }
+            if ($testExitCode -ne 0) { throw "$test failed: $testExitCode" }
+            if (-not (Test-Path $report) -or (Get-Item $report).Length -eq 0) { throw "$test did not produce a test report" }
           }
 
       - name: Test DualSense haptics (Windows x64)
