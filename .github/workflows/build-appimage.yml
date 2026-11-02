@@ -137,6 +137,12 @@ jobs:
           cmake -DSDL2COMPAT_TESTS=OFF -DCMAKE_BUILD_TYPE=Release '-DCMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG -flto=1' '-DCMAKE_SHARED_LINKER_FLAGS=-flto=1' -S . -B build
           cmake --build build --parallel "$BUILD_JOBS"
           DESTDIR="$DEP_STAGE" cmake --install build
+          # Recent sdl2-compat releases install sdl2-compat.pc. Moonlight and
+          # its test targets still discover the SDL2 API through sdl2.pc.
+          pkgconfig_dir="$DEP_STAGE/usr/local/lib/pkgconfig"
+          if [ -f "$pkgconfig_dir/sdl2-compat.pc" ] && [ ! -e "$pkgconfig_dir/sdl2.pc" ]; then
+            ln -s sdl2-compat.pc "$pkgconfig_dir/sdl2.pc"
+          fi
           sudo cp -a "$DEP_STAGE/usr/local/." /usr/local/
 
       - name: Checkout SDL_ttf
