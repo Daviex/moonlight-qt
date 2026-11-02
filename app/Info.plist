@@ -8,6 +8,8 @@
 	<string>Moonlight</string>
 	<key>LSSupportsGameMode</key>
 	<true/>
+	<key>NSApplicationUpdateCycleEnabled</key>
+	<false/>
 	<key>CFBundleGetInfoString</key>
 	<string>Stream games and other applications from another PC</string>
 	<key>CFBundleIconFile</key>
@@ -21,7 +23,7 @@
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>11.0.0</string>
+	<string>13.0.0</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
@@ -42,6 +44,10 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Moonlight uses the local network to connect to your gaming PC for streaming.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_nvstream._tcp</string>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>VERSION</string>
 	<key>CFBundleShortVersionString</key>

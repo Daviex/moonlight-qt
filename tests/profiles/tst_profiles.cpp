@@ -55,7 +55,15 @@ public:
     }
 
     qint64 bytesAvailable() const override { return m_Body.size() - m_Position + QNetworkReply::bytesAvailable(); }
-    void complete() { setFinished(true); emit readyRead(); emit finished(); }
+    void complete()
+    {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 3, 0)
+        emit requestSent();
+#endif
+        setFinished(true);
+        emit readyRead();
+        emit finished();
+    }
     void abort() override
     {
         ++m_Aborts;

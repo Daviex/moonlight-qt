@@ -92,7 +92,7 @@ ApplicationWindow {
             })
         }
 
-        if (runConfigChecks && !currentItemSuppressesPolling()) {
+        if (isGuiLaunch && !currentItemSuppressesPolling()) {
             runConfigurationChecks()
         }
 
@@ -217,7 +217,7 @@ ApplicationWindow {
             }
             else {
                 startPollingIfNeeded()
-                if (runConfigChecks) {
+                if (isGuiLaunch) {
                     runConfigurationChecks()
                 }
             }
@@ -271,7 +271,8 @@ ApplicationWindow {
     }
 
     function startPollingIfNeeded() {
-        if (!currentItemSuppressesPolling() && visible && active && ProfileManager.hasActiveProfile && !pollingActive) {
+        // CLI commands manage polling through their own ComputerSeeker.
+        if (isGuiLaunch && !currentItemSuppressesPolling() && visible && active && ProfileManager.hasActiveProfile && !pollingActive) {
             ComputerManager.startPolling()
             pollingActive = true
         }
@@ -307,7 +308,7 @@ ApplicationWindow {
             inactivityTimer.stop()
             startPollingIfNeeded()
         }
-        else {
+        else if (isGuiLaunch) {
             // Start the inactivity timer to stop polling
             // if focus does not return within a few minutes.
             inactivityTimer.restart()

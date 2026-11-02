@@ -160,10 +160,24 @@ public:
         VTMetal,
     };
 
-    IFFmpegRenderer(RendererType type) : m_Type(type) {}
+    IFFmpegRenderer(RendererType type) : m_Type(type), m_RenderLock(SDL_CreateMutex()) {}
+    virtual ~IFFmpegRenderer() {
+        SDL_DestroyMutex(m_RenderLock);
+    }
+
+    // Synchronizes with renderFrame(), setHdrMode(), and notifyWindowChanged()
+    void acquireRenderLock() {
+        SDL_LockMutex(m_RenderLock);
+    }
+    void releaseRenderLock() {
+        SDL_UnlockMutex(m_RenderLock);
+    }
 
     virtual bool initialize(PDECODER_PARAMETERS params) = 0;
     virtual bool prepareDecoderContext(AVCodecContext* context, AVDictionary** options) = 0;
+
+    // Synchronized via the render lock
+    // NOT synchronized with notifyOverlayUpdated()
     virtual void renderFrame(AVFrame* frame) = 0;
     virtual GpuTrace* gpuDiagnosticTrace() { return nullptr; }
 
@@ -230,8 +244,8 @@ public:
     }
 
     virtual int getDecoderColorRange() {
-        // Limited is the default
-        return COLOR_RANGE_LIMITED;
+        // Full is the default
+        return COLOR_RANGE_FULL;
     }
 
     virtual int getFrameColorspace(const AVFrame* frame) {
@@ -253,10 +267,16 @@ public:
     }
 
     virtual bool isFrameFullRange(const AVFrame* frame) {
-        // This handles the case where the color range is unknown,
-        // so that we use Limited color range which is the default
-        // behavior for Moonlight.
-        return frame->color_range == AVCOL_RANGE_JPEG;
+        switch (frame->color_range) {
+        case AVCOL_RANGE_JPEG:
+            return true;
+        case AVCOL_RANGE_MPEG:
+            return false;
+        default:
+            // If the color range is not populated, assume the encoder
+            // is sending the color range that we requested.
+            return getDecoderColorRange() == COLOR_RANGE_FULL;
+        }
     }
 
     virtual bool isRenderThreadSupported() {
@@ -306,6 +326,7 @@ public:
         return getPreferredPixelFormat(videoFormat) == pixelFormat;
     }
 
+    // Synchronized via the render lock
     virtual void setHdrMode(bool) {
         // Nothing
     }
@@ -315,6 +336,7 @@ public:
         return true;
     }
 
+    // Synchronized via the render lock
     virtual bool notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO) {
         // Assume the renderer cannot handle window state changes
         return false;
@@ -515,6 +537,13 @@ public:
     }
 
     // IOverlayRenderer
+    //
+    // NB: May be called from an arbitrary thread concurrently with renderFrame(),
+    // setHdrMode(), and notifyWindowUpdated(), however it does not race with
+    // prepareToRender(), cleanupRenderContext(), initialize(), etc.
+    //
+    // NB2: This must NOT call acquireRenderLock() due to the possibility of a
+    // deadlock during Pacer shutdown.
     virtual void notifyOverlayUpdated(Overlay::OverlayType) override {
         // Nothing
     }
@@ -529,7 +558,8 @@ public:
         return AV_PIX_FMT_NONE;
     }
 
-    virtual bool initializeEGL(EGLDisplay,
+    virtual bool initializeEGL(IFFmpegRenderer*,
+                               EGLDisplay,
                                const EGLExtensions &) {
         return false;
     }
@@ -553,10 +583,11 @@ public:
 #endif
 
 protected:
-    InitFailureReason m_InitFailureReason;
+    InitFailureReason m_InitFailureReason = InitFailureReason::Unknown;
 
 private:
     RendererType m_Type;
+    SDL_mutex* m_RenderLock;
 
     // Properties watched by hasFrameFormatChanged()
     int m_LastFrameWidth = 0;

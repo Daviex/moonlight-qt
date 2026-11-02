@@ -476,6 +476,12 @@ int VDPAURenderer::getDecoderColorspace()
     return COLORSPACE_REC_601;
 }
 
+int VDPAURenderer::getDecoderColorRange()
+{
+    // The default VdpVideoMixer CSC matrix assumes limited range
+    return COLOR_RANGE_LIMITED;
+}
+
 int VDPAURenderer::getDecoderCapabilities()
 {
     return CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC |
@@ -541,11 +547,12 @@ void VDPAURenderer::renderFrame(AVFrame* frame)
     // We need to create the mixer on the fly, because we don't know the dimensions
     // of our video surfaces in advance of decoding. We also need to recreate it when
     // the frame format or size changes.
-    if (hasFrameFormatChanged(frame)) {
-        if (m_VideoMixer != 0) {
-            m_VdpVideoMixerDestroy(m_VideoMixer);
-        }
+    if (hasFrameFormatChanged(frame) && m_VideoMixer != 0) {
+        m_VdpVideoMixerDestroy(m_VideoMixer);
+        m_VideoMixer = 0;
+    }
 
+    if (m_VideoMixer == 0) {
         VdpChromaType videoSurfaceChroma;
         uint32_t videoSurfaceWidth, videoSurfaceHeight;
         status = m_VdpVideoSurfaceGetParameters(videoSurface, &videoSurfaceChroma,
@@ -580,6 +587,7 @@ void VDPAURenderer::renderFrame(AVFrame* frame)
             SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                          "VdpVideoMixerCreate() failed: %s",
                          m_VdpGetErrorString(status));
+            m_VideoMixer = 0;
             return;
         }
     }

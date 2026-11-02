@@ -1181,6 +1181,7 @@ bool PlVkRenderer::populateQueues(int videoFormat)
     vkDeviceContext->nb_comp_queues = m_Vulkan->queue_compute.count;
 
     // Select a video decode queue that is capable of decoding our chosen format
+    vkDeviceContext->queue_family_decode_index = -1;
     for (uint32_t i = 0; i < queueFamilyCount; i++) {
         if (queueFamilies[i].queueFamilyProperties.queueFlags & VK_QUEUE_VIDEO_DECODE_BIT_KHR) {
             if (videoFormat & VIDEO_FORMAT_MASK_H264) {
@@ -1370,6 +1371,13 @@ bool PlVkRenderer::acquirePendingSwapchainFrame(
 #ifndef PLVK_USE_EARLY_RENDER_TO_WAIT
     (void) earlyRenderFailureMessage;
 #endif
+
+    // Swapchain recreation can fail while the window is occluded. Do not
+    // pass a missing swapchain into resize/start-frame on either pacing path.
+    if (m_Swapchain == nullptr) {
+        queueRenderDeviceReset();
+        return false;
+    }
 
 #ifndef Q_OS_WIN32
     // With libplacebo's Vulkan backend, swap_buffers() waits for queued

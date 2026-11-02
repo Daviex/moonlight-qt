@@ -426,7 +426,13 @@ bool DXVA2Renderer::initializeDevice(SDL_Window* window, bool enableVsync)
 
     D3DDISPLAYMODEEX currentMode;
     currentMode.Size = sizeof(currentMode);
-    d3d9ex->GetAdapterDisplayModeEx(adapterIndex, &currentMode, nullptr);
+    hr = d3d9ex->GetAdapterDisplayModeEx(adapterIndex, &currentMode, nullptr);
+    if (FAILED(hr)) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "GetAdapterDisplayModeEx() failed: %x",
+                     hr);
+        return false;
+    }
 
     D3DPRESENT_PARAMETERS d3dpp = {};
     d3dpp.hDeviceWindow = info.info.win.window;
@@ -784,6 +790,14 @@ int DXVA2Renderer::getDecoderColorspace()
     }
 }
 
+int DXVA2Renderer::getDecoderColorRange()
+{
+    // StretchRect() assumes limited range on Intel and Qualcomm GPUs.
+    // VideoProcessBlt() should handle either fine, but let's not take
+    // chances on potentially broken DXVA2 GPU drivers for little gain.
+    return COLOR_RANGE_LIMITED;
+}
+
 int DXVA2Renderer::getDecoderCapabilities()
 {
     return CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC |
@@ -979,6 +993,7 @@ void DXVA2Renderer::renderFrame(AVFrame *frame)
             SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                          "StretchRect() failed: %x",
                          hr);
+            m_Device->EndScene();
             SDL_Event event;
             event.type = SDL_RENDER_DEVICE_RESET;
             SDL_PushEvent(&event);

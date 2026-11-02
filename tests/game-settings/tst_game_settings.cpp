@@ -54,7 +54,7 @@ class GameSettingsTest : public QObject
     void openEditor() {
         m_Engine = std::make_unique<QQmlEngine>();
         m_Engine->rootContext()->setContextProperty("initialView", "qrc:/gui/ProfileSelectionView.qml");
-        m_Engine->rootContext()->setContextProperty("runConfigChecks", false);
+        m_Engine->rootContext()->setContextProperty("isGuiLaunch", true);
         m_Engine->rootContext()->setContextProperty("gameSettingsFactory", &m_Factory);
         QQmlComponent component(m_Engine.get(), QUrl("qrc:/gui/main.qml"));
         QVERIFY2(component.isReady(), qPrintable(component.errorString()));

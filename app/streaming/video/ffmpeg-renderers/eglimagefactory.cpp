@@ -24,8 +24,8 @@
 #define DRM_FORMAT_GR88 fourcc_code('G', 'R', '8', '8')
 #endif
 
-EglImageFactory::EglImageFactory(IFFmpegRenderer* renderer) :
-    m_Renderer(renderer),
+EglImageFactory::EglImageFactory() :
+    m_Renderer(nullptr),
     m_EGLExtDmaBuf(false),
     m_eglCreateImage(nullptr),
     m_eglDestroyImage(nullptr),
@@ -36,9 +36,16 @@ EglImageFactory::EglImageFactory(IFFmpegRenderer* renderer) :
 {
 }
 
-bool EglImageFactory::initializeEGL(EGLDisplay,
+bool EglImageFactory::initializeEGL(IFFmpegRenderer* eglRenderer,
+                                    EGLDisplay,
                                     const EGLExtensions &ext)
 {
+    // The EGL renderer is guaranteed to be alive for any calls to this factory,
+    // since it's the one that calls exportEGLImages() on the backend renderer.
+    SDL_assert(eglRenderer->getRendererType() == IFFmpegRenderer::RendererType::EGL);
+    SDL_assert(!m_Renderer);
+    m_Renderer = eglRenderer;
+
     if (!ext.isSupported("EGL_EXT_image_dma_buf_import")) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "DRM-EGL: DMABUF unsupported");
@@ -75,6 +82,8 @@ void EglImageFactory::resetCache()
 
 ssize_t EglImageFactory::exportDRMImages(AVFrame* frame, EGLDisplay dpy, EGLImage images[EGL_MAX_PLANES])
 {
+    SDL_assert(m_Renderer);
+
     SDL_assert(frame->format == AV_PIX_FMT_DRM_PRIME);
     AVDRMFrameDescriptor* drmFrame = (AVDRMFrameDescriptor*)frame->data[0];
 
@@ -231,7 +240,7 @@ ssize_t EglImageFactory::exportDRMImages(AVFrame* frame, EGLDisplay dpy, EGLImag
     else {
         // Cast the EGLAttrib array elements to EGLint for the KHR extension
         EGLint intAttribs[MAX_ATTRIB_COUNT];
-        for (int i = 0; i < MAX_ATTRIB_COUNT; i++) {
+        for (int i = 0; i < attribIndex; i++) {
             intAttribs[i] = (EGLint)attribs[i];
         }
 
@@ -264,6 +273,8 @@ ssize_t EglImageFactory::exportDRMImages(AVFrame* frame, EGLDisplay dpy, EGLImag
 
 ssize_t EglImageFactory::exportVAImages(AVFrame *frame, uint32_t exportFlags, EGLDisplay dpy, EGLImage images[EGL_MAX_PLANES])
 {
+    SDL_assert(m_Renderer);
+
     SDL_assert(frame->format == AV_PIX_FMT_VAAPI);
     auto hwFrameCtx = (AVHWFramesContext*)frame->hw_frames_ctx->data;
     AVVAAPIDeviceContext* vaDeviceContext = (AVVAAPIDeviceContext*)hwFrameCtx->device_ctx->hwctx;
@@ -317,7 +328,7 @@ ssize_t EglImageFactory::exportVAImages(AVFrame *frame, uint32_t exportFlags, EG
                 attribs[attribIndex++] = layer.offset[0];
                 attribs[attribIndex++] = EGL_DMA_BUF_PLANE0_PITCH_EXT;
                 attribs[attribIndex++] = layer.pitch[0];
-                if (m_EGLExtDmaBuf) {
+                if (m_EGLExtDmaBuf && object.drm_format_modifier != DRM_FORMAT_MOD_INVALID) {
                     attribs[attribIndex++] = EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT;
                     attribs[attribIndex++] = (EGLint)(object.drm_format_modifier & 0xFFFFFFFF);
                     attribs[attribIndex++] = EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT;
@@ -332,7 +343,7 @@ ssize_t EglImageFactory::exportVAImages(AVFrame *frame, uint32_t exportFlags, EG
                 attribs[attribIndex++] = layer.offset[1];
                 attribs[attribIndex++] = EGL_DMA_BUF_PLANE1_PITCH_EXT;
                 attribs[attribIndex++] = layer.pitch[1];
-                if (m_EGLExtDmaBuf) {
+                if (m_EGLExtDmaBuf && object.drm_format_modifier != DRM_FORMAT_MOD_INVALID) {
                     attribs[attribIndex++] = EGL_DMA_BUF_PLANE1_MODIFIER_LO_EXT;
                     attribs[attribIndex++] = (EGLint)(object.drm_format_modifier & 0xFFFFFFFF);
                     attribs[attribIndex++] = EGL_DMA_BUF_PLANE1_MODIFIER_HI_EXT;
@@ -347,7 +358,7 @@ ssize_t EglImageFactory::exportVAImages(AVFrame *frame, uint32_t exportFlags, EG
                 attribs[attribIndex++] = layer.offset[2];
                 attribs[attribIndex++] = EGL_DMA_BUF_PLANE2_PITCH_EXT;
                 attribs[attribIndex++] = layer.pitch[2];
-                if (m_EGLExtDmaBuf) {
+                if (m_EGLExtDmaBuf && object.drm_format_modifier != DRM_FORMAT_MOD_INVALID) {
                     attribs[attribIndex++] = EGL_DMA_BUF_PLANE2_MODIFIER_LO_EXT;
                     attribs[attribIndex++] = (EGLint)(object.drm_format_modifier & 0xFFFFFFFF);
                     attribs[attribIndex++] = EGL_DMA_BUF_PLANE2_MODIFIER_HI_EXT;
@@ -362,7 +373,7 @@ ssize_t EglImageFactory::exportVAImages(AVFrame *frame, uint32_t exportFlags, EG
                 attribs[attribIndex++] = layer.offset[3];
                 attribs[attribIndex++] = EGL_DMA_BUF_PLANE3_PITCH_EXT;
                 attribs[attribIndex++] = layer.pitch[3];
-                if (m_EGLExtDmaBuf) {
+                if (m_EGLExtDmaBuf && object.drm_format_modifier != DRM_FORMAT_MOD_INVALID) {
                     attribs[attribIndex++] = EGL_DMA_BUF_PLANE3_MODIFIER_LO_EXT;
                     attribs[attribIndex++] = (EGLint)(object.drm_format_modifier & 0xFFFFFFFF);
                     attribs[attribIndex++] = EGL_DMA_BUF_PLANE3_MODIFIER_HI_EXT;
