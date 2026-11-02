@@ -6,6 +6,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <memory>
+#include "vrrtimingoptions.h"
 
 class StreamingPreferences : public QObject
 {
@@ -25,6 +26,16 @@ public:
     Q_INVOKABLE void save();
 
     void reload();
+    Q_INVOKABLE void applyVrrPreset(int mode);
+    int vrrBufferPerMille() const { return m_VrrTimingOptions.bufferPerMille; }
+    int vrrTargetHundredths() const { return m_VrrTimingOptions.targetHundredths; }
+    int vrrHistorySeconds() const { return m_VrrTimingOptions.historySeconds; }
+    void setVrrBufferPerMille(int value);
+    void setVrrTargetHundredths(int value);
+    void setVrrHistorySeconds(int value);
+    int vrrToleranceUs() const { return m_VrrTimingOptions.toleranceUs; }
+    void setVrrToleranceUs(int value);
+    VrrTimingOptions vrrTimingOptions() const { return m_VrrTimingOptions; }
 
     Q_INVOKABLE int getEffectiveDefaultBitrate() const;
 
@@ -151,16 +162,33 @@ public:
     };
     Q_ENUM(CaptureSysKeysMode);
 
+    // What the Steam Controller (2026)'s four grip buttons become on the host
+    enum SteamControllerGrips
+    {
+        SCG_PADDLES,   // Xbox Elite paddles 1-4 (R4, L4, R5, L5)
+        SCG_DS4,       // DualShock extras: L4 Share, R4 touchpad click, L5 L3, R5 R3
+        SCG_OFF,
+    };
+    Q_ENUM(SteamControllerGrips);
+
     Q_PROPERTY(int width MEMBER width NOTIFY displayModeChanged)
     Q_PROPERTY(int height MEMBER height NOTIFY displayModeChanged)
     Q_PROPERTY(int fps MEMBER fps NOTIFY displayModeChanged)
     Q_PROPERTY(int bitrateKbps MEMBER bitrateKbps NOTIFY bitrateChanged)
+    // Calibrated PyroWave frame pace (0 = let the host choose); see PyroWaveLink::searchPace.
+    Q_PROPERTY(int pyroWavePaceMbps MEMBER pyroWavePaceMbps NOTIFY bitrateChanged)
     Q_PROPERTY(bool unlockBitrate MEMBER unlockBitrate NOTIFY unlockBitrateChanged)
     Q_PROPERTY(bool autoAdjustBitrate MEMBER autoAdjustBitrate NOTIFY autoAdjustBitrateChanged)
     Q_PROPERTY(bool enableVsync MEMBER enableVsync NOTIFY enableVsyncChanged)
     Q_PROPERTY(bool enableVrr MEMBER enableVrr NOTIFY enableVrrChanged)
     Q_PROPERTY(int vrrLatencyMode MEMBER vrrLatencyMode NOTIFY vrrLatencyModeChanged)
+    Q_PROPERTY(int vrrBufferPerMille READ vrrBufferPerMille WRITE setVrrBufferPerMille NOTIFY vrrTimingChanged)
+    Q_PROPERTY(int vrrTargetHundredths READ vrrTargetHundredths WRITE setVrrTargetHundredths NOTIFY vrrTimingChanged)
+    Q_PROPERTY(int vrrHistorySeconds READ vrrHistorySeconds WRITE setVrrHistorySeconds NOTIFY vrrTimingChanged)
+    Q_PROPERTY(int vrrToleranceUs READ vrrToleranceUs WRITE setVrrToleranceUs NOTIFY vrrTimingChanged)
     Q_PROPERTY(bool smoothVrrFrameTiming MEMBER smoothVrrFrameTiming NOTIFY smoothVrrFrameTimingChanged)
+    Q_PROPERTY(bool absorbVrrMicrostutter MEMBER absorbVrrMicrostutter NOTIFY absorbVrrMicrostutterChanged)
+    Q_PROPERTY(bool highPerformanceGpuPower MEMBER highPerformanceGpuPower NOTIFY highPerformanceGpuPowerChanged)
     Q_PROPERTY(bool traceVrrFrames MEMBER traceVrrFrames NOTIFY traceVrrFramesChanged)
     Q_PROPERTY(bool exportingDiagnostics MEMBER m_ExportingDiagnostics NOTIFY diagnosticsChanged)
     Q_PROPERTY(QString diagnosticsStatus MEMBER m_DiagnosticsStatus NOTIFY diagnosticsChanged)
@@ -173,11 +201,13 @@ public:
     Q_PROPERTY(bool absoluteTouchMode MEMBER absoluteTouchMode NOTIFY absoluteTouchModeChanged)
     Q_PROPERTY(bool framePacing MEMBER framePacing NOTIFY framePacingChanged)
     Q_PROPERTY(bool connectionWarnings MEMBER connectionWarnings NOTIFY connectionWarningsChanged)
+    Q_PROPERTY(bool hideVrrBufferWarnings MEMBER hideVrrBufferWarnings NOTIFY hideVrrBufferWarningsChanged)
     Q_PROPERTY(bool configurationWarnings MEMBER configurationWarnings NOTIFY configurationWarningsChanged)
     Q_PROPERTY(bool richPresence MEMBER richPresence NOTIFY richPresenceChanged)
     Q_PROPERTY(bool gamepadMouse MEMBER gamepadMouse NOTIFY gamepadMouseChanged)
     Q_PROPERTY(bool detectNetworkBlocking MEMBER detectNetworkBlocking NOTIFY detectNetworkBlockingChanged)
     Q_PROPERTY(bool showPerformanceOverlay MEMBER showPerformanceOverlay NOTIFY showPerformanceOverlayChanged)
+    Q_PROPERTY(bool showFrametimeGraph MEMBER showFrametimeGraph NOTIFY showFrametimeGraphChanged)
     Q_PROPERTY(AudioConfig audioConfig MEMBER audioConfig NOTIFY audioConfigChanged)
     Q_PROPERTY(VideoCodecConfig videoCodecConfig MEMBER videoCodecConfig NOTIFY videoCodecConfigChanged)
     Q_PROPERTY(bool enableHdr MEMBER enableHdr NOTIFY enableHdrChanged)
@@ -194,6 +224,15 @@ public:
     Q_PROPERTY(bool swapFaceButtons MEMBER swapFaceButtons NOTIFY swapFaceButtonsChanged)
     Q_PROPERTY(bool keepAwake MEMBER keepAwake NOTIFY keepAwakeChanged)
     Q_PROPERTY(CaptureSysKeysMode captureSysKeysMode MEMBER captureSysKeysMode NOTIFY captureSysKeysModeChanged)
+    Q_PROPERTY(bool steamControllerDriver MEMBER steamControllerDriver NOTIFY steamControllerChanged)
+    Q_PROPERTY(bool steamControllerMotion MEMBER steamControllerMotion NOTIFY steamControllerChanged)
+    Q_PROPERTY(bool steamControllerSplitPads MEMBER steamControllerSplitPads NOTIFY steamControllerChanged)
+    Q_PROPERTY(SteamControllerGrips steamControllerGrips MEMBER steamControllerGrips NOTIFY steamControllerChanged)
+    Q_PROPERTY(int steamControllerRumbleHold MEMBER steamControllerRumbleHold NOTIFY steamControllerChanged)
+    Q_PROPERTY(bool steamControllerStickStretch MEMBER steamControllerStickStretch NOTIFY steamControllerChanged)
+    Q_PROPERTY(int steamControllerHapticBoost MEMBER steamControllerHapticBoost NOTIFY steamControllerChanged)
+    Q_PROPERTY(int steamControllerHapticPulseScale MEMBER steamControllerHapticPulseScale NOTIFY steamControllerChanged)
+    Q_PROPERTY(int steamControllerHapticMasterGain MEMBER steamControllerHapticMasterGain NOTIFY steamControllerChanged)
     Q_PROPERTY(Language language MEMBER language NOTIFY languageChanged);
 
     Q_INVOKABLE bool retranslate();
@@ -218,7 +257,11 @@ public:
     // Re-present the last frame inside a host gap longer than the panel's
     // adaptive-refresh floor, so the panel never engages its own
     // low-framerate compensation.
-    bool smoothVrrFrameTiming = true;
+    bool smoothVrrFrameTiming = false;
+    // Holds a standing presentation reserve so Reduce judder can even out
+    // late host frames; applies only while smoothVrrFrameTiming is set.
+    bool absorbVrrMicrostutter = false;
+    bool highPerformanceGpuPower = false;
     bool traceVrrFrames = false;
     bool gameOptimizations = false;
     bool playAudioOnHost = false;
@@ -229,11 +272,13 @@ public:
     bool absoluteTouchMode = false;
     bool framePacing = false;
     bool connectionWarnings = false;
+    bool hideVrrBufferWarnings = false;
     bool configurationWarnings = false;
     bool richPresence = false;
     bool gamepadMouse = false;
     bool detectNetworkBlocking = false;
     bool showPerformanceOverlay = false;
+    bool showFrametimeGraph = false;
     bool swapMouseButtons = false;
     bool muteOnFocusLoss = false;
     bool backgroundGamepad = false;
@@ -241,6 +286,7 @@ public:
     bool swapFaceButtons = false;
     bool keepAwake = false;
     int packetSize = 0;
+    int pyroWavePaceMbps = 0;
     AudioConfig audioConfig = AC_STEREO;
     VideoCodecConfig videoCodecConfig = VCC_AUTO;
     bool enableHdr = false;
@@ -252,6 +298,20 @@ public:
     Language language = LANG_AUTO;
     CaptureSysKeysMode captureSysKeysMode = CSK_OFF;
     RendererSelection rendererSelection = RS_AUTO;
+    // Steam Controller (2026) over USB cable / wireless puck (app/streaming/input/steamcontroller)
+    bool steamControllerDriver = false;
+    bool steamControllerMotion = false;
+    bool steamControllerSplitPads = false;
+    SteamControllerGrips steamControllerGrips = SCG_OFF;
+    int steamControllerRumbleHold = 0;   // ms a host rumble is held without a refresh; 0 = unlimited
+    bool steamControllerStickStretch = false;
+    // Bluetooth LE links only (the Android BLE driver's haptic knobs); the USB/puck path ignores them
+    int steamControllerHapticBoost = 0;       // dB added to Steam's 0x82 tick/click gain byte (0, 6, 12, 20)
+    int steamControllerHapticPulseScale = 0;  // percent of the 0x81 pulse on-time (100, 150, 200, 300)
+    int steamControllerHapticMasterGain = 0;  // dB written as setting 76 in the link settings (0 = not written, 6, 12)
+
+private:
+    VrrTimingOptions m_VrrTimingOptions = VrrTimingOptions::preset(1);
 
 signals:
     void displayModeChanged();
@@ -261,7 +321,10 @@ signals:
     void enableVsyncChanged();
     void enableVrrChanged();
     void vrrLatencyModeChanged();
+    void vrrTimingChanged();
     void smoothVrrFrameTimingChanged();
+    void absorbVrrMicrostutterChanged();
+    void highPerformanceGpuPowerChanged();
     void traceVrrFramesChanged();
     void diagnosticsChanged();
     void gameOptimizationsChanged();
@@ -281,17 +344,20 @@ signals:
     void windowModeChanged();
     void framePacingChanged();
     void connectionWarningsChanged();
+    void hideVrrBufferWarningsChanged();
     void configurationWarningsChanged();
     void richPresenceChanged();
     void gamepadMouseChanged();
     void detectNetworkBlockingChanged();
     void showPerformanceOverlayChanged();
+    void showFrametimeGraphChanged();
     void mouseButtonsChanged();
     void muteOnFocusLossChanged();
     void backgroundGamepadChanged();
     void reverseScrollDirectionChanged();
     void swapFaceButtonsChanged();
     void captureSysKeysModeChanged();
+    void steamControllerChanged();
     void keepAwakeChanged();
     void languageChanged();
     void rendererSelectionChanged();
@@ -302,7 +368,7 @@ private:
     QString getSuffixFromLanguage(Language lang);
 
     QQmlEngine* m_QmlEngine;
-    bool m_Transient;
+    bool m_Transient = false;
     bool m_ExportingDiagnostics = false;
     QString m_DiagnosticsStatus;
 };

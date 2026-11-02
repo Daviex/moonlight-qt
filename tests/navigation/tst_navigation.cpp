@@ -29,6 +29,18 @@ private:
     int depth() { return evaluate("stackView.depth").toInt(); }
     QObject* page() { return evaluate("stackView.currentItem").value<QObject*>(); }
 
+    QQuickItem* firstGridDelegate(QObject* grid)
+    {
+        auto content = grid->property("contentItem").value<QQuickItem*>();
+        if (!content) return nullptr;
+        for (auto child : content->childItems()) {
+            if (child->property("grid").value<QObject*>() == grid && child->x() == 0 && child->y() == 0) {
+                return child;
+            }
+        }
+        return nullptr;
+    }
+
     void openGames()
     {
         evaluate("stackView.currentItem.openComputer(0, 'Test PC', false)");
@@ -53,7 +65,7 @@ private slots:
     {
         m_Engine = std::make_unique<QQmlEngine>();
         m_Engine->rootContext()->setContextProperty("initialView", "qrc:/gui/ProfileSelectionView.qml");
-        m_Engine->rootContext()->setContextProperty("runConfigChecks", false);
+        m_Engine->rootContext()->setContextProperty("isGuiLaunch", true);
         QQmlComponent component(m_Engine.get(), QUrl("qrc:/gui/main.qml"));
         QVERIFY2(component.isReady(), qPrintable(component.errorString()));
         m_Window.reset(qobject_cast<QQuickWindow*>(component.create()));
@@ -77,6 +89,71 @@ private slots:
         QTRY_VERIFY(hostPage->hasActiveFocus());
         QTest::keyClick(m_Window.get(), Qt::Key_Right);
         QCOMPARE(hostPage->property("currentIndex").toInt(), 1);
+    }
+
+    void gamesAreAlignedBeforeInput_data()
+    {
+        QTest::addColumn<int>("appCount");
+        QTest::addColumn<int>("windowWidth");
+        QTest::addColumn<int>("gamepads");
+        QTest::newRow("single-game") << 1 << 1280 << 0;
+        QTest::newRow("many-games-mouse") << 40 << 1280 << 0;
+        QTest::newRow("many-games-controller") << 40 << 1280 << 1;
+        QTest::newRow("narrow-window") << 40 << 800 << 0;
+    }
+
+    void gamesAreAlignedBeforeInput()
+    {
+        QFETCH(int, appCount);
+        QFETCH(int, windowWidth);
+        QFETCH(int, gamepads);
+        m_Window->setWidth(windowWidth);
+        evaluate(QString("ComputerManager.appCount = %1").arg(appCount));
+        evaluate(QString("SdlGamepadKeyNavigation.connectedGamepads = %1").arg(gamepads));
+        openGames();
+        auto games = page();
+        QCOMPARE(games->property("count").toInt(), appCount);
+        QCOMPARE(games->property("currentIndex").toInt(), gamepads ? 0 : -1);
+        QTRY_VERIFY(firstGridDelegate(games));
+        QCOMPARE(firstGridDelegate(games)->mapToItem(qobject_cast<QQuickItem*>(games), QPointF()).x(),
+                 games->property("leftMargin").toReal());
+    }
+
+    void gamesStayAlignedWhenLoadedAfterOpening()
+    {
+        evaluate("ComputerManager.appCount = 0");
+        openGames();
+        auto games = page();
+        evaluate("appModel.populate(40)", games);
+        QTRY_COMPARE(games->property("count").toInt(), 40);
+        QTRY_VERIFY(firstGridDelegate(games));
+        QCOMPARE(firstGridDelegate(games)->mapToItem(qobject_cast<QQuickItem*>(games), QPointF()).x(),
+                 games->property("leftMargin").toReal());
+    }
+
+    void gridRecenteringPreservesVerticalScroll()
+    {
+        evaluate("ComputerManager.appCount = 80");
+        openGames();
+        auto games = page();
+        evaluate("positionViewAtIndex(count - 1, GridView.End)", games);
+        const auto scrollY = games->property("contentY").toReal();
+        QVERIFY(scrollY > 0);
+        const auto margin = games->property("leftMargin").toReal();
+
+        // Keep the same number of columns so only the horizontal margins change.
+        m_Window->setWidth(m_Window->width() + 40);
+        QTRY_VERIFY(games->property("leftMargin").toReal() != margin);
+        QCOMPARE(games->property("contentX").toReal(), -games->property("leftMargin").toReal());
+        QCOMPARE(games->property("contentY").toReal(), scrollY);
+
+        evaluate("stackView.push(Qt.createQmlObject('import QtQuick 2.9; Item {}', stackView))");
+        QTRY_VERIFY(!busy());
+        evaluate("stackView.pop()");
+        QTRY_VERIFY(!busy());
+        QCOMPARE(page(), games);
+        QCOMPARE(games->property("contentX").toReal(), -games->property("leftMargin").toReal());
+        QCOMPARE(games->property("contentY").toReal(), scrollY);
     }
 
     void rapidBack_data()

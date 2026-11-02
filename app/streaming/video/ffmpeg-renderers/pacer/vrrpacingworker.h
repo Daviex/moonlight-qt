@@ -73,6 +73,10 @@ private:
         PacedFrame frame;
         FrameTraceContext trace;
         std::shared_ptr<VrrPreparedFrame> preparation;
+        // Preserve a reserved successor's observed decode boundary and wait.
+        VrrDecodeReadiness reservedReadiness;
+        uint64_t reservedReadinessObservedUs = 0;
+        bool reservedReadinessValid = false;
 
         QueuedFrame() = default;
         QueuedFrame(QueuedFrame&&) = default;
@@ -86,6 +90,13 @@ private:
     };
 
     struct FrameTelemetry {
+        int64_t trajectorySuccessorFrame = -1;
+        uint64_t trajectorySuccessorProof = 0;
+        bool trajectoryResyncDropped = false;
+        bool trajectoryResyncDeferred = false;
+        bool inputNetworkBufferMiss = false;
+        bool inputDecodeBufferMiss = false;
+        uint64_t inputBufferMissObservationUs = 0;
         bool preparedAhead = false;
         VrrPreparedFrame::Timing preparationStage;
         uint64_t decisionTimeUs = 0;
@@ -106,6 +117,9 @@ private:
         uint64_t preparationEndUs = 0;
         uint64_t preparationDurationUs = 0;
         uint64_t decodeSyncWaitUs = 0;
+        bool decodeReadinessObserved = false;
+        bool nativeScheduledPresentation = false;
+        uint64_t schedulingBoundaryUs = 0;
         bool prepareTimingValid = false;
         uint64_t prepareDecodeSyncUs = 0;
         uint64_t prepareAcquireUs = 0;
@@ -144,6 +158,7 @@ private:
     struct TraceRow {
         int frameNumber = 0;
         uint32_t rtpTimestamp = 0;
+        uint32_t lostPackets = 0;
         bool timestampValid = false;
         uint64_t decodeCompleteUs = 0;
         uint64_t decoderOutputUs = 0;
@@ -179,6 +194,8 @@ private:
     int run();
     bool dequeueFrame(QueuedFrame& frame, bool& queueDiscontinuity);
     bool hasQueuedFrame();
+    bool reserveReadySuccessor(bool preparedCurrent, QueuedFrame& frame,
+                               bool& queueDiscontinuity, unsigned waitMs = 0);
     void discardQueuedFrames(bool countDrops,
                              TraceDisposition disposition);
     uint32_t consumeWindowStateNotifications();
@@ -214,10 +231,15 @@ private:
     PacerTelemetry* m_Telemetry;
     VrrSessionConfig m_Config;
     bool m_CanLatchPresentation = false;
+    const bool m_NativeSynchronizedPresentation;
+    const bool m_NativeScheduledPresentation;
+    uint64_t m_LastActualSubmissionUs = 0;
     bool m_WorkerStarted = false;
     std::atomic_bool m_CalibrationInvalidated { false };
     QByteArray m_InitialPlayoutProfile;
     bool m_CalibrationLoaded = false;
+    // Frozen after loading the startup seed, before the writer thread starts.
+    VrrTimingParameters m_TraceParameters;
     QString startDelayPath() const;
     void noteSettledDelay(uint64_t nowUs, uint64_t delayUs);
     static constexpr uint64_t kSettledDelayWarmupUs = 30000000;

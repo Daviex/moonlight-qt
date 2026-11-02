@@ -1,6 +1,7 @@
 import QtQuick 2.9
 
 ListModel {
+    property var onlineHosts: []
     signal pairingCompleted(string error)
     signal connectionTestCompleted(int result, string blockedPorts)
     function initialize(manager) {

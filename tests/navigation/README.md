@@ -23,6 +23,11 @@ With the offscreen platform, `QT_QPA_FONTDIR=C:/Windows/Fonts` supplies system f
 Coverage:
 
 - Auto-login gives focus to the host grid immediately.
+- The first game tile is aligned with the grid margin before mouse or controller
+  input, for single and multiple rows and different window widths.
+- Games loaded after the page opens use the updated horizontal margin.
+- Recentering after a resize preserves vertical scrolling, including after
+  visiting another page and returning to the game grid.
 - Repeated Escape (controller B) and platform Back during a transition perform
   only one back operation. After the transition, navigation can continue to
   profiles and select another profile.

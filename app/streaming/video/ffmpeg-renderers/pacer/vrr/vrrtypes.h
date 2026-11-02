@@ -5,6 +5,8 @@
 // by the legacy pacing path, while these values describe the frame as it
 // crossed the decoder/pacer boundary.
 
+#include "../../../../../settings/vrrtimingoptions.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -24,22 +26,35 @@ extern "C" {
 struct VrrSessionConfig {
     int displayRefreshHz = 0;
     int streamRateHz = 0;
-    bool allowAdditionalQueuedFrame = false;
     // A session preference resolved into the recorded controller parameters.
     // All presets retain jitter buffering and display-spacing protection.
     bool smoothFrameTiming = true;
-    // Linux readiness boundaries differ from D3D11. Resolve into trace parameters.
-    bool readinessHitchFeedback = false;
-    // Historical near-ceiling checkbox, retained for old tests and captures.
-    bool latencyFix = false;
+    // Adds a standing presentation reserve that Reduce judder may spend on
+    // late source frames. Has no effect unless smoothFrameTiming is set.
+    bool absorbMicrostutter = false;
     // 0: Smooth, 1: Balanced Target, 2: Low Latency, across all VRR rates.
     // The IDs are persisted and therefore remain stable across label changes.
     int latencyMode = 0;
+    VrrTimingOptions timingOptions;
+    // Experimental activation marker; zero keeps normal policy. The effective
+    // profile smoothness target supplies probability (never this marker value).
+    bool experimentalBoundedCatchup = false;
+    uint64_t experimentalInputPercentilePpm = 0;
     // Session-native A/B choice, recorded separately from controller timing.
     bool allowTearing = true;
     std::string calibrationKey;
     std::string calibrationPath;
 };
+
+// Resolve the production buffer policy before either calibration identity or
+// the worker's controller parameters are constructed.
+inline VrrSessionConfig vrrProductionSessionConfig(VrrSessionConfig config)
+{
+    const auto options = config.timingOptions.resolved(config.latencyMode);
+    config.experimentalBoundedCatchup = true;
+    config.experimentalInputPercentilePpm = uint64_t(options.targetHundredths) * 100;
+    return config;
+}
 
 // A move-only frame record.  Decoder completion is captured while the
 // corresponding DECODE_UNIT is still available.  A raw RTP timestamp of zero
@@ -181,6 +196,18 @@ public:
         return m_DecodeHoldUs;
     }
 
+    // PyroWave data packets that arrived as zero-filled holes. Loss costs this
+    // frame detail, not timing: its lateness must not teach the pacer to buffer.
+    void setLostPackets(uint32_t lostPackets)
+    {
+        m_LostPackets = lostPackets;
+    }
+
+    uint32_t lostPackets() const
+    {
+        return m_LostPackets;
+    }
+
     // Reassembled -> decode submission, excluding a deliberate hold.
     uint64_t decoderQueueUs() const
     {
@@ -222,4 +249,5 @@ private:
     uint64_t m_DecodeSubmitUs = 0;
     uint64_t m_DecodeHoldUs = 0;
     uint64_t m_DecodeBoundary = 0;
+    uint32_t m_LostPackets = 0;
 };

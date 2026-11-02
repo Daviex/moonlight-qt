@@ -13,6 +13,31 @@ int main(int argc, char** argv)
     QCoreApplication app(argc, argv);
     QTemporaryDir dir;
     assert(dir.isValid());
+    const QByteArray policy = "\ninput_target=995000\ncarry=4000";
+    const auto key = Vrr13::calibrationKey("display-a", policy, true, true);
+    assert(!key.isEmpty());
+    assert(key == Vrr13::calibrationKey("display-a", policy, true, true));
+    assert(key != Vrr13::calibrationKey("display-b", policy, true, true));
+    assert(key != Vrr13::calibrationKey("display-a", policy + "0", true, true));
+    assert(key != Vrr13::calibrationKey("display-a", policy, false, true));
+    assert(key != Vrr13::calibrationKey("display-a", policy, true, false));
+    assert(Vrr13::calibrationKey("", policy, true, true).isEmpty());
+    assert(Vrr13::jsonInteger(QJsonValue(4200)) == 4200);
+    assert(Vrr13::jsonInteger(QJsonValue(1700000000.0)) == 1700000000);
+    assert(Vrr13::jsonInteger(QJsonValue(-1)) == -1);
+    assert(Vrr13::jsonInteger(QJsonValue(1.5), -7) == -7);
+    assert(Vrr13::jsonInteger(QJsonValue("4200"), -7) == -7);
+    assert(Vrr13::jsonInteger(QJsonValue(), -7) == -7);
+    const auto minimum = std::numeric_limits<qint64>::min();
+    assert(Vrr13::jsonInteger(QJsonValue(double(minimum)), -7) == minimum);
+    assert(Vrr13::jsonInteger(QJsonValue(-double(minimum)), -7) == -7);
+    assert(Vrr13::jsonInteger(QJsonValue(std::nextafter(double(minimum),
+        -std::numeric_limits<double>::infinity())), -7) == -7);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    // Retain the exact Qt 6 integer representation beyond double precision.
+    const qint64 precise = 9007199254740993LL;
+    assert(Vrr13::jsonInteger(QJsonValue(precise)) == precise);
+#endif
     for (int version : {14, 15, 16, 17, 18, 19}) {
         Vrr13::Reserve predictive(version), restored(version), legacy;
         for (int i = 0; i < 400; ++i)

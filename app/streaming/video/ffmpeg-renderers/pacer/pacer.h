@@ -47,6 +47,7 @@ public:
     void shutdown();
 
     PacerTelemetrySnapshot telemetrySnapshot() const;
+    Overlay::TimingGraphSnapshot timingGraphSnapshot() const;
 
     // Only the active VRR worker consumes the decoder-facing pacing metadata.
     void submitFrame(PacedFrame&& frame);
@@ -60,7 +61,8 @@ public:
                     bool enableVrr, int vrrDisplayRefreshHz,
                     bool smoothVrrFrameTiming = true,
                     const QString& calibrationKey = QString(),
-                    int vrrLatencyMode = 0);
+                    int vrrLatencyMode = 0, VrrTimingOptions vrrTimingOptions = {},
+                    bool absorbVrrMicrostutter = false);
 
     void notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO info);
 

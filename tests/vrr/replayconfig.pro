@@ -17,9 +17,16 @@ HEADERS += \
     $$PWD/vrrreplaymodel.h \
     $$PWD/../../app/streaming/video/ffmpeg-renderers/pacer/vrr/presentationtiming.h \
     $$PWD/../../app/streaming/video/ffmpeg-renderers/pacer/vrr/prediction.h \
-    $$PWD/../../app/streaming/video/ffmpeg-renderers/pacer/vrr/recentreadiness.h \
     $$PWD/../../app/streaming/video/ffmpeg-renderers/pacer/vrr/smoothnessfeedback.h
 
 win32:contains(QT_ARCH, x86_64) {
     INCLUDEPATH += $$PWD/../../libs/windows/include/x64
+}
+
+macx:!disable-prebuilts {
+    INCLUDEPATH += $$PWD/../../libs/mac/include
+    LIBS += -L$$PWD/../../libs/mac/lib -lavutil.60
+} else:unix {
+    CONFIG += link_pkgconfig
+    PKGCONFIG += libavutil
 }

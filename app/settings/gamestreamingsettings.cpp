@@ -14,6 +14,8 @@ QStringList groupKeys(const QString& key)
 {
     if (key == "width") return {"width", "height"};
     if (key == "bitrate") return {"autoadjustbitrate", "bitrate"};
+    if (key == "vrrlatencymode") return {"vrrlatencymode", "vrrbufferpermille",
+        "vrrtargethundredths", "vrrhistoryseconds", "vrrtoleranceus"};
     return {key};
 }
 }

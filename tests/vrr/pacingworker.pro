@@ -10,6 +10,7 @@ DEFINES += SDL_MAIN_HANDLED
 SOURCES += \
     $$PWD/tst_vrrpacingworker.cpp \
     $$PWD/../../app/streaming/video/ffmpeg-renderers/pacer/vrrpacingworker.cpp \
+    $$PWD/../../app/streaming/video/ffmpeg-renderers/pacer/vrrpacingtrace.cpp \
     $$PWD/../../app/streaming/video/ffmpeg-renderers/pacer/vrr/vrrtimingcontroller.cpp \
     $$PWD/../../app/streaming/video/ffmpeg-renderers/pacer/vrr/vrrtargetwaiter.cpp
 
@@ -32,7 +33,8 @@ win32 {
 
 macx {
     !disable-prebuilts {
-        INCLUDEPATH += $$PWD/../../libs/mac/include
+        INCLUDEPATH += $$PWD/../../libs/mac/include \
+                       $$PWD/../../libs/mac/include/SDL2
         LIBS += -L$$PWD/../../libs/mac/lib -lavutil.60 -lSDL2
     } else {
         CONFIG += link_pkgconfig
@@ -52,5 +54,9 @@ HEADERS += \
     $$PWD/../../app/streaming/video/ffmpeg-renderers/pacer/vrr/vrrframedroppolicy.h \
     $$PWD/../../app/streaming/video/ffmpeg-renderers/pacer/vrr/presentationtiming.h \
     $$PWD/../../app/streaming/video/ffmpeg-renderers/pacer/vrr/prediction.h \
-    $$PWD/../../app/streaming/video/ffmpeg-renderers/pacer/vrr/recentreadiness.h \
     $$PWD/../../app/streaming/video/ffmpeg-renderers/pacer/vrr/smoothnessfeedback.h
+
+HEADERS += $$PWD/../../app/streaming/video/ffmpeg-renderers/pacer/vrr/intervalbuffer.h
+
+HEADERS += $$PWD/../../app/streaming/video/ffmpeg-renderers/pacer/vrr/inputbuffer.h
+HEADERS += $$PWD/../../app/streaming/video/ffmpeg-renderers/pacer/vrr/inputgoalbuffer.h

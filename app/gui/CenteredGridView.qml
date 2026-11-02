@@ -11,6 +11,12 @@ GridView {
     function updateMargins() {
         leftMargin = horizontalMargin
         rightMargin = horizontalMargin
+
+        // StackView can size and populate the grid after Flickable initializes
+        // its content position. Updating the margins alone leaves the old
+        // horizontal offset in place until the next flick or bounds adjustment.
+        // Only reset the horizontal position so vertical scrolling is preserved.
+        contentX = -leftMargin
     }
 
     onHorizontalMarginChanged: {

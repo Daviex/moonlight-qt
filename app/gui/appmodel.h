@@ -25,6 +25,7 @@ class AppModel : public QAbstractListModel
         DirectLaunchRole,
         AppCollectorGameRole,
         CustomStreamingSettingsRole,
+        SleepActionRole,
     };
 
 public:
@@ -50,6 +51,8 @@ public:
 
     Q_INVOKABLE void quitRunningApp();
 
+    Q_INVOKABLE void requestHostSleep();
+
     Q_INVOKABLE void setAppHidden(int appIndex, bool hidden);
 
     Q_INVOKABLE void setAppDirectLaunch(int appIndex, bool directLaunch);
@@ -70,6 +73,7 @@ private slots:
 signals:
     void computerLost();
     void frameLimiterChanged();
+    void hostSleepCompleted(QString error);
 
 private:
     void invalidateComputer();
@@ -80,6 +84,8 @@ private:
 
     bool isAppCurrentlyVisible(const NvApp& app);
 
+    void updateSleepAction();
+    bool m_SleepActionVisible = false;
     void updateFrameLimiterCapabilities();
     bool m_FrameLimiterSupported = false;
     bool m_FrameLimiterEnabled = false;

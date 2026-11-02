@@ -182,14 +182,19 @@ ProfileManager::migrateLegacyProfileData(QString profileId)
         "gcmapping",
         "width", "height", "fps", "bitrate", "unlockbitrate", "autoadjustbitrate",
         "enablevrr", "vrrlatencymode", "vrrlatencyfix", "smoothvrrframetiming", "tracevrrframes",
+        "vrrbufferpermille", "vrrtargethundredths", "vrrhistoryseconds", "vrrtoleranceus",
+        "vrrtimingpresetrevision", "absorbvrrmicrostutter", "highperformancegpupower",
         "fullscreen", "vsync", "gameopts", "hostaudio", "multicontroller",
         "audiocfg", "videocfg", "hdr", "yuv444", "videodec", "windowmode",
         "mdns", "quitAppAfter", "mouseacceleration", "abstouchmode",
-        "startwindowed", "framepacing", "connwarnings", "confwarnings",
+        "startwindowed", "framepacing", "connwarnings", "hidevrrbufferwarnings", "confwarnings",
         "uidisplaymode", "richpresence", "gamepadmouse", "defaultver",
-        "packetsize", "detectnetblocking", "showperfoverlay", "swapmousebuttons",
+        "packetsize", "pyrowavepacembps", "detectnetblocking", "showperfoverlay", "showframetimegraph", "swapmousebuttons",
         "muteonfocusloss", "backgroundgamepad", "reversescroll", "swapfacebuttons",
-        "capturesyskeys", "keepawake", "language", "renderer"
+        "capturesyskeys", "keepawake", "language", "renderer",
+        "steamcontrollerdriver", "steamcontrollermotion", "steamcontrollersplitpads",
+        "steamcontrollergrips", "steamcontrollerrumblehold", "steamcontrollerstickstretch",
+        "steamcontrollerhapticboost", "steamcontrollerhapticpulsescale", "steamcontrollerhapticmastergain"
     };
 
     QSettings settings;

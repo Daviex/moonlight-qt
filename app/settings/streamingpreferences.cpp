@@ -34,7 +34,10 @@
 #define SER_ENABLEVRR "enablevrr"
 #define SER_VRRLATENCYFIX "vrrlatencyfix"
 #define SER_VRRLATENCYMODE "vrrlatencymode"
+#define SER_VRRTIMINGPRESETREVISION "vrrtimingpresetrevision"
 #define SER_SMOOTHVRRFRAMETIMING "smoothvrrframetiming"
+#define SER_ABSORBVRRMICROSTUTTER "absorbvrrmicrostutter"
+#define SER_HIGHPERFORMANCEGPUPOWER "highperformancegpupower"
 #define SER_TRACEVRRFRAMES "tracevrrframes"
 #define SER_GAMEOPTS "gameopts"
 #define SER_HOSTAUDIO "hostaudio"
@@ -52,25 +55,38 @@
 #define SER_STARTWINDOWED "startwindowed"
 #define SER_FRAMEPACING "framepacing"
 #define SER_CONNWARNINGS "connwarnings"
+#define SER_HIDEVRRBUFFERWARNINGS "hidevrrbufferwarnings"
 #define SER_CONFWARNINGS "confwarnings"
 #define SER_UIDISPLAYMODE "uidisplaymode"
 #define SER_RICHPRESENCE "richpresence"
 #define SER_GAMEPADMOUSE "gamepadmouse"
 #define SER_DEFAULTVER "defaultver"
 #define SER_PACKETSIZE "packetsize"
+#define SER_PYROWAVEPACE "pyrowavepacembps"
 #define SER_DETECTNETBLOCKING "detectnetblocking"
 #define SER_SHOWPERFOVERLAY "showperfoverlay"
+#define SER_SHOWFRAMETIMEGRAPH "showframetimegraph"
 #define SER_SWAPMOUSEBUTTONS "swapmousebuttons"
 #define SER_MUTEONFOCUSLOSS "muteonfocusloss"
 #define SER_BACKGROUNDGAMEPAD "backgroundgamepad"
 #define SER_REVERSESCROLL "reversescroll"
 #define SER_SWAPFACEBUTTONS "swapfacebuttons"
 #define SER_CAPTURESYSKEYS "capturesyskeys"
+#define SER_STEAMCONTROLLERDRIVER "steamcontrollerdriver"
+#define SER_STEAMCONTROLLERMOTION "steamcontrollermotion"
+#define SER_STEAMCONTROLLERSPLITPADS "steamcontrollersplitpads"
+#define SER_STEAMCONTROLLERGRIPS "steamcontrollergrips"
+#define SER_STEAMCONTROLLERRUMBLEHOLD "steamcontrollerrumblehold"
+#define SER_STEAMCONTROLLERSTICKSTRETCH "steamcontrollerstickstretch"
+#define SER_STEAMCONTROLLERHAPTICBOOST "steamcontrollerhapticboost"
+#define SER_STEAMCONTROLLERHAPTICPULSESCALE "steamcontrollerhapticpulsescale"
+#define SER_STEAMCONTROLLERHAPTICMASTERGAIN "steamcontrollerhapticmastergain"
 #define SER_KEEPAWAKE "keepawake"
 #define SER_LANGUAGE "language"
 #define SER_RENDERER "renderer"
 
 #define CURRENT_DEFAULT_VER 2
+#define CURRENT_VRR_TIMING_PRESET_REVISION 4
 
 static StreamingPreferences* s_GlobalPrefs;
 
@@ -101,7 +117,13 @@ const GameField gameFields[] = {
     {SER_VSYNC, "enableVsync", QT_TRANSLATE_NOOP("GameStreamingSettings", "V-Sync")},
     {SER_ENABLEVRR, "enableVrr", QT_TRANSLATE_NOOP("GameStreamingSettings", "Variable refresh rate")},
     {SER_VRRLATENCYMODE, "vrrLatencyMode", QT_TRANSLATE_NOOP("GameStreamingSettings", "VRR latency mode")},
+    {"vrrbufferpermille", "vrrBufferPerMille", nullptr},
+    {"vrrtargethundredths", "vrrTargetHundredths", nullptr},
+    {"vrrhistoryseconds", "vrrHistorySeconds", nullptr},
+    {"vrrtoleranceus", "vrrToleranceUs", nullptr},
     {SER_SMOOTHVRRFRAMETIMING, "smoothVrrFrameTiming", QT_TRANSLATE_NOOP("GameStreamingSettings", "VRR frame timing")},
+    {SER_ABSORBVRRMICROSTUTTER, "absorbVrrMicrostutter", QT_TRANSLATE_NOOP("GameStreamingSettings", "Absorb microstutter")},
+    {SER_HIGHPERFORMANCEGPUPOWER, "highPerformanceGpuPower", QT_TRANSLATE_NOOP("GameStreamingSettings", "High performance GPU power")},
     {SER_FRAMEPACING, "framePacing", QT_TRANSLATE_NOOP("GameStreamingSettings", "Frame pacing")},
     {SER_WINDOWMODE, "windowMode", QT_TRANSLATE_NOOP("GameStreamingSettings", "Display mode")},
     {SER_AUDIOCFG, "audioConfig", QT_TRANSLATE_NOOP("GameStreamingSettings", "Audio configuration")},
@@ -110,6 +132,7 @@ const GameField gameFields[] = {
     {SER_GAMEOPTS, "gameOptimizations", QT_TRANSLATE_NOOP("GameStreamingSettings", "Game optimizations")},
     {SER_QUITAPPAFTER, "quitAppAfter", QT_TRANSLATE_NOOP("GameStreamingSettings", "Quit app after stream")},
     {SER_CONNWARNINGS, "connectionWarnings", QT_TRANSLATE_NOOP("GameStreamingSettings", "Connection warnings")},
+    {SER_HIDEVRRBUFFERWARNINGS, "hideVrrBufferWarnings", QT_TRANSLATE_NOOP("GameStreamingSettings", "VRR buffer warnings")},
     {SER_CONFWARNINGS, "configurationWarnings", QT_TRANSLATE_NOOP("GameStreamingSettings", "Configuration warnings")},
     {SER_KEEPAWAKE, "keepAwake", QT_TRANSLATE_NOOP("GameStreamingSettings", "Keep display awake")},
     {SER_ABSMOUSEMODE, "absoluteMouseMode", QT_TRANSLATE_NOOP("GameStreamingSettings", "Remote desktop mouse")},
@@ -121,12 +144,23 @@ const GameField gameFields[] = {
     {SER_MULTICONT, "multiController", QT_TRANSLATE_NOOP("GameStreamingSettings", "Multiple controllers")},
     {SER_GAMEPADMOUSE, "gamepadMouse", QT_TRANSLATE_NOOP("GameStreamingSettings", "Gamepad mouse control")},
     {SER_BACKGROUNDGAMEPAD, "backgroundGamepad", QT_TRANSLATE_NOOP("GameStreamingSettings", "Background gamepad input")},
+    {SER_STEAMCONTROLLERDRIVER, "steamControllerDriver", QT_TRANSLATE_NOOP("GameStreamingSettings", "Steam Controller driver")},
+    {SER_STEAMCONTROLLERMOTION, "steamControllerMotion", QT_TRANSLATE_NOOP("GameStreamingSettings", "Steam Controller motion")},
+    {SER_STEAMCONTROLLERSPLITPADS, "steamControllerSplitPads", QT_TRANSLATE_NOOP("GameStreamingSettings", "Steam Controller trackpads")},
+    {SER_STEAMCONTROLLERGRIPS, "steamControllerGrips", QT_TRANSLATE_NOOP("GameStreamingSettings", "Steam Controller grips")},
+    {SER_STEAMCONTROLLERRUMBLEHOLD, "steamControllerRumbleHold", QT_TRANSLATE_NOOP("GameStreamingSettings", "Steam Controller rumble duration")},
+    {SER_STEAMCONTROLLERSTICKSTRETCH, "steamControllerStickStretch", QT_TRANSLATE_NOOP("GameStreamingSettings", "Steam Controller stick range")},
+    {SER_STEAMCONTROLLERHAPTICBOOST, "steamControllerHapticBoost", QT_TRANSLATE_NOOP("GameStreamingSettings", "Steam Controller haptic boost")},
+    {SER_STEAMCONTROLLERHAPTICPULSESCALE, "steamControllerHapticPulseScale", QT_TRANSLATE_NOOP("GameStreamingSettings", "Steam Controller haptic pulse")},
+    {SER_STEAMCONTROLLERHAPTICMASTERGAIN, "steamControllerHapticMasterGain", QT_TRANSLATE_NOOP("GameStreamingSettings", "Steam Controller haptic gain")},
+    {SER_PYROWAVEPACE, "pyroWavePaceMbps", QT_TRANSLATE_NOOP("GameStreamingSettings", "PyroWave packet speed")},
     {SER_VIDEODEC, "videoDecoderSelection", QT_TRANSLATE_NOOP("GameStreamingSettings", "Video decoder")},
     {SER_VIDEOCFG, "videoCodecConfig", QT_TRANSLATE_NOOP("GameStreamingSettings", "Video codec")},
     {SER_RENDERER, "rendererSelection", QT_TRANSLATE_NOOP("GameStreamingSettings", "Renderer")},
     {SER_HDR, "enableHdr", QT_TRANSLATE_NOOP("GameStreamingSettings", "HDR")},
     {SER_YUV444, "enableYUV444", QT_TRANSLATE_NOOP("GameStreamingSettings", "YUV 4:4:4")},
     {SER_SHOWPERFOVERLAY, "showPerformanceOverlay", QT_TRANSLATE_NOOP("GameStreamingSettings", "Performance statistics")},
+    {SER_SHOWFRAMETIMEGRAPH, "showFrametimeGraph", QT_TRANSLATE_NOOP("GameStreamingSettings", "Frame time graph")},
 };
 }
 
@@ -184,6 +218,15 @@ QVariantMap StreamingPreferences::validatedGameValues(const QVariantMap& values)
                 ok = ok && number >= 0 && property.enumerator().valueToKey(number) != nullptr;
                 if (QString::fromLatin1(field.key) == SER_VIDEOCFG && number == VCC_FORCE_HEVC_HDR_DEPRECATED) ok = false;
             }
+            else if (QString::fromLatin1(field.key) == "vrrbufferpermille") ok = ok && number >= 250 && number <= 4000;
+            else if (QString::fromLatin1(field.key) == "vrrtargethundredths") ok = ok && number >= 9000 && number <= 9999;
+            else if (QString::fromLatin1(field.key) == "vrrhistoryseconds") ok = ok && number >= 10 && number <= 300;
+            else if (QString::fromLatin1(field.key) == "vrrtoleranceus") ok = ok && number >= 250 && number <= 2000 && number % 250 == 0;
+            else if (QString::fromLatin1(field.key) == SER_PYROWAVEPACE) ok = ok && number >= 0 && number <= 10000;
+            else if (QString::fromLatin1(field.key) == SER_STEAMCONTROLLERRUMBLEHOLD) ok = ok && number >= 0 && number <= 10000;
+            else if (QString::fromLatin1(field.key) == SER_STEAMCONTROLLERHAPTICBOOST) ok = ok && (number == 0 || number == 6 || number == 12 || number == 20);
+            else if (QString::fromLatin1(field.key) == SER_STEAMCONTROLLERHAPTICPULSESCALE) ok = ok && (number == 100 || number == 150 || number == 200 || number == 300);
+            else if (QString::fromLatin1(field.key) == SER_STEAMCONTROLLERHAPTICMASTERGAIN) ok = ok && (number == 0 || number == 6 || number == 12);
             else if (QString::fromLatin1(field.key) == SER_VRRLATENCYMODE) ok = ok && number >= VLM_SMOOTH && number <= VLM_LOW_LATENCY;
             else if (QString::fromLatin1(field.key) == SER_BITRATE) ok = ok && number >= 500 && number <= 3000000;
             else ok = ok && number >= (QString::fromLatin1(field.key) == SER_FPS ? 10 : 1) && number <= 9999;
@@ -197,6 +240,12 @@ QVariantMap StreamingPreferences::validatedGameValues(const QVariantMap& values)
         valid.remove(SER_WIDTH);
         valid.remove(SER_HEIGHT);
     }
+    if (values.contains(SER_VRRLATENCYMODE) && !valid.contains(SER_VRRLATENCYMODE)) {
+        valid.remove("vrrbufferpermille");
+        valid.remove("vrrtargethundredths");
+        valid.remove("vrrhistoryseconds");
+        valid.remove("vrrtoleranceus");
+    }
     if (valid.value(SER_AUTOADJUSTBITRATE).toBool()) valid.remove(SER_BITRATE);
     else if (valid.contains(SER_AUTOADJUSTBITRATE) && !valid.contains(SER_BITRATE)) valid.remove(SER_AUTOADJUSTBITRATE);
     if (valid.contains(SER_BITRATE)) valid.insert(SER_AUTOADJUSTBITRATE, false);
@@ -205,6 +254,11 @@ QVariantMap StreamingPreferences::validatedGameValues(const QVariantMap& values)
 
 void StreamingPreferences::applyGameValues(const QVariantMap& values)
 {
+    // Older per-game overrides saved only the mode. Resolve its current preset
+    // before applying any custom timing values saved by newer versions.
+    if (values.contains(SER_VRRLATENCYMODE)) {
+        applyVrrPreset(values.value(SER_VRRLATENCYMODE).toInt());
+    }
     for (const auto& field : gameFields) {
         if (values.contains(field.key)) setProperty(field.property, values.value(field.key));
     }
@@ -261,6 +315,7 @@ void StreamingPreferences::reload()
         // only from the selected profile.
         storedSettings.remove(QStringLiteral("allowvrrtearing"));
         storedSettings.remove(QStringLiteral("vrrdiagnosticmode"));
+        storedSettings.remove(QStringLiteral("experimentaldxgiwaitable"));
 
         for (const QString& key : storedSettings.childKeys()) {
             settings.insert(key, storedSettings.value(key));
@@ -292,19 +347,65 @@ void StreamingPreferences::reload()
     autoAdjustBitrate = settings.value(SER_AUTOADJUSTBITRATE, true).toBool();
     enableVsync = settings.value(SER_VSYNC, true).toBool();
     enableVrr = settings.value(SER_ENABLEVRR, false).toBool();
+    // Waitable DXGI is the Windows VRR default, independent of the retired opt-in.
+    settings.remove(QStringLiteral("experimentaldxgiwaitable"));
+    // VRR adaptive presentation always requires tearing permission. Remove
+    // the retired override so stale profiles cannot disable native VRR.
+    settings.remove(QStringLiteral("allowvrrtearing"));
     vrrLatencyMode = VLM_BALANCED;
+    bool haveSavedVrrLatencyMode = false;
     if (settings.contains(SER_VRRLATENCYMODE)) {
         bool validMode = false;
         const int savedMode = settings.value(SER_VRRLATENCYMODE).toInt(&validMode);
         if (validMode && savedMode >= VLM_SMOOTH && savedMode <= VLM_LOW_LATENCY) {
             vrrLatencyMode = savedMode;
+            haveSavedVrrLatencyMode = true;
         }
     }
     else if (settings.contains(SER_VRRLATENCYFIX)) {
         // Preserve the old checkbox choice while new users start on Balanced Target.
         vrrLatencyMode = settings.value(SER_VRRLATENCYFIX).toBool() ? VLM_BALANCED_TARGET : VLM_SMOOTH;
     }
+    const VrrTimingOptions savedVrrTimingOptions{
+        settings.value("vrrbufferpermille", 0).toInt(),
+        settings.value("vrrtargethundredths", 0).toInt(),
+        settings.value("vrrhistoryseconds", 0).toInt(),
+        settings.value("vrrtoleranceus", 0).toInt()
+    };
+    m_VrrTimingOptions = savedVrrTimingOptions.resolved(vrrLatencyMode);
+    const int savedPresetRevision = settings.value(SER_VRRTIMINGPRESETREVISION, 0).toInt();
+    if (savedPresetRevision < CURRENT_VRR_TIMING_PRESET_REVISION) {
+        // Saved presets had no separate preset/custom marker. Migrate only
+        // the complete old tuple for the explicitly saved mode; any edited
+        // value makes it custom and must survive the new preset defaults.
+        const VrrTimingOptions previousPreset = savedPresetRevision == 3 ?
+            (vrrLatencyMode == VLM_LOW_LATENCY ? VrrTimingOptions{500, 9900, 60, 500} :
+             vrrLatencyMode == VLM_SMOOTH ? VrrTimingOptions{4000, 9995, 300, 500} :
+                                          VrrTimingOptions{1000, 9950, 120, 500}) :
+            savedPresetRevision == 2 ?
+            (vrrLatencyMode == VLM_LOW_LATENCY ? VrrTimingOptions{500, 9900, 60, 500} :
+             vrrLatencyMode == VLM_SMOOTH ? VrrTimingOptions{4000, 9995, 300, 250} :
+                                          VrrTimingOptions{1000, 9950, 120, 500}) :
+            savedPresetRevision == 1 ?
+            (vrrLatencyMode == VLM_LOW_LATENCY ? VrrTimingOptions{500, 9500, 60, 500} :
+             vrrLatencyMode == VLM_SMOOTH ? VrrTimingOptions{4000, 9900, 300, 250} :
+                                          VrrTimingOptions{1000, 9750, 120, 500}) :
+            (vrrLatencyMode == VLM_LOW_LATENCY ? VrrTimingOptions{500, 9900, 60, 500} :
+             vrrLatencyMode == VLM_SMOOTH ? VrrTimingOptions{4000, 9999, 300, 250} :
+                                          VrrTimingOptions{1000, 9950, 120, 500});
+        if (haveSavedVrrLatencyMode &&
+            savedVrrTimingOptions.bufferPerMille == previousPreset.bufferPerMille &&
+            savedVrrTimingOptions.targetHundredths == previousPreset.targetHundredths &&
+            savedVrrTimingOptions.historySeconds == previousPreset.historySeconds &&
+            savedVrrTimingOptions.toleranceUs == previousPreset.toleranceUs) {
+            m_VrrTimingOptions = VrrTimingOptions::preset(vrrLatencyMode);
+        }
+        // save() persists the migrated tuple and revision inside the active
+        // profile. Loading a snapshot must not create settings on its own.
+    }
     smoothVrrFrameTiming = settings.value(SER_SMOOTHVRRFRAMETIMING, true).toBool();
+    absorbVrrMicrostutter = settings.value(SER_ABSORBVRRMICROSTUTTER, false).toBool();
+    highPerformanceGpuPower = settings.value(SER_HIGHPERFORMANCEGPUPOWER, false).toBool();
     traceVrrFrames = settings.value(SER_TRACEVRRFRAMES, false).toBool();
     gameOptimizations = settings.value(SER_GAMEOPTS, true).toBool();
     playAudioOnHost = settings.value(SER_HOSTAUDIO, false).toBool();
@@ -315,12 +416,15 @@ void StreamingPreferences::reload()
     absoluteTouchMode = settings.value(SER_ABSTOUCHMODE, true).toBool();
     framePacing = settings.value(SER_FRAMEPACING, false).toBool();
     connectionWarnings = settings.value(SER_CONNWARNINGS, true).toBool();
+    hideVrrBufferWarnings = settings.value(SER_HIDEVRRBUFFERWARNINGS, false).toBool();
     configurationWarnings = settings.value(SER_CONFWARNINGS, true).toBool();
     richPresence = settings.value(SER_RICHPRESENCE, true).toBool();
     gamepadMouse = settings.value(SER_GAMEPADMOUSE, true).toBool();
     detectNetworkBlocking = settings.value(SER_DETECTNETBLOCKING, true).toBool();
     showPerformanceOverlay = settings.value(SER_SHOWPERFOVERLAY, false).toBool();
+    showFrametimeGraph = settings.value(SER_SHOWFRAMETIMEGRAPH, false).toBool();
     packetSize = settings.value(SER_PACKETSIZE, 0).toInt();
+    pyroWavePaceMbps = settings.value(SER_PYROWAVEPACE, 0).toInt();
     swapMouseButtons = settings.value(SER_SWAPMOUSEBUTTONS, false).toBool();
     muteOnFocusLoss = settings.value(SER_MUTEONFOCUSLOSS, false).toBool();
     backgroundGamepad = settings.value(SER_BACKGROUNDGAMEPAD, false).toBool();
@@ -330,10 +434,23 @@ void StreamingPreferences::reload()
     enableHdr = settings.value(SER_HDR, false).toBool();
     captureSysKeysMode = static_cast<CaptureSysKeysMode>(settings.value(SER_CAPTURESYSKEYS,
                                                          static_cast<int>(CaptureSysKeysMode::CSK_OFF)).toInt());
+    steamControllerDriver = settings.value(SER_STEAMCONTROLLERDRIVER, true).toBool();
+    steamControllerMotion = settings.value(SER_STEAMCONTROLLERMOTION, true).toBool();
+    steamControllerSplitPads = settings.value(SER_STEAMCONTROLLERSPLITPADS, true).toBool();
+    steamControllerGrips = static_cast<SteamControllerGrips>(settings.value(SER_STEAMCONTROLLERGRIPS,
+                                                             static_cast<int>(SteamControllerGrips::SCG_PADDLES)).toInt());
+    steamControllerRumbleHold = qMax(0, settings.value(SER_STEAMCONTROLLERRUMBLEHOLD, 500).toInt());
+    steamControllerStickStretch = settings.value(SER_STEAMCONTROLLERSTICKSTRETCH, false).toBool();
+    steamControllerHapticBoost = qBound(0, settings.value(SER_STEAMCONTROLLERHAPTICBOOST, 0).toInt(), 30);
+    steamControllerHapticPulseScale = qBound(100, settings.value(SER_STEAMCONTROLLERHAPTICPULSESCALE, 100).toInt(), 400);
+    steamControllerHapticMasterGain = qBound(0, settings.value(SER_STEAMCONTROLLERHAPTICMASTERGAIN, 0).toInt(), 24);
     audioConfig = static_cast<AudioConfig>(settings.value(SER_AUDIOCFG,
                                                   static_cast<int>(AudioConfig::AC_STEREO)).toInt());
     videoCodecConfig = static_cast<VideoCodecConfig>(settings.value(SER_VIDEOCFG,
                                                   static_cast<int>(VideoCodecConfig::VCC_AUTO)).toInt());
+    // Retired optional transports must not be restored by old settings.
+    settings.remove("pyrowavecompression");
+    settings.remove("pyrowavehybrid");
     videoDecoderSelection = static_cast<VideoDecoderSelection>(settings.value(SER_VIDEODEC,
                                                   static_cast<int>(VideoDecoderSelection::VDS_AUTO)).toInt());
     rendererSelection = static_cast<RendererSelection>(settings.value(SER_RENDERER,
@@ -514,11 +631,18 @@ void StreamingPreferences::save()
     settings.setValue(SER_VSYNC, enableVsync);
     settings.setValue(SER_ENABLEVRR, enableVrr);
     settings.setValue(SER_VRRLATENCYMODE, vrrLatencyMode);
+    settings.setValue(SER_VRRTIMINGPRESETREVISION, CURRENT_VRR_TIMING_PRESET_REVISION);
+    settings.setValue("vrrbufferpermille", vrrBufferPerMille());
+    settings.setValue("vrrtargethundredths", vrrTargetHundredths());
+    settings.setValue("vrrhistoryseconds", vrrHistorySeconds());
+    settings.setValue("vrrtoleranceus", vrrToleranceUs());
     settings.remove("vrrlatencyoscillation");
     settings.remove("gamescopemailbox"); // Retired Mailbox A/B experiment.
     settings.remove("gamescoperepaint");
     settings.remove("gamescopeforcecomposition");
     settings.setValue(SER_SMOOTHVRRFRAMETIMING, smoothVrrFrameTiming);
+    settings.setValue(SER_ABSORBVRRMICROSTUTTER, absorbVrrMicrostutter);
+    settings.setValue(SER_HIGHPERFORMANCEGPUPOWER, highPerformanceGpuPower);
     settings.setValue(SER_TRACEVRRFRAMES, traceVrrFrames);
     settings.remove("v2queue"); // The interval queue is now the production policy.
     settings.setValue(SER_GAMEOPTS, gameOptimizations);
@@ -530,16 +654,21 @@ void StreamingPreferences::save()
     settings.setValue(SER_ABSTOUCHMODE, absoluteTouchMode);
     settings.setValue(SER_FRAMEPACING, framePacing);
     settings.setValue(SER_CONNWARNINGS, connectionWarnings);
+    settings.setValue(SER_HIDEVRRBUFFERWARNINGS, hideVrrBufferWarnings);
     settings.setValue(SER_CONFWARNINGS, configurationWarnings);
     settings.setValue(SER_RICHPRESENCE, richPresence);
     settings.setValue(SER_GAMEPADMOUSE, gamepadMouse);
     settings.setValue(SER_PACKETSIZE, packetSize);
+    settings.setValue(SER_PYROWAVEPACE, pyroWavePaceMbps);
     settings.setValue(SER_DETECTNETBLOCKING, detectNetworkBlocking);
     settings.setValue(SER_SHOWPERFOVERLAY, showPerformanceOverlay);
+    settings.setValue(SER_SHOWFRAMETIMEGRAPH, showFrametimeGraph);
     settings.setValue(SER_AUDIOCFG, static_cast<int>(audioConfig));
     settings.setValue(SER_HDR, enableHdr);
     settings.setValue(SER_YUV444, enableYUV444);
     settings.setValue(SER_VIDEOCFG, static_cast<int>(videoCodecConfig));
+    settings.remove("pyrowavecompression");
+    settings.remove("pyrowavehybrid");
     settings.setValue(SER_VIDEODEC, static_cast<int>(videoDecoderSelection));
     settings.setValue(SER_RENDERER, static_cast<int>(rendererSelection));
     settings.setValue(SER_WINDOWMODE, static_cast<int>(windowMode));
@@ -553,6 +682,15 @@ void StreamingPreferences::save()
     settings.setValue(SER_SWAPFACEBUTTONS, swapFaceButtons);
     settings.setValue(SER_CAPTURESYSKEYS, captureSysKeysMode);
     settings.setValue(SER_KEEPAWAKE, keepAwake);
+    settings.setValue(SER_STEAMCONTROLLERDRIVER, steamControllerDriver);
+    settings.setValue(SER_STEAMCONTROLLERMOTION, steamControllerMotion);
+    settings.setValue(SER_STEAMCONTROLLERSPLITPADS, steamControllerSplitPads);
+    settings.setValue(SER_STEAMCONTROLLERGRIPS, static_cast<int>(steamControllerGrips));
+    settings.setValue(SER_STEAMCONTROLLERRUMBLEHOLD, steamControllerRumbleHold);
+    settings.setValue(SER_STEAMCONTROLLERSTICKSTRETCH, steamControllerStickStretch);
+    settings.setValue(SER_STEAMCONTROLLERHAPTICBOOST, steamControllerHapticBoost);
+    settings.setValue(SER_STEAMCONTROLLERHAPTICPULSESCALE, steamControllerHapticPulseScale);
+    settings.setValue(SER_STEAMCONTROLLERHAPTICMASTERGAIN, steamControllerHapticMasterGain);
 }
 
 void StreamingPreferences::setDiagnosticsStatus(const QString& message)
@@ -608,7 +746,7 @@ QVariantList StreamingPreferences::getFpsChoices(const QVariantList& refreshRate
     }
 
     const std::vector<VrrFpsChoice> choices = VrrRatePolicy::buildChoices(
-        rates, fps, enableVsync && enableVrr);
+        rates, fps);
     QVariantList result;
     for (const VrrFpsChoice& choice : choices) {
         QVariantMap item;
@@ -618,12 +756,6 @@ QVariantList StreamingPreferences::getFpsChoices(const QVariantList& refreshRate
         switch (choice.kind) {
         case VrrFpsChoiceKind::Fixed:
             item.insert("kind", "fixed");
-            break;
-        case VrrFpsChoiceKind::Vrr:
-            item.insert("kind", "vrr");
-            break;
-        case VrrFpsChoiceKind::LowLatencyVrr:
-            item.insert("kind", "low-latency-vrr");
             break;
         case VrrFpsChoiceKind::Custom:
             item.insert("kind", "custom");
@@ -703,4 +835,45 @@ int StreamingPreferences::getEffectiveDefaultBitrate() const
     return videoCodecConfig == VCC_FORCE_PYROWAVE
         ? getDefaultPyroWaveBitrate(width, height, fps, enableYUV444, enableHdr)
         : getDefaultBitrate(width, height, fps, enableYUV444);
+}
+
+void StreamingPreferences::applyVrrPreset(int mode)
+{
+    if (mode < VLM_SMOOTH || mode > VLM_LOW_LATENCY) return;
+    vrrLatencyMode = mode;
+    m_VrrTimingOptions = VrrTimingOptions::preset(mode);
+    emit vrrLatencyModeChanged();
+    emit vrrTimingChanged();
+}
+
+void StreamingPreferences::setVrrBufferPerMille(int value)
+{
+    value = qBound(250, value, 4000);
+    if (value == vrrBufferPerMille()) return;
+    m_VrrTimingOptions.bufferPerMille = value;
+    emit vrrTimingChanged();
+}
+
+void StreamingPreferences::setVrrTargetHundredths(int value)
+{
+    value = qBound(9000, value, 9999);
+    if (value == vrrTargetHundredths()) return;
+    m_VrrTimingOptions.targetHundredths = value;
+    emit vrrTimingChanged();
+}
+
+void StreamingPreferences::setVrrHistorySeconds(int value)
+{
+    value = qBound(10, value, 300);
+    if (value == vrrHistorySeconds()) return;
+    m_VrrTimingOptions.historySeconds = value;
+    emit vrrTimingChanged();
+}
+
+void StreamingPreferences::setVrrToleranceUs(int value)
+{
+    value = ((qBound(250, value, 2000) + 125) / 250) * 250;
+    if (value == vrrToleranceUs()) return;
+    m_VrrTimingOptions.toleranceUs = value;
+    emit vrrTimingChanged();
 }

@@ -35,7 +35,14 @@ if errorlevel 1 (
     exit /b %ERRORLEVEL%
 )
 
-"%MOONLIGHT_REPO%\scripts\jom.exe" release
+rem The upstream tree no longer vendors jom. Use an installed copy when
+rem available, otherwise fall back to the MSVC make tool.
+where /q jom.exe
+if errorlevel 1 (
+    nmake /NOLOGO release
+) else (
+    jom.exe release
+)
 set "MOONLIGHT_BUILD_RESULT=%ERRORLEVEL%"
 popd
 exit /b %MOONLIGHT_BUILD_RESULT%

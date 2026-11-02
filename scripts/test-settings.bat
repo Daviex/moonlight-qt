@@ -2,7 +2,9 @@
 setlocal
 set "SOURCE_ROOT=%~dp0.."
 set "TEST_VS_INSTALL="
-for /f "usebackq delims=" %%i in (`"%~dp0vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "TEST_VS_INSTALL=%%i"
+call "%~dp0find-vswhere.bat"
+if errorlevel 1 exit /b 1
+for /f "usebackq delims=" %%i in (`%VSWHERE% -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "TEST_VS_INSTALL=%%i"
 if not defined TEST_VS_INSTALL exit /b 1
 call "%TEST_VS_INSTALL%\VC\Auxiliary\Build\vcvarsall.bat" x64
 if errorlevel 1 exit /b 1

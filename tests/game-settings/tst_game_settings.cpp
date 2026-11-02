@@ -165,10 +165,10 @@ private slots:
 
     void resolutionIsAtomicAndResetIsIdempotent() {
         GameStreamingSettings editor(activeProfile, "host-a", 1);
-        editor.preferences()->width = 1920;
+        editor.preferences()->width = 2560;
         editor.preferences()->fps = 120;
         QVERIFY(editor.save());
-        QCOMPARE(stored().value("height").toInt(), 720);
+        QCOMPARE(stored().value("height").toInt(), 1080);
         editor.reset("width");
         QVERIFY(editor.save());
         QCOMPARE(stored(), (QVariantMap{{"fps", 120}}));
@@ -197,7 +197,7 @@ private slots:
         QVERIFY(!stored().contains("bitrate"));
         QCOMPARE(stored().value("autoadjustbitrate"), QVariant(true));
         effective = GameStreamingSettings::resolve(*base(), activeProfile, "host-a", 1);
-        QCOMPARE(effective->bitrateKbps, base()->getDefaultBitrate(1280, 720, 120, false));
+        QCOMPARE(effective->bitrateKbps, base()->getDefaultBitrate(base()->width, base()->height, 120, false));
         editor.reset("bitrate");
         QVERIFY(editor.save());
         effective = GameStreamingSettings::resolve(*base(), activeProfile, "host-a", 1);
@@ -294,7 +294,7 @@ private slots:
         QVERIFY(effective->enableVsync);
         QVERIFY(!effective->enableVrr);
         QVERIFY(!effective->smoothVrrFrameTiming);
-        QCOMPARE(effective->bitrateKbps, base()->getDefaultBitrate(1280, 720, 60, true));
+        QCOMPARE(effective->bitrateKbps, base()->getDefaultBitrate(base()->width, base()->height, 60, true));
         editor.preferences()->autoAdjustBitrate = false;
         editor.preferences()->bitrateKbps = 50000;
         QVERIFY(editor.save());
@@ -349,17 +349,73 @@ private slots:
         GameStreamingSettings editor(activeProfile, "host-a", 1);
         editor.preferences()->enableVrr = true;
         editor.preferences()->smoothVrrFrameTiming = false;
-        editor.preferences()->vrrLatencyMode = mode;
+        if (valid) editor.preferences()->applyVrrPreset(mode);
+        else editor.preferences()->vrrLatencyMode = mode;
         editor.preferences()->traceVrrFrames = false;
         QVERIFY(editor.save());
         auto expected = QVariantMap{{"enablevrr", true}, {"smoothvrrframetiming", false}};
-        if (valid) expected.insert("vrrlatencymode", mode);
+        if (valid) {
+            for (const auto key : {"vrrlatencymode", "vrrbufferpermille", "vrrtargethundredths", "vrrhistoryseconds", "vrrtoleranceus"}) {
+                expected.insert(key, editor.preferences()->gameValues().value(key));
+            }
+        }
         QCOMPARE(stored(), expected);
         const auto effective = GameStreamingSettings::resolve(*base(), activeProfile, "host-a", 1);
         QVERIFY(effective->enableVrr);
         QVERIFY(!effective->smoothVrrFrameTiming);
         QCOMPARE(effective->vrrLatencyMode, valid ? mode : base()->vrrLatencyMode);
         QVERIFY(effective->traceVrrFrames);
+    }
+
+    void customVrrTimingAndNewOptionsRoundTrip() {
+        GameStreamingSettings editor(activeProfile, "host-a", 1);
+        auto* draft = editor.preferences();
+        draft->applyVrrPreset(StreamingPreferences::VLM_SMOOTH);
+        draft->setVrrBufferPerMille(1750);
+        draft->setVrrTargetHundredths(9975);
+        draft->setVrrHistorySeconds(240);
+        draft->setVrrToleranceUs(750);
+        draft->pyroWavePaceMbps = 450;
+        draft->absorbVrrMicrostutter = true;
+        draft->steamControllerHapticBoost = 12;
+        QVERIFY(editor.save());
+
+        auto effective = GameStreamingSettings::resolve(*base(), activeProfile, "host-a", 1);
+        QCOMPARE(effective->vrrLatencyMode, StreamingPreferences::VLM_SMOOTH);
+        QCOMPARE(effective->vrrBufferPerMille(), 1750);
+        QCOMPARE(effective->vrrTargetHundredths(), 9975);
+        QCOMPARE(effective->vrrHistorySeconds(), 240);
+        QCOMPARE(effective->vrrToleranceUs(), 750);
+        QCOMPARE(effective->pyroWavePaceMbps, 450);
+        QVERIFY(effective->absorbVrrMicrostutter);
+        QCOMPARE(effective->steamControllerHapticBoost, 12);
+        QCOMPARE(base()->vrrBufferPerMille(), 1000);
+        QCOMPARE(base()->pyroWavePaceMbps, 0);
+
+        editor.reset("vrrlatencymode");
+        QVERIFY(editor.save());
+        QVERIFY(!stored().contains("vrrbufferpermille"));
+        QCOMPARE(editor.preferences()->vrrTargetHundredths(), base()->vrrTargetHundredths());
+        QCOMPARE(stored().value("pyrowavepacembps"), QVariant(450));
+        const auto otherGame = GameStreamingSettings::resolve(*base(), activeProfile, "host-a", 2);
+        QCOMPARE(otherGame->gameValues(), base()->gameValues());
+        editor.reset();
+        QVERIFY(editor.save());
+        QVERIFY(stored().isEmpty());
+    }
+
+    void legacyVrrModeResolvesCurrentPreset() {
+        QSettings settings;
+        ProfileManager::beginProfileSettings(settings);
+        settings.beginGroup("gameStreamingSettings/host-a/1");
+        settings.setValue("vrrlatencymode", StreamingPreferences::VLM_LOW_LATENCY);
+        settings.sync();
+        const auto effective = GameStreamingSettings::resolve(*base(), activeProfile, "host-a", 1);
+        QCOMPARE(effective->vrrBufferPerMille(), 500);
+        QCOMPARE(effective->vrrTargetHundredths(), 9900);
+        QCOMPARE(effective->vrrHistorySeconds(), 60);
+        QCOMPARE(effective->vrrToleranceUs(), 500);
+        QCOMPARE(base()->vrrBufferPerMille(), 1000);
     }
 
     void pyroWaveBitrateAndCliOverrides() {
@@ -369,7 +425,7 @@ private slots:
         hdrOnly.preferences()->enableHdr = true;
         QVERIFY(hdrOnly.save());
         auto effective = GameStreamingSettings::resolve(*base(), activeProfile, "host-a", 2);
-        QCOMPARE(effective->bitrateKbps, base()->getDefaultPyroWaveBitrate(1280, 720, 60, false, true));
+        QCOMPARE(effective->bitrateKbps, base()->getDefaultPyroWaveBitrate(base()->width, base()->height, 60, false, true));
 
         base()->videoCodecConfig = StreamingPreferences::VCC_AUTO;
         base()->bitrateKbps = base()->getEffectiveDefaultBitrate();
@@ -484,6 +540,8 @@ private slots:
         QTRY_VERIFY(evaluate("resetDialog.opened", page()).toBool());
         QTest::keyClick(m_Window.get(), Qt::Key_Escape);
         QTRY_VERIFY(!evaluate("resetDialog.visible", page()).toBool());
+        QTRY_VERIFY(m_Window->activeFocusItem() &&
+                    qobject_cast<QQuickItem*>(settings)->isAncestorOf(m_Window->activeFocusItem()));
         QVERIFY(evaluate("editor.customSettings.length", page()).toInt() > 0);
         button->forceActiveFocus(Qt::TabFocusReason);
         QTest::keyClick(m_Window.get(), Qt::Key_Space);
@@ -535,9 +593,9 @@ private slots:
         auto settings = evaluate("settingsLoader.item", page()).value<QObject*>();
         settings->findChild<QQuickItem*>("fpsComboBox")->forceActiveFocus();
         QTest::keyClick(m_Window.get(), Qt::Key_Left);
-        QCOMPARE(evaluate("preferences.fps", settings).toInt(), 30);
+        QCOMPARE(evaluate("preferences.fps", settings).toInt(), 59);
         m_Window.reset();
-        QCOMPARE(stored().value("fps"), QVariant(30));
+        QCOMPARE(stored().value("fps"), QVariant(59));
     }
 
     void qmlVrrChangesAndResetPreserveDisplayMode() {
@@ -568,7 +626,7 @@ private slots:
         QVERIFY(buffers);
         QCOMPARE(buffers->property("refreshCount").toInt(), 0);
 
-        auto latency = settings->findChild<QQuickItem*>("vrrLatencyModeComboBox");
+        auto latency = settings->findChild<QQuickItem*>("vrrPreset");
         auto judder = settings->findChild<QQuickItem*>("reduceJudderCheck");
         QVERIFY(latency);
         QVERIFY(judder);

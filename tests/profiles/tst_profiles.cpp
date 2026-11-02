@@ -100,6 +100,18 @@ class ProfilesTest : public QObject
     ProfileManager* m_Manager = nullptr;
     const QString m_Guid = "030000005e0400008e02000000000000";
     const QString m_Mapping = "Test Controller,a:b0,b:b1,platform:Windows,";
+    const QVariantMap m_ModernLegacySettings = {
+        {"vrrbufferpermille", 1750}, {"vrrtargethundredths", 9975},
+        {"vrrhistoryseconds", 240}, {"vrrtoleranceus", 750},
+        {"vrrtimingpresetrevision", 4}, {"absorbvrrmicrostutter", true},
+        {"highperformancegpupower", true}, {"hidevrrbufferwarnings", true},
+        {"pyrowavepacembps", 450}, {"showframetimegraph", true},
+        {"steamcontrollerdriver", false}, {"steamcontrollermotion", false},
+        {"steamcontrollersplitpads", false}, {"steamcontrollergrips", StreamingPreferences::SCG_DS4},
+        {"steamcontrollerrumblehold", 1250}, {"steamcontrollerstickstretch", true},
+        {"steamcontrollerhapticboost", 12}, {"steamcontrollerhapticpulsescale", 200},
+        {"steamcontrollerhapticmastergain", 6},
+    };
 
     static QString request(NvHTTP& http)
     {
@@ -131,6 +143,9 @@ private slots:
         legacy.setValue("vrrlatencymode", StreamingPreferences::VLM_LOW_LATENCY);
         legacy.setValue("smoothvrrframetiming", false);
         legacy.setValue("tracevrrframes", true);
+        for (auto it = m_ModernLegacySettings.cbegin(); it != m_ModernLegacySettings.cend(); ++it) {
+            legacy.setValue(it.key(), it.value());
+        }
         legacy.beginWriteArray("gcmapping", 1);
         legacy.setArrayIndex(0);
         legacy.setValue("guid", m_Guid);
@@ -153,8 +168,8 @@ private slots:
         };
         const QVariantMap before = storedValues();
         auto* preferences = StreamingPreferences::get();
-        QCOMPARE(preferences->width, 1280);
-        QCOMPARE(preferences->height, 720);
+        QCOMPARE(preferences->width, 1920);
+        QCOMPARE(preferences->height, 1080);
         QCOMPARE(preferences->fps, 60);
         QCOMPARE(preferences->rendererSelection, StreamingPreferences::RS_AUTO);
         QVERIFY(!preferences->enableVrr);
@@ -165,7 +180,7 @@ private slots:
         preferences->enableVrr = true;
         preferences->save();
         preferences->reload();
-        QCOMPARE(preferences->width, 1280);
+        QCOMPARE(preferences->width, 1920);
         QCOMPARE(preferences->rendererSelection, StreamingPreferences::RS_AUTO);
         QVERIFY(!preferences->enableVrr);
         QCOMPARE(storedValues(), before);
@@ -179,9 +194,31 @@ private slots:
         QCOMPARE(StreamingPreferences::get()->vrrLatencyMode, StreamingPreferences::VLM_LOW_LATENCY);
         QVERIFY(!StreamingPreferences::get()->smoothVrrFrameTiming);
         QVERIFY(StreamingPreferences::get()->traceVrrFrames);
+        auto* preferences = StreamingPreferences::get();
+        QCOMPARE(preferences->vrrBufferPerMille(), 1750);
+        QCOMPARE(preferences->vrrTargetHundredths(), 9975);
+        QCOMPARE(preferences->vrrHistorySeconds(), 240);
+        QCOMPARE(preferences->vrrToleranceUs(), 750);
+        QVERIFY(preferences->absorbVrrMicrostutter);
+        QVERIFY(preferences->highPerformanceGpuPower);
+        QVERIFY(preferences->hideVrrBufferWarnings);
+        QVERIFY(preferences->showFrametimeGraph);
+        QCOMPARE(preferences->pyroWavePaceMbps, 450);
+        QVERIFY(!preferences->steamControllerDriver);
+        QVERIFY(!preferences->steamControllerMotion);
+        QVERIFY(!preferences->steamControllerSplitPads);
+        QCOMPARE(preferences->steamControllerGrips, StreamingPreferences::SCG_DS4);
+        QCOMPARE(preferences->steamControllerRumbleHold, 1250);
+        QVERIFY(preferences->steamControllerStickStretch);
+        QCOMPARE(preferences->steamControllerHapticBoost, 12);
+        QCOMPARE(preferences->steamControllerHapticPulseScale, 200);
+        QCOMPARE(preferences->steamControllerHapticMasterGain, 6);
 
         QSettings profile;
         ProfileManager::beginProfileSettings(profile, m_Manager->defaultProfileId());
+        for (auto it = m_ModernLegacySettings.cbegin(); it != m_ModernLegacySettings.cend(); ++it) {
+            QCOMPARE(profile.value(it.key()), it.value());
+        }
         // The retired checkbox remains a migration input for installations
         // without vrrlatencymode. Keep it even when the newer key takes precedence.
         QVERIFY(profile.contains("vrrlatencyfix"));

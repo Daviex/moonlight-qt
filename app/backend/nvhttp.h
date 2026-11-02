@@ -3,6 +3,10 @@
 #include "identitymanager.h"
 #include "nvapp.h"
 #include "nvaddress.h"
+#include "launchwarning.h"
+#include "streaming/video/pyrowave/pyrowavelinkpolicy.h"
+#include <atomic>
+#include <functional>
 
 #include <Limelight.h>
 
@@ -126,6 +130,12 @@ public:
     // Returns measured Mbps, or throws on an unsupported/failed request.
     int probePyroWaveDownloadMbps();
 
+    // With burstFps set (PyroWaveUdpProbeBurstVersion 1), the host sends the
+    // same packets as video frames at that cadence, paced at paceKbps in the
+    // stream's 1 ms groups. Only loss is meaningful for those probes.
+    PyroWaveLink::Result probePyroWaveUdp(int kbps, int packetSize, const std::atomic<bool>& cancelled,
+                                        bool useHandshake = true, int burstFps = 0, int paceKbps = 0);
+
     static
     void
     verifyResponseStatus(QString xml);
@@ -164,6 +174,9 @@ public:
     QVector<int>
     parseQuad(QString quad);
 
+    // Call only after explicit user confirmation. Exactly one GET and one POST; no retries.
+    void requestHostSleep();
+
     void
     quitApp();
 
@@ -178,7 +191,8 @@ public:
              int playStationGamepadMask,
              bool persistGameControllersOnDisconnect,
              bool clientVrrRequested,
-             QString& rtspSessionUrl);
+             QString& rtspSessionUrl,
+             LaunchWarning::Code& launchWarning);
 
     QVector<NvApp>
     getAppList();
@@ -201,7 +215,11 @@ private:
                    QString command,
                    QString arguments,
                    int timeoutMs,
-                   NvLogLevel logLevel);
+                   NvLogLevel logLevel,
+                   const std::function<QString(QNetworkReply*)>& receiveHeaders = {},
+                   bool powerAction = false,
+                   QNetworkAccessManager::Operation operation = QNetworkAccessManager::GetOperation,
+                   QSslCertificate pairedServerCert = QSslCertificate());
 
     NvAddress m_Address;
     QNetworkAccessManager* m_Nam;

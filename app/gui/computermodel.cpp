@@ -1,6 +1,7 @@
 #include "computermodel.h"
 #include "backend/profilemanager.h"
 #include "settings/gamestreamingsettings.h"
+#include "onlinecomputerentries.h"
 
 #include <QThreadPool>
 
@@ -21,6 +22,7 @@ void ComputerModel::initialize(ComputerManager* computerManager)
                 beginRemoveRows(QModelIndex(), row, row);
                 m_Computers.removeAt(row);
                 endRemoveRows();
+                emit onlineHostsChanged();
                 return;
             }
         }
@@ -30,11 +32,18 @@ void ComputerModel::initialize(ComputerManager* computerManager)
         beginResetModel();
         m_Computers.clear();
         endResetModel();
+        emit onlineHostsChanged();
     });
 
     beginResetModel();
     m_Computers = m_ComputerManager->getComputers();
     endResetModel();
+    emit onlineHostsChanged();
+}
+
+QVariantList ComputerModel::onlineHosts() const
+{
+    return onlineComputerEntries(m_Computers);
 }
 
 QVariant ComputerModel::data(const QModelIndex& index, int role) const
@@ -173,6 +182,7 @@ void ComputerModel::deleteComputer(int computerIndex)
 
     // Other models also remove this host when deleteHost emits hostRemoved.
     m_ComputerManager->deleteHost(computer);
+    emit onlineHostsChanged();
 }
 
 class DeferredWakeHostTask : public QRunnable
@@ -289,6 +299,7 @@ void ComputerModel::handleComputerStateChanged(NvComputer* computer)
             emit dataChanged(createIndex(index, 0), createIndex(index, 0));
         }
     }
+    emit onlineHostsChanged();
 }
 
 #include "computermodel.moc"
