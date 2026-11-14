@@ -317,9 +317,13 @@ void ComputerManager::stopDelayedFlushThread()
         return;
     }
 
-    // Wake the delayed flush thread
-    m_DelayedFlushThread->requestInterruption();
-    m_DelayedFlushCondition.wakeOne();
+    // Hold the predicate mutex while requesting interruption and waking the
+    // worker so shutdown cannot race with its predicate check and wait().
+    {
+        QMutexLocker locker(&m_DelayedFlushMutex);
+        m_DelayedFlushThread->requestInterruption();
+        m_DelayedFlushCondition.wakeOne();
+    }
 
     // Wait for it to terminate (and finish any pending flush)
     m_DelayedFlushThread->wait();

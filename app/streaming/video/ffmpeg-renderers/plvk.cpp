@@ -6,6 +6,7 @@
 #include "streaming/session.h"
 #include "streaming/streamutils.h"
 #include "streaming/video/vrrrenderpolicy.h"
+#include "utils.h"
 
 #include <Limelight.h>
 
@@ -553,6 +554,45 @@ bool PlVkRenderer::tryInitializeDevice(VkPhysicalDevice device, VkPhysicalDevice
     const bool pyroWave = (decoderParams->videoFormat & VIDEO_FORMAT_MASK_PYROWAVE) != 0;
     if (pyroWave) {
         vkParams.features = PyroWavePlaceboPool::requestedFeatures();
+    }
+#endif
+
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(60, 31, 101) && defined(VK_KHR_internally_synchronized_queues)
+    VkPhysicalDeviceInternallySynchronizedQueuesFeaturesKHR featInternalSyncQueues = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INTERNALLY_SYNCHRONIZED_QUEUES_FEATURES_KHR,
+    };
+    VkPhysicalDeviceFeatures2 features = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+    };
+
+    // libplacebo needs explicit opt-in to use internally synchronized queues, since
+    // it requires cooperation with the app (ex: using vkGetDeviceQueue2). We know
+    // FFmpeg 9.0+ always wants internally synchronized queues if available, so we
+    // will turn it on when supported by the physical device.
+    if (isExtensionSupportedByPhysicalDevice(device, "VK_KHR_internally_synchronized_queues")) {
+        bool internallySynchronizedQueues;
+        if (!Utils::getEnvironmentVariableOverride("PLVK_INT_SYNC_QUEUES", &internallySynchronizedQueues)) {
+#if LIBAVUTIL_VERSION_MAJOR < 62
+            // The Gamescope WSI layer currently breaks apps using internally synchronized queues
+            // (failing to use vkGetDeviceQueue2), so we disable this feature when the Gamescope
+            // WSI layer is enabled. See gamescope#2261 for details.
+            internallySynchronizedQueues = (qEnvironmentVariableIntValue("ENABLE_GAMESCOPE_WSI") == 0 ||
+                                            qEnvironmentVariableIntValue("DISABLE_GAMESCOPE_WSI") == 1);
+#else
+            // We have no choice but to enable it since the queue locking callbacks are gone
+            internallySynchronizedQueues = true;
+#endif
+        }
+
+        // Preserve PyroWave's base features and extension chain when adding
+        // queue synchronization. These structures live through device creation.
+        if (vkParams.features != nullptr) {
+            features = *vkParams.features;
+        }
+        featInternalSyncQueues.pNext = features.pNext;
+        featInternalSyncQueues.internallySynchronizedQueues = internallySynchronizedQueues;
+        features.pNext = &featInternalSyncQueues;
+        vkParams.features = &features;
     }
 #endif
 
