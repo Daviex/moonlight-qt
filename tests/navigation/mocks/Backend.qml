@@ -58,6 +58,8 @@ QtObject {
     property string versionString: "test"
     property string friendlyNativeArchName: "test"
     property int uiDisplayMode: 0
+    property int uiScale: 100
+    function save() {}
     enum DisplayMode { UI_WINDOWED, UI_MAXIMIZED, UI_FULLSCREEN }
     signal updateAvailable(string version, string url)
     property bool notifyPrereleases: true

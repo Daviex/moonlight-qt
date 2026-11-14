@@ -171,6 +171,7 @@ private slots:
         QCOMPARE(preferences->width, 1920);
         QCOMPARE(preferences->height, 1080);
         QCOMPARE(preferences->fps, 60);
+        QCOMPARE(preferences->uiScale(), 100);
         QCOMPARE(preferences->rendererSelection, StreamingPreferences::RS_AUTO);
         QVERIFY(!preferences->enableVrr);
         QCOMPARE(preferences->vrrLatencyMode, StreamingPreferences::VLM_BALANCED_TARGET);
@@ -178,11 +179,13 @@ private slots:
         preferences->width = 2048;
         preferences->rendererSelection = StreamingPreferences::RS_METAL;
         preferences->enableVrr = true;
+        preferences->setUiScale(200);
         preferences->save();
         preferences->reload();
         QCOMPARE(preferences->width, 1920);
         QCOMPARE(preferences->rendererSelection, StreamingPreferences::RS_AUTO);
         QVERIFY(!preferences->enableVrr);
+        QCOMPARE(preferences->uiScale(), 100);
         QCOMPARE(storedValues(), before);
     }
 
@@ -332,6 +335,106 @@ private slots:
         m_Manager->deactivateProfile();
         QVERIFY(phases.isEmpty());
         QCOMPARE(identityResetCount, resetsBeforeShutdown + 1);
+    }
+
+    void uiScaleChoicesPersistAndNotify()
+    {
+        const QString profileId = m_Manager->createProfile("UI scale choices");
+        QVERIFY(!profileId.isEmpty());
+        QVERIFY(m_Manager->activateProfile(profileId));
+        auto* preferences = StreamingPreferences::get();
+        QCOMPARE(preferences->uiScale(), 100);
+        QSignalSpy changed(preferences, &StreamingPreferences::uiScaleChanged);
+
+        for (const int percent : {25, 50, 75, 100, 125, 150, 175, 200}) {
+            // Exercise the writable Qt property used by the QML picker.
+            QVERIFY(preferences->setProperty("uiScale", percent));
+            QCOMPARE(preferences->uiScale(), percent);
+            QCOMPARE(changed.count(), 1);
+            preferences->save();
+            preferences->reload();
+            QCOMPARE(preferences->uiScale(), percent);
+            QCOMPARE(changed.count(), 1);
+            changed.clear();
+        }
+    }
+
+    void uiScaleFollowsProfilesWithoutEnteringGameOverrides()
+    {
+        const QString firstId = m_Manager->createProfile("Large UI");
+        const QString secondId = m_Manager->createProfile("Small UI");
+        QVERIFY(!firstId.isEmpty());
+        QVERIFY(!secondId.isEmpty());
+        QVERIFY(m_Manager->activateProfile(firstId));
+        auto* preferences = StreamingPreferences::get();
+        QCOMPARE(preferences->uiScale(), 100);
+        preferences->setUiScale(175);
+        preferences->save();
+
+        QSignalSpy changed(preferences, &StreamingPreferences::uiScaleChanged);
+        QVERIFY(m_Manager->activateProfile(secondId));
+        QCOMPARE(preferences->uiScale(), 100);
+        QCOMPARE(changed.count(), 1);
+        preferences->setUiScale(75);
+        preferences->save();
+
+        changed.clear();
+        QVERIFY(m_Manager->activateProfile(firstId));
+        QCOMPARE(preferences->uiScale(), 175);
+        QCOMPARE(changed.count(), 1);
+        QVERIFY(!preferences->gameValues().contains("uiscale"));
+        preferences->applyGameValues({{"uiscale", 25}});
+        QCOMPARE(preferences->uiScale(), 175);
+
+        QSettings settings;
+        QCOMPARE(settings.value("profiles/" + firstId + "/uiscale").toInt(), 175);
+        QCOMPARE(settings.value("profiles/" + secondId + "/uiscale").toInt(), 75);
+        QVERIFY(!settings.contains("uiscale"));
+
+        // Leaving and reopening a profile restores the same saved size.
+        m_Manager->deactivateProfile();
+        preferences->reload();
+        QCOMPARE(preferences->uiScale(), 100);
+        QVERIFY(m_Manager->activateProfile(secondId));
+        QCOMPARE(preferences->uiScale(), 75);
+    }
+
+    void invalidUiScaleFallsBackToDefault_data()
+    {
+        QTest::addColumn<QVariant>("storedValue");
+        QTest::newRow("zero") << QVariant(0);
+        QTest::newRow("negative") << QVariant(-25);
+        QTest::newRow("too-small") << QVariant(1);
+        QTest::newRow("too-large") << QVariant(225);
+        QTest::newRow("unsupported-step") << QVariant(110);
+        QTest::newRow("text") << QVariant("invalid");
+    }
+
+    void invalidUiScaleFallsBackToDefault()
+    {
+        QFETCH(QVariant, storedValue);
+        const QString id = m_Manager->createProfile(QString("Invalid UI scale %1").arg(QTest::currentDataTag()));
+        QVERIFY(!id.isEmpty());
+        QVERIFY(m_Manager->activateProfile(id));
+        auto* preferences = StreamingPreferences::get();
+        preferences->setUiScale(150);
+        preferences->save();
+
+        QSettings settings;
+        ProfileManager::beginProfileSettings(settings, id);
+        settings.setValue("uiscale", storedValue);
+        settings.sync();
+        QCOMPARE(settings.status(), QSettings::NoError);
+        QSignalSpy changed(preferences, &StreamingPreferences::uiScaleChanged);
+        preferences->reload();
+        QCOMPARE(preferences->uiScale(), 100);
+        QCOMPARE(changed.count(), 1);
+
+        preferences->setUiScale(150);
+        preferences->setUiScale(storedValue.toInt());
+        QCOMPARE(preferences->uiScale(), 100);
+        preferences->save();
+        QCOMPARE(settings.value("uiscale").toInt(), 100);
     }
 
     void httpKeepsOriginUidAndSslConfiguration()

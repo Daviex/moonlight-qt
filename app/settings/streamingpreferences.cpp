@@ -58,6 +58,7 @@
 #define SER_HIDEVRRBUFFERWARNINGS "hidevrrbufferwarnings"
 #define SER_CONFWARNINGS "confwarnings"
 #define SER_UIDISPLAYMODE "uidisplaymode"
+#define SER_UISCALE "uiscale"
 #define SER_RICHPRESENCE "richpresence"
 #define SER_GAMEPADMOUSE "gamepadmouse"
 #define SER_DEFAULTVER "defaultver"
@@ -462,6 +463,7 @@ void StreamingPreferences::reload()
     uiDisplayMode = static_cast<UIDisplayMode>(settings.value(SER_UIDISPLAYMODE,
                                                static_cast<int>(settings.value(SER_STARTWINDOWED, true).toBool() ? UIDisplayMode::UI_WINDOWED
                                                                                                                  : UIDisplayMode::UI_MAXIMIZED)).toInt());
+    setUiScale(settings.value(SER_UISCALE, 100).toInt());
     language = static_cast<Language>(settings.value(SER_LANGUAGE,
                                                     static_cast<int>(Language::LANG_AUTO)).toInt());
 
@@ -485,6 +487,18 @@ void StreamingPreferences::reload()
     if (videoCodecConfig == VCC_FORCE_HEVC_HDR_DEPRECATED) {
         videoCodecConfig = VCC_AUTO;
         enableHdr = true;
+    }
+}
+
+void StreamingPreferences::setUiScale(int percent)
+{
+    // Keep invalid persisted values from making the interface unusable.
+    if (percent < 25 || percent > 200 || percent % 25 != 0) {
+        percent = 100;
+    }
+    if (m_UiScale != percent) {
+        m_UiScale = percent;
+        emit uiScaleChanged();
     }
 }
 
@@ -673,6 +687,7 @@ void StreamingPreferences::save()
     settings.setValue(SER_RENDERER, static_cast<int>(rendererSelection));
     settings.setValue(SER_WINDOWMODE, static_cast<int>(windowMode));
     settings.setValue(SER_UIDISPLAYMODE, static_cast<int>(uiDisplayMode));
+    settings.setValue(SER_UISCALE, m_UiScale);
     settings.setValue(SER_LANGUAGE, static_cast<int>(language));
     settings.setValue(SER_DEFAULTVER, CURRENT_DEFAULT_VER);
     settings.setValue(SER_SWAPMOUSEBUTTONS, swapMouseButtons);

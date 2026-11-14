@@ -66,7 +66,15 @@ Flickable {
         duration: 100
     }
 
-    Window.onActiveFocusItemChanged: {
+    Window.onActiveFocusItemChanged: ensureFocusedControlVisible()
+
+    // A live scale change can resize this viewport and switch the columns
+    // without changing keyboard focus. Recheck after the layout has settled.
+    onWidthChanged: Qt.callLater(ensureFocusedControlVisible)
+    onHeightChanged: Qt.callLater(ensureFocusedControlVisible)
+    onContentHeightChanged: Qt.callLater(ensureFocusedControlVisible)
+
+    function ensureFocusedControlVisible() {
         var item = Window.activeFocusItem
         if (item) {
             // Ignore non-child elements like the toolbar buttons
@@ -83,12 +91,12 @@ Flickable {
             if (pos.y - scrollMargin < contentY) {
                 autoScrollAnimation.from = contentY
                 autoScrollAnimation.to = Math.max(pos.y - scrollMargin, 0)
-                autoScrollAnimation.start()
+                autoScrollAnimation.restart()
             }
             else if (pos.y + item.height + scrollMargin > contentY + height) {
                 autoScrollAnimation.from = contentY
                 autoScrollAnimation.to = Math.min(pos.y + item.height + scrollMargin - height, contentHeight - height)
-                autoScrollAnimation.start()
+                autoScrollAnimation.restart()
             }
         }
     }
@@ -2361,6 +2369,37 @@ Flickable {
                     // ::onActivated must be used, as it only listens for when the index is changed by a human
                     onActivated : {
                         preferences.uiDisplayMode = uiDisplayModeListModel.get(currentIndex).val
+                    }
+                }
+
+                Label {
+                    width: parent.width
+                    visible: !gameMode
+                    text: qsTr("Interface scale")
+                    font.pointSize: 12
+                    wrapMode: Text.Wrap
+                }
+
+                AutoResizingComboBox {
+                    id: uiScaleComboBox
+                    objectName: "uiScaleComboBox"
+                    visible: !gameMode
+                    textRole: "text"
+                    currentIndex: gameMode ? 3 : preferences.uiScale / 25 - 1
+                    model: ListModel {
+                        ListElement { text: "25%"; val: 25 }
+                        ListElement { text: "50%"; val: 50 }
+                        ListElement { text: "75%"; val: 75 }
+                        ListElement { text: qsTr("100% (default)"); val: 100 }
+                        ListElement { text: "125%"; val: 125 }
+                        ListElement { text: "150%"; val: 150 }
+                        ListElement { text: "175%"; val: 175 }
+                        ListElement { text: "200%"; val: 200 }
+                    }
+                    Component.onCompleted: recalculateWidth()
+                    onActivated: {
+                        preferences.uiScale = model.get(currentIndex).val
+                        preferences.save()
                     }
                 }
 

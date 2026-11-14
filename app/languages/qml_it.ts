@@ -932,6 +932,14 @@
         <translation>Modalità di visualizzazione interfaccia</translation>
     </message>
     <message>
+        <source>Interface scale</source>
+        <translation>Scala dell'interfaccia</translation>
+    </message>
+    <message>
+        <source>100% (default)</source>
+        <translation>100% (predefinita)</translation>
+    </message>
+    <message>
         <location filename="../gui/SettingsView.qml" line="1329"/>
         <source>Maximized</source>
         <translation>Massimizzato</translation>

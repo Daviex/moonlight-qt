@@ -69,6 +69,14 @@ class GameSettingsTest : public QObject
         QTRY_VERIFY(!busy());
         QCOMPARE(evaluate("stackView.depth").toInt(), 4);
     }
+    void openGlobalSettings() {
+        openEditor();
+        evaluate("stackView.pop()");
+        QTRY_VERIFY(!busy());
+        evaluate("settingsButton.clicked()");
+        QTRY_VERIFY(!busy());
+        QCOMPARE(page()->objectName(), QString("Settings"));
+    }
 
 private slots:
     void initTestCase() {
@@ -531,6 +539,7 @@ private slots:
         QCOMPARE(evaluate("preferences.captureSysKeysMode", settings).toInt(), int(StreamingPreferences::CSK_FULLSCREEN));
         QVERIFY(!settings->findChild<QQuickItem*>("languageComboBox")->isVisible());
         QVERIFY(!settings->findChild<QQuickItem*>("uiDisplayModeComboBox")->isVisible());
+        QVERIFY(!settings->findChild<QQuickItem*>("uiScaleComboBox")->isVisible());
         QVERIFY(!settings->findChild<QQuickItem*>("enableMdns")->isVisible());
         QVERIFY(!evaluate("settingsButton.visible").toBool());
         auto button = page()->findChild<QQuickItem*>("resetAllGameSettings");
@@ -645,6 +654,96 @@ private slots:
         QCOMPARE(draft->fps, 117);
         QCOMPARE(draft->windowMode, StreamingPreferences::WM_WINDOWED);
         QCOMPARE(evaluate("editor.customSettings.length", page()).toInt(), 0);
+    }
+
+    void qmlUiScaleControlSavesCurrentProfile() {
+        const auto streamWidth = base()->width;
+        const auto streamHeight = base()->height;
+        openGlobalSettings();
+        auto combo = page()->findChild<QQuickItem*>("uiScaleComboBox");
+        QVERIFY(combo);
+        QVERIFY(combo->isVisible());
+        QCOMPARE(combo->property("count").toInt(), 8);
+        QCOMPARE(combo->property("currentIndex").toInt(), 3);
+        const auto windowSize = m_Window->size();
+        combo->forceActiveFocus(Qt::TabFocusReason);
+        QTest::keyClick(m_Window.get(), Qt::Key_Right);
+        QTRY_COMPARE(base()->uiScale(), 125);
+        QTRY_COMPARE(evaluate("window.uiScaleFactor").toReal(), 1.25);
+        QCOMPARE(QSettings().value("profiles/default/uiscale").toInt(), 125);
+        QCOMPARE(base()->width, streamWidth);
+        QCOMPARE(base()->height, streamHeight);
+        QCOMPARE(m_Window->size(), windowSize);
+
+        // The binding must follow reloads and external preference changes,
+        // including a new profile, after the user has already used the control.
+        activeProfile = "other";
+        base()->reload();
+        QTRY_COMPARE(combo->property("currentIndex").toInt(), 3);
+        QTRY_COMPARE(evaluate("window.uiScaleFactor").toReal(), 1.0);
+        base()->setUiScale(200);
+        QTRY_COMPARE(combo->property("currentIndex").toInt(), 7);
+        activeProfile = "default";
+        base()->reload();
+        QTRY_COMPARE(combo->property("currentIndex").toInt(), 4);
+        QTRY_COMPARE(evaluate("window.uiScaleFactor").toReal(), 1.25);
+    }
+
+    void qmlUiScaleSettingsLayout_data() {
+        QTest::addColumn<int>("percent");
+        QTest::addColumn<QSize>("windowSize");
+        QTest::newRow("4k-100") << 100 << QSize(3840, 2160);
+        QTest::newRow("4k-200") << 200 << QSize(3840, 2160);
+        QTest::newRow("deck-200") << 200 << QSize(1280, 800);
+    }
+
+    void qmlUiScaleChangeKeepsControlVisible_data() {
+        QTest::addColumn<QSize>("windowSize");
+        QTest::newRow("4k") << QSize(3840, 2160);
+        QTest::newRow("deck") << QSize(1280, 800);
+    }
+
+    void qmlUiScaleChangeKeepsControlVisible() {
+        QFETCH(QSize, windowSize);
+        openGlobalSettings();
+        m_Window->resize(windowSize);
+        auto combo = page()->findChild<QQuickItem*>("uiScaleComboBox");
+        QVERIFY(combo);
+        combo->forceActiveFocus(Qt::TabFocusReason);
+        QTRY_VERIFY(combo->mapToScene(QPointF(combo->width(), combo->height())).y() <= windowSize.height());
+        for (const int expected : {125, 150, 175, 200}) {
+            QTest::keyClick(m_Window.get(), Qt::Key_Right);
+            QTRY_COMPARE(base()->uiScale(), expected);
+            QTRY_VERIFY(combo->mapToScene(QPointF()).y() >= 60 * expected / 100.0);
+            QTRY_VERIFY(combo->mapToScene(QPointF(combo->width(), combo->height())).y() <= windowSize.height());
+        }
+    }
+
+    void qmlUiScaleSettingsLayout() {
+        QFETCH(int, percent);
+        QFETCH(QSize, windowSize);
+        base()->setUiScale(percent);
+        openGlobalSettings();
+        m_Window->resize(windowSize);
+        auto combo = page()->findChild<QQuickItem*>("uiScaleComboBox");
+        QVERIFY(combo);
+        combo->forceActiveFocus(Qt::TabFocusReason);
+        QTRY_VERIFY(combo->hasActiveFocus());
+        QTRY_COMPARE(evaluate("window.uiScaleFactor").toReal(), percent / 100.0);
+        QTRY_COMPARE(page()->property("singleColumn").toBool(), windowSize.width() / (percent / 100.0) < 1100);
+        // Wait for the actual keyboard/controller auto-scroll to reveal the
+        // setting; use visual coordinates so this also detects double scaling.
+        QTRY_VERIFY(combo->mapToScene(QPointF()).y() >= 0);
+        QTRY_VERIFY(combo->mapToScene(QPointF(combo->width(), combo->height())).y() <= windowSize.height());
+
+        const auto screenshots = qEnvironmentVariable("MOONLIGHT_UI_SCALE_SCREENSHOTS");
+        if (!screenshots.isEmpty()) {
+            QVERIFY(QDir().mkpath(screenshots));
+            QTest::qWait(180);
+            const auto image = m_Window->grabWindow();
+            QVERIFY(!image.isNull());
+            QVERIFY(image.save(QDir(screenshots).filePath(QString::fromLatin1(QTest::currentDataTag()) + ".png")));
+        }
     }
 };
 

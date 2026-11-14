@@ -5,6 +5,9 @@ import "PopupFocus.js" as PopupFocus
 Dialog {
     id: dialog
     modal: true
+    // Listen to the same logical viewport that supplies the centering bounds.
+    // Qt otherwise need not reposition an open dialog when only Overlay resizes.
+    parent: Overlay.overlay
     anchors.centerIn: Overlay.overlay
 
     // Popups live in Overlay, outside the StackView's key propagation path.

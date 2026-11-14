@@ -26,6 +26,8 @@ public:
     Q_INVOKABLE void save();
 
     void reload();
+    int uiScale() const { return m_UiScale; }
+    void setUiScale(int percent);
     Q_INVOKABLE void applyVrrPreset(int mode);
     int vrrBufferPerMille() const { return m_VrrTimingOptions.bufferPerMille; }
     int vrrTargetHundredths() const { return m_VrrTimingOptions.targetHundredths; }
@@ -217,6 +219,7 @@ public:
     Q_PROPERTY(WindowMode windowMode MEMBER windowMode NOTIFY windowModeChanged)
     Q_PROPERTY(WindowMode recommendedFullScreenMode MEMBER recommendedFullScreenMode CONSTANT)
     Q_PROPERTY(UIDisplayMode uiDisplayMode MEMBER uiDisplayMode NOTIFY uiDisplayModeChanged)
+    Q_PROPERTY(int uiScale READ uiScale WRITE setUiScale NOTIFY uiScaleChanged)
     Q_PROPERTY(bool swapMouseButtons MEMBER swapMouseButtons NOTIFY mouseButtonsChanged)
     Q_PROPERTY(bool muteOnFocusLoss MEMBER muteOnFocusLoss NOTIFY muteOnFocusLossChanged)
     Q_PROPERTY(bool backgroundGamepad MEMBER backgroundGamepad NOTIFY backgroundGamepadChanged)
@@ -311,6 +314,7 @@ public:
     int steamControllerHapticMasterGain = 0;  // dB written as setting 76 in the link settings (0 = not written, 6, 12)
 
 private:
+    int m_UiScale = 100;
     VrrTimingOptions m_VrrTimingOptions = VrrTimingOptions::preset(1);
 
 signals:
@@ -341,6 +345,7 @@ signals:
     void enableYUV444Changed();
     void videoDecoderSelectionChanged();
     void uiDisplayModeChanged();
+    void uiScaleChanged();
     void windowModeChanged();
     void framePacingChanged();
     void connectionWarningsChanged();
