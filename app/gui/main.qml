@@ -41,8 +41,12 @@ ApplicationWindow {
         width: window.width / window.uiScaleFactor
         height: window.height / window.uiScaleFactor
         transform: uiScaleTransform
-        onWidthChanged: window.syncOverlayGeometry()
-        onHeightChanged: window.syncOverlayGeometry()
+
+        // Popups use their own scale so Qt can constrain them to the physical
+        // window on both Qt 6.2 (AppImage) and newer Qt versions.
+        ToolTip.toolTip.scale: window.uiScaleFactor
+        ToolTip.toolTip.transformOrigin: Item.TopLeft
+        ToolTip.toolTip.contentWidth: Math.min(tooltipTextLayoutHelper.width, 400)
 
         StackView {
             id: stackView
@@ -270,8 +274,9 @@ ApplicationWindow {
                         }
                     }
 
-                    Menu {
+                    NavigableMenu {
                         id: updateMenu
+                        initiator: updateButton
                         MenuItem {
                             text: qsTr("Dismiss this update")
                             onTriggered: {
@@ -379,25 +384,6 @@ ApplicationWindow {
         }
     }
 
-    // Qt reparents popup visuals into the window overlay, outside uiViewport.
-    // Give them the same transform and logical bounds for positioning/hit tests.
-    Overlay.overlay.transform: uiScaleTransform
-
-    function syncOverlayGeometry() {
-        var overlay = window.Overlay.overlay
-        if (overlay && uiViewport) {
-            if (overlay.width !== uiViewport.width) overlay.width = uiViewport.width
-            if (overlay.height !== uiViewport.height) overlay.height = uiViewport.height
-        }
-    }
-
-    Connections {
-        target: window.Overlay.overlay
-        // Qt resets the overlay to the physical window size during a resize.
-        function onWidthChanged() { window.syncOverlayGeometry() }
-        function onHeightChanged() { window.syncOverlayGeometry() }
-    }
-
     // This function runs prior to creation of the initial StackView item
     function doEarlyInit() {
         // Override the background color to Material 2 colors for Qt 6.5+
@@ -433,7 +419,6 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
-        syncOverlayGeometry()
         showWindowWithCurrentDisplayMode()
     }
 
@@ -535,13 +520,9 @@ ApplicationWindow {
     Text {
         id: tooltipTextLayoutHelper
         visible: false
-        font: ToolTip.toolTip.font
-        text: ToolTip.toolTip.text
+        font: uiViewport.ToolTip.toolTip.font
+        text: uiViewport.ToolTip.toolTip.text
     }
-
-    // This configures the maximum width of the singleton attached QML ToolTip. If left unconstrained,
-    // it will never insert a line break and just extend on forever.
-    ToolTip.toolTip.contentWidth: Math.min(tooltipTextLayoutHelper.width, 400)
 
     function goBack() {
         // Dismiss a modal before navigating, including toolbar back actions.

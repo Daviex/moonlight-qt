@@ -151,19 +151,20 @@ private slots:
         QTRY_VERIFY(evaluate("quitConfirmationDialog.opened").toBool());
         auto popup = qobject_cast<QQuickItem*>(evaluate("quitConfirmationDialog.contentItem.parent").value<QObject*>());
         QVERIFY(popup);
+        QTRY_COMPARE(popup->scale(), factor);
 
         for (const auto& size : {QSize(1280, 800), QSize(1600, 1000), QSize(1280, 800)}) {
             m_Window->resize(size);
-            QTRY_COMPARE(evaluate("Overlay.overlay.width").toReal(), size.width() / factor);
-            QTRY_COMPARE(evaluate("Overlay.overlay.height").toReal(), size.height() / factor);
+            QTRY_COMPARE(evaluate("Overlay.overlay.width").toReal(), qreal(size.width()));
+            QTRY_COMPARE(evaluate("Overlay.overlay.height").toReal(), qreal(size.height()));
             QTRY_VERIFY_WITH_TIMEOUT(qAbs(popup->mapToScene(QPointF(popup->width() / 2, popup->height() / 2)).x()
                              - size.width() / 2.0) <= factor, 1000);
             QTRY_VERIFY_WITH_TIMEOUT(qAbs(popup->mapToScene(QPointF(popup->width() / 2, popup->height() / 2)).y()
                              - size.height() / 2.0) <= factor, 1000);
         }
 
-        // Profile changes can also resize the logical overlay while a dialog
-        // is open. It must track that geometry without being closed/reopened.
+        // Profile changes can also resize an open dialog. It must stay centered
+        // without being closed/reopened.
         evaluate(QString("StreamingPreferences.uiScale = %1").arg(percent == 200 ? 100 : 200));
         QTRY_VERIFY(qAbs(popup->mapToScene(QPointF(popup->width() / 2, popup->height() / 2)).x() - 640.0) <= 2.0);
         QTRY_VERIFY(qAbs(popup->mapToScene(QPointF(popup->width() / 2, popup->height() / 2)).y() - 400.0) <= 2.0);
@@ -234,33 +235,130 @@ private slots:
         QTRY_COMPARE(evaluate("window.uiScaleFactor").toReal(), 2.0);
     }
 
+    void scaledContextMenuRemainsInsideWindow_data()
+    {
+        QTest::addColumn<int>("percent");
+        QTest::newRow("quarter") << 25;
+        QTest::newRow("fractional") << 125;
+        QTest::newRow("double") << 200;
+    }
+
     void scaledContextMenuRemainsInsideWindow()
     {
+        QFETCH(int, percent);
+        const qreal factor = percent / 100.0;
         m_Window->resize(1280, 800);
-        evaluate("StreamingPreferences.uiScale = 200");
+        evaluate(QString("StreamingPreferences.uiScale = %1").arg(percent));
+        openGames();
+        QTRY_VERIFY(firstGridDelegate(page()));
+        auto realMenu = evaluate("currentItem.appContextMenu", page()).value<QObject*>();
+        QVERIFY(realMenu);
+        QTRY_COMPARE(realMenu->property("scale").toReal(), factor);
         auto menu = evaluate(
-            "Qt.createQmlObject('import QtQuick 2.9; import QtQuick.Controls 2.5; "
-            "Menu { x: 580; y: 360; property bool chosen: false; "
+            "Qt.createQmlObject('import QtQuick 2.9; import QtQuick.Controls 2.5; import \"qrc:/gui\"; "
+            "NavigableMenu { parent: uiViewport; initiator: parent; x: parent.width - 50; y: parent.height - 20; property bool chosen: false; "
             "MenuItem { text: \"Scale test\"; onTriggered: chosen = true } }', uiViewport)").value<QObject*>();
         QVERIFY(menu);
+        QTRY_COMPARE(menu->property("scale").toReal(), factor);
+
+        // Both an existing game menu and a newly created menu must react to
+        // a profile's scale changing before they are first opened.
+        evaluate("StreamingPreferences.uiScale = 175");
+        QTRY_COMPARE(menu->property("scale").toReal(), 1.75);
+        QTRY_COMPARE(realMenu->property("scale").toReal(), 1.75);
+        evaluate(QString("StreamingPreferences.uiScale = %1").arg(percent));
+        QTRY_COMPARE(menu->property("scale").toReal(), factor);
+        QTRY_COMPARE(realMenu->property("scale").toReal(), factor);
         evaluate("open()", menu);
         QTRY_VERIFY(evaluate("opened", menu).toBool());
         auto popup = qobject_cast<QQuickItem*>(evaluate("contentItem.parent", menu).value<QObject*>());
         QVERIFY(popup);
         auto item = qobject_cast<QQuickItem*>(evaluate("itemAt(0)", menu).value<QObject*>());
         QVERIFY(item);
-        // A context menu near the lower/right edge must constrain against the
-        // logical overlay bounds, not expand past the physical window edge.
+        // A context menu near the lower/right edge must remain fully visible,
+        // including the older Qt version shipped by the AppImage.
         const auto topLeft = popup->mapToScene(QPointF());
         const auto bottomRight = popup->mapToScene(QPointF(popup->width(), popup->height()));
         QVERIFY(topLeft.x() >= 0 && topLeft.y() >= 0);
         QVERIFY(bottomRight.x() <= m_Window->width() + 1);
         QVERIFY(bottomRight.y() <= m_Window->height() + 1);
-        QVERIFY(qAbs((bottomRight.x() - topLeft.x()) - popup->width() * 2.0) < 0.01);
+        QVERIFY(qAbs((bottomRight.x() - topLeft.x()) - popup->width() * factor) < 0.01);
         QTest::mouseClick(m_Window.get(), Qt::LeftButton, Qt::NoModifier,
                           item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint());
         QTRY_VERIFY(menu->property("chosen").toBool());
         QTRY_VERIFY(!menu->property("visible").toBool());
+    }
+
+    void scaledLongComboPopupRemainsUsableAtEdges_data()
+    {
+        QTest::addColumn<int>("percent");
+        QTest::newRow("quarter") << 25;
+        QTest::newRow("fractional") << 125;
+        QTest::newRow("double") << 200;
+    }
+
+    void scaledLongComboPopupRemainsUsableAtEdges()
+    {
+        QFETCH(int, percent);
+        const qreal factor = percent / 100.0;
+        m_Window->resize(1280, 800);
+        evaluate(QString("StreamingPreferences.uiScale = %1").arg(percent));
+        auto combo = qobject_cast<QQuickItem*>(evaluate(
+            "Qt.createQmlObject('import QtQuick 2.9; import QtQuick.Controls 2.2; import \"qrc:/gui\"; "
+            "AutoResizingComboBox { x: parent.width - width - 12; y: parent.height - height - 4; "
+            "width: 180; model: 24; property int chosen: -1; "
+            "onActivated: function(index) { chosen = index } }', uiViewport)").value<QObject*>());
+        QVERIFY(combo);
+        QTest::mouseClick(m_Window.get(), Qt::LeftButton, Qt::NoModifier,
+                          combo->mapToScene(QPointF(combo->width() / 2, combo->height() / 2)).toPoint());
+        QTRY_VERIFY(evaluate("popup.opened", combo).toBool());
+        auto popup = qobject_cast<QQuickItem*>(evaluate("popup.contentItem.parent", combo).value<QObject*>());
+        QVERIFY(popup);
+        const auto topLeft = popup->mapToScene(QPointF());
+        const auto bottomRight = popup->mapToScene(QPointF(popup->width(), popup->height()));
+        QVERIFY(topLeft.x() >= -1 && topLeft.y() >= -1);
+        QVERIFY(bottomRight.x() <= m_Window->width() + 1);
+        QVERIFY(bottomRight.y() <= m_Window->height() + 1);
+        QVERIFY(qAbs((bottomRight.x() - topLeft.x()) - popup->width() * factor) < 0.01);
+        if (percent > 100) {
+            QVERIFY(evaluate("popup.contentItem.contentHeight > popup.contentItem.height", combo).toBool());
+        }
+
+        // Reaching the final choice also proves that the height cap did not
+        // clip off inaccessible rows of the drop-down.
+        QTest::keyClick(m_Window.get(), Qt::Key_End);
+        QTRY_COMPARE(combo->property("highlightedIndex").toInt(), 23);
+        QTest::keyClick(m_Window.get(), Qt::Key_Return);
+        QTRY_COMPARE(combo->property("chosen").toInt(), 23);
+        QTRY_VERIFY(!evaluate("popup.visible", combo).toBool());
+    }
+
+    void scaledTooltipRemainsInsideWindow_data()
+    {
+        QTest::addColumn<int>("percent");
+        QTest::newRow("quarter") << 25;
+        QTest::newRow("fractional") << 125;
+        QTest::newRow("double") << 200;
+    }
+
+    void scaledTooltipRemainsInsideWindow()
+    {
+        QFETCH(int, percent);
+        const qreal factor = percent / 100.0;
+        m_Window->resize(1280, 800);
+        evaluate(QString("StreamingPreferences.uiScale = %1").arg(percent));
+        evaluate("settingsButton.ToolTip.show('Scale test tooltip', 5000)");
+        QTRY_VERIFY(evaluate("settingsButton.ToolTip.toolTip.opened").toBool());
+        auto popup = qobject_cast<QQuickItem*>(evaluate("settingsButton.ToolTip.toolTip.contentItem.parent").value<QObject*>());
+        QVERIFY(popup);
+        const auto topLeft = popup->mapToScene(QPointF());
+        const auto bottomRight = popup->mapToScene(QPointF(popup->width(), popup->height()));
+        QVERIFY(topLeft.x() >= -1 && topLeft.y() >= -1);
+        QVERIFY(bottomRight.x() <= m_Window->width() + 1);
+        QVERIFY(bottomRight.y() <= m_Window->height() + 1);
+        QVERIFY(qAbs((bottomRight.x() - topLeft.x()) - popup->width() * factor) < 0.01);
+        evaluate("settingsButton.ToolTip.hide()");
+        QTRY_VERIFY(!evaluate("settingsButton.ToolTip.toolTip.visible").toBool());
     }
 
     void gamesAreAlignedBeforeInput_data()
