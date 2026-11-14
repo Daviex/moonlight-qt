@@ -242,6 +242,70 @@ private slots:
         QCOMPARE(evaluate("ProfileManager.activeProfileId").toString(), QString("second"));
     }
 
+    void profileModalBackOnlyClosesTopDialog_data()
+    {
+        QTest::addColumn<int>("key");
+        QTest::newRow("controller-B") << int(Qt::Key_Escape);
+        QTest::newRow("platform-back") << int(Qt::Key_Back);
+        QTest::newRow("toolbar-back") << 0;
+    }
+
+    void profileModalBackOnlyClosesTopDialog()
+    {
+        QFETCH(int, key);
+        evaluate("window.returnToProfileSelection()");
+        QTRY_VERIFY(!busy());
+        auto profiles = page();
+        evaluate("editProfileDialog.profileId = 'second'; editProfileDialog.profileName = 'Second'; editProfileDialog.open()", profiles);
+        QTRY_VERIFY(evaluate("editProfileDialog.opened", profiles).toBool());
+        evaluate("errorDialog.text = 'Test profile error'; errorDialog.open()", profiles);
+        QTRY_VERIFY(evaluate("errorDialog.opened", profiles).toBool());
+
+        // The profile page has its own delayed focus restoration in addition to
+        // main.qml's current-view handler. Neither may steal a modal's focus.
+        evaluate("profileRoot.focusCurrentGridItem(); profileRoot.restoreGridFocusSoon()", profiles);
+        QTest::qWait(40);
+        QVERIFY(evaluate("errorDialog.standardButton(Dialog.Ok).activeFocus", profiles).toBool());
+        if (key) QTest::keyClick(m_Window.get(), Qt::Key(key));
+        else evaluate("window.goBack()");
+        QTRY_VERIFY(!evaluate("errorDialog.visible", profiles).toBool());
+        QVERIFY(evaluate("editProfileDialog.visible", profiles).toBool());
+        QCOMPARE(depth(), 1);
+        QVERIFY(!evaluate("quitConfirmationDialog.visible").toBool());
+
+        if (key == Qt::Key_Back) {
+            QKeyEvent repeat(QEvent::KeyPress, Qt::Key_Back, Qt::NoModifier, QString(), true);
+            QCoreApplication::sendEvent(m_Window.get(), &repeat);
+            QVERIFY(evaluate("editProfileDialog.visible", profiles).toBool());
+            QCOMPARE(depth(), 1);
+        }
+
+        if (key) QTest::keyClick(m_Window.get(), Qt::Key(key));
+        else evaluate("window.goBack()");
+        QTRY_VERIFY(!evaluate("editProfileDialog.visible", profiles).toBool());
+        QCOMPARE(page(), profiles);
+        QVERIFY(!evaluate("quitConfirmationDialog.visible").toBool());
+        QTRY_VERIFY(evaluate("profileGrid.activeFocus", profiles).toBool());
+        QTest::keyClick(m_Window.get(), Qt::Key_Right);
+        QCOMPARE(evaluate("profileGrid.currentIndex", profiles).toInt(), 1);
+    }
+
+    void profileSwitchBehindDialogKeepsModalFocus()
+    {
+        evaluate("quitConfirmationDialog.open()");
+        QTRY_VERIFY(evaluate("quitConfirmationDialog.opened").toBool());
+        QVERIFY(evaluate("window.enterProfile('second', true, true)").toBool());
+        QTRY_VERIFY(!busy());
+        QCOMPARE(depth(), 2);
+        QCOMPARE(evaluate("ProfileManager.activeProfileId").toString(), QString("second"));
+        QVERIFY(evaluate("quitConfirmationDialog.activeFocus").toBool());
+        QTest::keyClick(m_Window.get(), Qt::Key_Escape);
+        QTRY_VERIFY(!evaluate("quitConfirmationDialog.visible").toBool());
+        QTRY_VERIFY(qobject_cast<QQuickItem*>(page())->hasActiveFocus());
+        QTest::keyClick(m_Window.get(), Qt::Key_Right);
+        QCOMPARE(page()->property("currentIndex").toInt(), 1);
+    }
+
     void defaultHostDoesNotReopenOnBack()
     {
         evaluate("ComputerManager.defaultHostUuid = 'pc-1'");

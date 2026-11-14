@@ -10,7 +10,7 @@ TARGET = moonlight-common-c
 TEMPLATE = lib
 
 # Build a static library
-CONFIG += staticlib
+CONFIG += staticlib c11
 
 # Include global qmake defs
 include(../globaldefs.pri)

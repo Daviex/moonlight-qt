@@ -569,7 +569,14 @@ bool PlVkRenderer::tryInitializeDevice(VkPhysicalDevice device, VkPhysicalDevice
     // it requires cooperation with the app (ex: using vkGetDeviceQueue2). We know
     // FFmpeg 9.0+ always wants internally synchronized queues if available, so we
     // will turn it on when supported by the physical device.
-    if (isExtensionSupportedByPhysicalDevice(device, "VK_KHR_internally_synchronized_queues")) {
+    if (
+#if defined(HAVE_PYROWAVE) && defined(Q_OS_LINUX)
+        // PyroWave's imported Granite context retrieves queues with
+        // vkGetDeviceQueue(), which cannot fetch internally synchronized
+        // queues. Keep its shared device on the explicit queue-lock path.
+        !pyroWave &&
+#endif
+        isExtensionSupportedByPhysicalDevice(device, "VK_KHR_internally_synchronized_queues")) {
         bool internallySynchronizedQueues;
         if (!Utils::getEnvironmentVariableOverride("PLVK_INT_SYNC_QUEUES", &internallySynchronizedQueues)) {
 #if LIBAVUTIL_VERSION_MAJOR < 62

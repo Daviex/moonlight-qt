@@ -192,7 +192,7 @@ public:
              bool persistGameControllersOnDisconnect,
              bool clientVrrRequested,
              QString& rtspSessionUrl,
-             LaunchWarning::Code& launchWarning);
+             LaunchWarning::Warning& launchWarning);
 
     QVector<NvApp>
     getAppList();

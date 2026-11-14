@@ -1,5 +1,5 @@
 import QtQuick 2.9
-import QtQuick.Controls 2.2
+import QtQuick.Controls 2.5
 import QtQuick.Layouts 1.3
 import QtQuick.Window 2.2
 import QtQuick.Controls.Material 2.2
@@ -10,6 +10,7 @@ import ProfileManager 1.0
 import StreamingPreferences 1.0
 import SystemProperties 1.0
 import SdlGamepadKeyNavigation 1.0
+import "PopupFocus.js" as PopupFocus
 
 ApplicationWindow {
     property bool pollingActive: false
@@ -170,6 +171,11 @@ ApplicationWindow {
     ToolTip.toolTip.contentWidth: Math.min(tooltipTextLayoutHelper.width, 400)
 
     function goBack() {
+        // Dismiss a modal before navigating, including toolbar back actions.
+        if (PopupFocus.rejectTopModal()) {
+            return
+        }
+
         // A second pop during the transition can skip pages and leave focus
         // in a view that is being removed.
         if (stackView.busy) {
@@ -191,6 +197,7 @@ ApplicationWindow {
 
     StackView {
         id: stackView
+        property bool focusViewAfterDialog: false
         anchors.fill: parent
         focus: true
 
@@ -207,10 +214,8 @@ ApplicationWindow {
         }
 
         onCurrentItemChanged: {
-            // Ensure focus travels to the next view when going back
-            if (currentItem) {
-                currentItem.forceActiveFocus()
-            }
+            // Ensure focus travels to the next view without stealing it from a dialog.
+            PopupFocus.focusCurrentView(stackView)
 
             if (currentItemSuppressesPolling()) {
                 stopPollingIfNeeded()
@@ -222,6 +227,8 @@ ApplicationWindow {
                 }
             }
         }
+
+        Window.onActiveFocusItemChanged: PopupFocus.keepModalFocus(Overlay.overlay)
 
         Keys.onEscapePressed: function(event) {
             if (!event.isAutoRepeat) {

@@ -36,6 +36,11 @@ Coverage:
 - Removed game pages and their models are destroyed.
 - Profile/host/settings navigation cannot interrupt an ongoing transition.
 - Dismissing the quit dialog restores controller navigation on profiles.
+- Profile dialogs retain focus against delayed grid focus restoration. Escape,
+  platform Back, and toolbar Back dismiss the top dialog before navigating.
+  Holding platform Back cannot dismiss the next dialog through key repeat.
+- Switching profiles behind a modal preserves its focus and restores navigation
+  to the new host page when the modal closes.
 - The default host opens once, waits for its status, and respects selection of
   another host. Returning to the host grid does not automatically reopen it.
 

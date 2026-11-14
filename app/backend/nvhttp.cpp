@@ -361,9 +361,9 @@ NvHTTP::startApp(QString verb,
                  bool persistGameControllersOnDisconnect,
                  bool clientVrrRequested,
                  QString& rtspSessionUrl,
-                 LaunchWarning::Code& launchWarning)
+                 LaunchWarning::Warning& launchWarning)
 {
-    launchWarning = LaunchWarning::Code::None;
+    launchWarning = {};
     int riKeyId;
 
     memcpy(&riKeyId, streamConfig->remoteInputAesIv, sizeof(riKeyId));
