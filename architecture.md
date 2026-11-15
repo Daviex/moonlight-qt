@@ -1422,6 +1422,35 @@ backpressure. Audio startup intentionally discards an initial backlog of about
 queued audio latency. Muting can suppress audio processing without retiming VRR.
 
 Input goes from SDL handlers to common-library input APIs and a separate sender.
+The native Steam Controller (2026) path instead reads USB/Puck/BLE HID reports
+on a dedicated reader thread, independently of SDL video event processing. The
+reader requests SDL HIGH priority and retains the current scheduling if the OS
+rejects it; it does not request TIME_CRITICAL.
+
+As of the 2026-11-15 input delivery change, a successful controller-state queue
+admission retains the immediate path. A rejected admission is retained by the
+host bridge and retried by the existing HID service thread, with a 1 ms retry
+target and at most eight states per controller per dispatch. This target is not
+a measured delivery deadline. The bridge preserves button transitions and
+zero/full-pull trigger boundaries; continuous updates with identical edges can
+replace one another. Pending history is bounded to 32 states and 100 ms. If
+either bound is exceeded, it logs degraded delivery and resynchronizes to the
+latest physical state rather than replaying stale actions indefinitely. Such a
+resynchronization can discard completed taps; it is not a lossless guarantee
+under sustained backpressure. It does not synthesize an extra neutral/press pair.
+Only this degraded resynchronization backs off retries through 2, 4, 8 and 16 ms;
+successful recovery restores the 1 ms transient target. This avoids continuous
+retry/log work during a prolonged rejection. Arrival, touch and gyro messages
+retain their existing admission behavior.
+Focus loss discards pending actions and retries neutral; reconnect, controller
+slot reuse and session teardown invalidate the previous generation's history.
+The wire protocol and common-library reliable ENet ordering are unchanged.
+
+`tests/steamcontroller` exercises the production decoder, host bridge and service
+callback with injected admission failures and a controlled clock. It does not
+measure a physical controller, network, game polling or display latency. The
+client's native HID reader still requires exclusive ownership relative to Steam
+Input as described in `docs/steam_controller.md`.
 
 Windows/Linux DualSense waveform feedback (updated 2026-10-05) runs separately
 from video and ordinary stream audio. A Bluetooth Sony DualSense/Edge with an

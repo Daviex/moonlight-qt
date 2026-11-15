@@ -23,7 +23,8 @@ class SteamControllerHost : public SteamControllerLink::Listener {
 public:
     enum EventKind { LinkConnected = 1, LinkDisconnected = 2 };
 
-    SteamControllerHost();
+    using Clock = uint64_t (*)();
+    explicit SteamControllerHost(Clock clock = SteamController::nowMs);
     ~SteamControllerHost() override;
 
     // ----- main thread (SdlInputHandler) -----
@@ -65,6 +66,7 @@ public:
     void linkMotion(SteamControllerLink& link, int generation, uint8_t motionType, float x, float y, float z) override;
     void linkBattery(SteamControllerLink& link, int generation, uint8_t state, uint8_t percent) override;
     void linkAttributes(SteamControllerLink& link, int generation, const SteamControllerAttributes& attributes) override;
+    uint64_t serviceInput(uint64_t nowMs) override;
 
 private:
     void pushEvent(const SteamControllerLink& link, int generation, EventKind kind);

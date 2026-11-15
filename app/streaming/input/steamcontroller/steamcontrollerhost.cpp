@@ -5,12 +5,25 @@
 #include <Limelight.h>
 
 #include <algorithm>
+#include <deque>
 #include <mutex>
 #include <vector>
 
 namespace {
 
 const int MAX_STEAM_SLOTS = 16;   // the gamepad mask is 16 bits wide
+const size_t MAX_PENDING_STATES = 32;
+const uint64_t INPUT_RETRY_MS = 1;
+const uint64_t MAX_RESYNC_RETRY_MS = 16;
+const uint64_t MAX_INPUT_HISTORY_MS = 100;
+const size_t MAX_RETRY_BATCH = 8;
+
+struct PendingState {
+    int flags = 0;
+    uint8_t lt = 0, rt = 0;
+    short lsX = 0, lsY = 0, rsX = 0, rsY = 0;
+    uint64_t queuedAt = 0;
+};
 
 struct Entry {
     std::shared_ptr<SteamControllerLink> link;
@@ -23,6 +36,17 @@ struct Entry {
     short lsX = 0, lsY = 0, rsX = 0, rsY = 0;
     // A gyro sample reached the host under this announcement: it is zeroed on focus loss.
     bool gyroSeen = false;
+    std::deque<PendingState> pending;
+    uint64_t retryDue = UINT64_MAX;
+    uint64_t retryDelay = INPUT_RETRY_MS;
+    bool resync = false;         // history exceeded its budget; only the current state remains
+    bool retired = false;        // no more physical input, but a failed neutral still needs delivery
+    unsigned rejected = 0;
+};
+
+struct Route {
+    std::shared_ptr<SteamControllerLink> link;
+    int generation = 0;
 };
 
 struct Registry {
@@ -30,26 +54,27 @@ struct Registry {
     bool alive = false;
     bool suppressed = false;      // window unfocused with background gamepad input off
     uint16_t mask = 0;
+    SteamControllerHost::Clock clock = SteamController::nowMs;
     std::vector<Entry> entries;   // announced links
 
     // Under mutex: the controller number this link's generation is announced as, or -1.
     int numberFor(const SteamControllerLink& link, int generation) const {
         for (const Entry& e : entries) {
-            if (e.link.get() == &link && e.generation == generation) return e.number;
+            if (!e.retired && e.link.get() == &link && e.generation == generation) return e.number;
         }
         return -1;
     }
     // Under mutex: the announcement of this link's generation, or null.
     Entry* find(const SteamControllerLink& link, int generation) {
         for (Entry& e : entries) {
-            if (e.link.get() == &link && e.generation == generation) return &e;
+            if (!e.retired && e.link.get() == &link && e.generation == generation) return &e;
         }
         return nullptr;
     }
     // Under mutex: the link announced as this controller number (the first in single-controller mode).
-    Entry entryFor(uint16_t number) const {
+    Route entryFor(uint16_t number) const {
         for (const Entry& e : entries) {
-            if (e.number == number) return e;
+            if (!e.retired && e.number == number) return {e.link, e.generation};
         }
         return {};
     }
@@ -60,13 +85,107 @@ Registry& registry() {
     return instance;
 }
 
+PendingState latestState(const Entry& e, uint64_t nowMs) {
+    return {e.buttonFlags, e.lt, e.rt, e.lsX, e.lsY, e.rsX, e.rsY, nowMs};
 }
 
-SteamControllerHost::SteamControllerHost()
+int triggerRange(uint8_t value) { return value == 0 ? 0 : value < 0xF0 ? 1 : 2; }
+bool sameEdges(const PendingState& a, const PendingState& b) {
+    return a.flags == b.flags && triggerRange(a.lt) == triggerRange(b.lt) && triggerRange(a.rt) == triggerRange(b.rt);
+}
+
+int sendState(const Entry& e, uint16_t mask, const PendingState& state) {
+    return LiSendMultiControllerEvent(e.number, mask, state.flags, state.lt, state.rt,
+                                      state.lsX, state.lsY, state.rsX, state.rsY);
+}
+
+void resetPending(Entry& e) {
+    e.pending.clear();
+    e.retryDue = UINT64_MAX;
+    e.retryDelay = INPUT_RETRY_MS;
+    e.resync = false;
+    e.rejected = 0;
+}
+
+void resyncPending(Entry& e, const PendingState& state, const char* reason) {
+    SteamController::logf(SteamController::LogWarn,
+        "Steam Controller player %u: input history %s (%u states); resync to current state, pending button edges discarded",
+        e.number, reason, (unsigned)e.pending.size());
+    e.pending.clear();
+    e.pending.push_back(state);
+    e.resync = true;
+}
+
+// Under the registry mutex. The common-c API only admits to its queue: no network wait.
+// History is retried in order, with a per-dispatch bound so a congested slot cannot monopolize
+// the service thread. A 1 ms retry deadline is a scheduling target, not a delivery guarantee.
+uint64_t drainPending(Entry& e, uint16_t mask, uint64_t nowMs) {
+    if (e.pending.empty()) return UINT64_MAX;
+    if (nowMs < e.retryDue) return e.retryDue;
+    if (!e.resync && nowMs >= e.pending.front().queuedAt && nowMs - e.pending.front().queuedAt >= MAX_INPUT_HISTORY_MS) {
+        PendingState current = e.pending.back();
+        current.queuedAt = nowMs;
+        resyncPending(e, current, "expired");
+    }
+    for (size_t i = 0; i < MAX_RETRY_BATCH && !e.pending.empty(); i++) {
+        if (sendState(e, mask, e.pending.front()) != 0) {
+            e.rejected++;
+            // Preserve the short transient retry, then back off degraded resync to avoid
+            // hammering common-c (and its rejection log) during prolonged congestion.
+            if (e.resync) e.retryDelay = std::min(e.retryDelay * 2, MAX_RESYNC_RETRY_MS);
+            e.retryDue = nowMs + e.retryDelay;
+            return e.retryDue;
+        }
+        e.pending.pop_front();
+    }
+    if (e.pending.empty()) {
+        SteamController::logf(SteamController::LogInfo,
+            "Steam Controller player %u: input retry recovered after %u rejected sends%s",
+            e.number, e.rejected, e.resync ? " (current-state resync)" : "");
+        resetPending(e);
+        return UINT64_MAX;
+    }
+    e.retryDue = nowMs + INPUT_RETRY_MS;
+    return e.retryDue;
+}
+
+void submitState(Entry& e, uint16_t mask, PendingState state) {
+    const uint64_t nowMs = state.queuedAt;
+    if (e.pending.empty()) {
+        if (sendState(e, mask, state) == 0) return;  // unchanged healthy fast path
+        e.rejected = 1;
+        e.retryDue = nowMs + INPUT_RETRY_MS;
+        e.pending.push_back(state);
+        SteamController::logf(SteamController::LogInfo,
+            "Steam Controller player %u: input deferred; retaining button edges for retry", e.number);
+    }
+    else if (e.resync || sameEdges(e.pending.back(), state)) {
+        // Keep the oldest timestamp when replacing analog travel: fresh motion must not extend
+        // the lifetime of an old press indefinitely. Different digital/trigger ranges never merge.
+        state.queuedAt = e.pending.back().queuedAt;
+        e.pending.back() = state;
+    }
+    else if (e.pending.size() == MAX_PENDING_STATES) {
+        resyncPending(e, state, "overflowed");
+    }
+    else {
+        e.pending.push_back(state);
+    }
+    drainPending(e, mask, nowMs);
+    // The callback only wakes the runner (it does not take the link mutex). It remains valid
+    // until the runner is joined, and shutdown disables these registry operations first.
+    if (!e.pending.empty() && e.link->wake) e.link->wake();
+}
+
+}
+
+SteamControllerHost::SteamControllerHost(Clock clock)
 {
     Registry& r = registry();
     std::lock_guard<std::mutex> lock(r.mutex);
     r.alive = true;
+    r.clock = clock;
+    r.entries.clear();
     r.suppressed = false;   // a new session starts from the focus notifications it receives
 }
 
@@ -99,12 +218,16 @@ void SteamControllerHost::announce(uint8_t controllerNumber, const std::shared_p
     {
         std::lock_guard<std::mutex> lock(r.mutex);
         if (!r.alive) return;
-        r.entries.erase(std::remove_if(r.entries.begin(), r.entries.end(), [&](const Entry& e) { return e.link == link; }), r.entries.end());
+        // A failed disconnect neutral belongs to the old occupant. It must never release a
+        // replacement controller's buttons after the new arrival has been admitted.
+        r.entries.erase(std::remove_if(r.entries.begin(), r.entries.end(), [&](const Entry& e) {
+            return e.link == link || (e.retired && e.number == controllerNumber);
+        }), r.entries.end());
         Entry entry;
         entry.link = link;
         entry.generation = generation;
         entry.number = controllerNumber;
-        r.entries.push_back(entry);
+        r.entries.push_back(std::move(entry));
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Sending controller arrival: player %d type %u caps 0x%x buttons 0x%x (Steam Controller %s, mask 0x%x)",
                     controllerNumber, LI_CTYPE_STEAM, capabilities, supported, link->name().c_str(), r.mask);
@@ -118,13 +241,20 @@ void SteamControllerHost::announce(uint8_t controllerNumber, const std::shared_p
 
 void SteamControllerHost::retire(const std::shared_ptr<SteamControllerLink>& link, uint8_t controllerNumber, uint16_t newMask)
 {
-    if (controllerNumber >= MAX_STEAM_SLOTS) return;
+    if (controllerNumber >= MAX_STEAM_SLOTS || !link) return;
     Registry& r = registry();
     std::lock_guard<std::mutex> lock(r.mutex);
     r.entries.erase(std::remove_if(r.entries.begin(), r.entries.end(), [&](const Entry& e) { return e.link == link; }), r.entries.end());
     r.mask = newMask;
     if (!r.alive) return;
-    LiSendMultiControllerEvent(controllerNumber, newMask, 0, 0, 0, 0, 0, 0, 0);
+    Entry retired;
+    retired.link = link;
+    retired.number = controllerNumber;
+    retired.retired = true;
+    PendingState neutral;
+    neutral.queuedAt = r.clock();
+    submitState(retired, r.mask, neutral);
+    if (!retired.pending.empty()) r.entries.push_back(std::move(retired));
 }
 
 void SteamControllerHost::unpackEvent(const void* data1, const void* data2, int& linkId, int& generation, int& kind)
@@ -150,7 +280,7 @@ void SteamControllerHost::pushEvent(const SteamControllerLink& link, int generat
 void SteamControllerHost::clSteamHaptic(uint16_t controllerNumber, uint8_t length, const uint8_t* report)
 {
     if (controllerNumber >= MAX_STEAM_SLOTS || report == nullptr || length == 0) return;
-    Entry entry;
+    Route entry;
     {
         Registry& r = registry();
         std::lock_guard<std::mutex> lock(r.mutex);
@@ -166,7 +296,7 @@ void SteamControllerHost::clSteamSettings(uint16_t controllerNumber, uint8_t com
     // (minus the reserved ids). USB and puck links do not take host settings writes, as in the
     // Android client; a host that sends them anyway is ignored.
     if (controllerNumber >= MAX_STEAM_SLOTS) return;
-    Entry entry;
+    Route entry;
     {
         Registry& r = registry();
         std::lock_guard<std::mutex> lock(r.mutex);
@@ -188,7 +318,7 @@ void SteamControllerHost::clSteamSettings(uint16_t controllerNumber, uint8_t com
 bool SteamControllerHost::rumble(uint16_t controllerNumber, uint16_t lowFreqMotor, uint16_t highFreqMotor)
 {
     if (controllerNumber >= MAX_STEAM_SLOTS) return false;
-    Entry entry;
+    Route entry;
     {
         Registry& r = registry();
         std::lock_guard<std::mutex> lock(r.mutex);
@@ -201,7 +331,7 @@ bool SteamControllerHost::rumble(uint16_t controllerNumber, uint16_t lowFreqMoto
 bool SteamControllerHost::setMotionEventState(uint16_t controllerNumber, uint8_t motionType, uint16_t reportRateHz)
 {
     if (controllerNumber >= MAX_STEAM_SLOTS) return false;
-    Entry entry;
+    Route entry;
     {
         Registry& r = registry();
         std::lock_guard<std::mutex> lock(r.mutex);
@@ -224,11 +354,15 @@ void SteamControllerHost::notifyWindowFocus(bool focused, bool backgroundGamepad
     if (r.suppressed == suppress) return;
     r.suppressed = suppress;
     if (!r.alive) return;
-    for (const Entry& e : r.entries) {
+    for (Entry& e : r.entries) {
+        if (e.retired) continue;
         if (suppress) {
             // A button, stick or finger held across the focus change must not stay down on the
             // host: neutral state, and every touch of both pads cancelled.
-            LiSendMultiControllerEvent((short)e.number, (short)r.mask, 0, 0, 0, 0, 0, 0, 0);
+            resetPending(e);
+            PendingState neutral;
+            neutral.queuedAt = r.clock();
+            submitState(e, r.mask, neutral);
             LiSendControllerTouchEvent2((uint8_t)e.number, LI_TOUCH_EVENT_CANCEL_ALL, 0, 0, 0.0f, 0.0f, 0.0f);
             LiSendControllerTouchEvent2((uint8_t)e.number, LI_TOUCH_EVENT_CANCEL_ALL, 1, 0, 0.0f, 0.0f, 0.0f);
             if (e.gyroSeen) {
@@ -241,7 +375,7 @@ void SteamControllerHost::notifyWindowFocus(bool focused, bool backgroundGamepad
         else {
             if (e.haveState) {
                 // The controller may have moved while nothing was forwarded: resume from its last state.
-                LiSendMultiControllerEvent((short)e.number, (short)r.mask, e.buttonFlags, e.lt, e.rt, e.lsX, e.lsY, e.rsX, e.rsY);
+                submitState(e, r.mask, latestState(e, r.clock()));
             }
             // The host cancelled every contact and the decoder's dedup moved on while nothing was
             // forwarded: the link's next report resends its state, a fresh DOWN for every finger
@@ -268,6 +402,19 @@ void SteamControllerHost::linkConnected(SteamControllerLink& link, int generatio
 
 void SteamControllerHost::linkDisconnected(SteamControllerLink& link, int generation)
 {
+    {
+        Registry& r = registry();
+        std::lock_guard<std::mutex> lock(r.mutex);
+        Entry* e = r.alive ? r.find(link, generation) : nullptr;
+        if (e != nullptr) {
+            // Invalidate history immediately on the HID thread, before the SDL removal event.
+            resetPending(*e);
+            e->retired = true;
+            PendingState neutral;
+            neutral.queuedAt = r.clock();
+            submitState(*e, r.mask, neutral);
+        }
+    }
     pushEvent(link, generation, LinkDisconnected);
 }
 
@@ -283,7 +430,23 @@ void SteamControllerHost::linkState(SteamControllerLink& link, int generation, i
     e->buttonFlags = buttonFlags; e->lt = lt; e->rt = rt;
     e->lsX = lsX; e->lsY = lsY; e->rsX = rsX; e->rsY = rsY;
     if (r.suppressed) return;
-    LiSendMultiControllerEvent((short)e->number, (short)r.mask, buttonFlags, lt, rt, lsX, lsY, rsX, rsY);
+    submitState(*e, r.mask, latestState(*e, r.clock()));
+}
+
+uint64_t SteamControllerHost::serviceInput(uint64_t nowMs)
+{
+    Registry& r = registry();
+    std::lock_guard<std::mutex> lock(r.mutex);
+    if (!r.alive) return UINT64_MAX;
+    uint64_t next = UINT64_MAX;
+    for (Entry& e : r.entries) {
+        // Suppressed entries contain only the focus-loss neutral, never physical state.
+        next = std::min(next, drainPending(e, r.mask, nowMs));
+    }
+    r.entries.erase(std::remove_if(r.entries.begin(), r.entries.end(), [](const Entry& e) {
+        return e.retired && e.pending.empty();
+    }), r.entries.end());
+    return next;
 }
 
 void SteamControllerHost::linkTouch(SteamControllerLink& link, int generation, uint8_t touchpadIndex, uint8_t eventType,

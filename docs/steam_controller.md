@@ -65,6 +65,23 @@ through SDL's hidapi, over USB and over Bluetooth LE alike.
 
 ## Preferences (Settings, Gamepad Settings)
 
+Controller states are sent immediately when the streaming queue accepts them.
+If that queue temporarily refuses a state, the driver retains button edges and
+retries from its service thread without waiting for another physical report.
+The retry target is 1 ms, not an OS or network timing guarantee. Retention is
+limited to 32 states or 100 ms; after that the driver logs a current-state
+resynchronization and discards obsolete transitions. A prolonged stall can
+therefore still lose completed taps. Focus loss sends neutral instead of
+replaying queued actions, and reconnect cannot replay the previous controller's
+history. The HID reader also requests HIGH thread priority, with a logged
+fallback when the operating system denies it.
+
+For diagnosis, look for `input deferred`, `input retry recovered`, and
+`input history ... resync` in the session log. Compare the same workload and
+controller mapping with Steam Input ownership resolved before attributing a
+missed action to the network. These changes do not remove video presentation
+latency or change the game's input polling behavior.
+
 | Preference | Default | Setting key / CLI |
 |---|---|---|
 | Drive a USB or puck-connected Steam Controller (2026) directly | on | `steamcontrollerdriver`, `--steam-controller` / `--no-steam-controller` |
@@ -195,6 +212,37 @@ the split-pads default) or an Xbox pad; they ignore the extension bits. Host set
 (`LI_CCAP_STEAM_SETTINGS`) are not advertised for USB and puck links: the link keeps its own
 settings (lizard mode off, raw IMU, Steam watchdog disabled), as the Android client does.
 
+## Input admission and retry
+
+Changed controller states are submitted immediately from the HID reader. If common-c rejects
+a state because its input queue cannot accept it, the bridge retains it instead of relying on
+another changed report (the decoder normally deduplicates identical held states). Up to 32
+pending states per announced controller preserve button changes and trigger transitions
+from/to rest and full pull; analog travel within those ranges keeps only its newest value.
+The HID manager's service thread retries after 1 ms, independently of the UI and of new HID
+reports. It admits at most eight pending states per dispatch. These are scheduling targets,
+not delivery guarantees: OS scheduling, HID service work and network transport still apply.
+
+A backlog older than 100 ms, or exceeding 32 states, discards its historical edges and resyncs
+only the current state, with an explicit diagnostic. It does not synthesize a neutral/press
+cycle for a held button. While this degraded resync remains blocked, retries back off through
+2, 4, 8 and 16 ms (capped there), and new reports replace the current state. Successful
+recovery restores the 1 ms transient retry. This bounds stale history and sustained rejection
+work; it cannot make arbitrarily long outages lossless.
+
+Focus loss replaces pending physical input with the policy's neutral state, which is retried
+even while input is suppressed. Disconnect invalidates old edges immediately, and a failed
+final neutral can be retried even after the HID link is removed. A new announcement for the
+slot cancels the retired neutral so it cannot release the replacement controller's buttons.
+Session shutdown clears all retry state. The active gamepad mask is read for each admission.
+This retry covers ordinary controller states for already announced controllers; arrival,
+touchpad, gyro and other control messages retain their existing admission behavior.
+
+Diagnostics distinguish `input deferred`, `input retry recovered`, and `input history
+expired` / `input history overflowed`. The latter explicitly report that pending button
+edges were discarded for a current-state resync. A recovery log records admission to
+common-c's queue, not receipt by the game.
+
 ## Log lines to look for
 
 On every connection (first cable plug or puck slot waking up):
@@ -254,7 +302,7 @@ gamepad of its own during a stream.
 ## Tests
 
 `tests/steamcontroller/tst_steamcontroller` runs the production decoder, attribute parser and
-HID link against a fake transport with a virtual clock (279 checks): the canned reports of the
+HID link against a fake transport with a virtual clock: the canned reports of the
 Android regression harness, the real unit's 0x83/0xF2/0xAE replies, the connect sequence,
 keep-alive cadence, output queue rules (replace, coalesce, evict, strike, retire), rumble hold,
 hot-plug 0x79/0x46, stale-state disconnect, device loss, the stop sequence, attribute delivery
@@ -262,7 +310,12 @@ per arrival, feedback generations, and the Bluetooth LE transport: enumeration o
 interface -1/0, 0x45 input, STEAM_SETTINGS in the capabilities and transport BLE in the
 attributes, byte identity of the connect/keep-alive/attribute/stop frames with USB, the settings
 relay (reserved ids, exact frames, 0x8E, the 16-slot settings class under a haptic burst, the
-registry path) and the three haptic knobs' arithmetic and clamps. No hardware or SDL is needed:
+registry path) and the three haptic knobs' arithmetic and clamps. Input admission tests run the
+production decoder, bridge and manager with a rejecting send boundary: a complete tap before
+retry, consecutive edges, trigger boundaries, analog coalescing, focus neutral, disconnect
+without a remaining HID link, generation and session replacement, age/size resync, and retry
+backoff/reset. These prove recovery from queue admission failures, not timing on real hardware
+or behavior under actual packet loss. No hardware or SDL is needed:
 
 ```sh
 mkdir -p build/tests-steamcontroller && cd build/tests-steamcontroller

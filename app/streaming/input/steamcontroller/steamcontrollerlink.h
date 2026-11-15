@@ -79,6 +79,9 @@ public:
         virtual void linkMotion(SteamControllerLink& link, int generation, uint8_t motionType, float x, float y, float z) = 0;
         virtual void linkBattery(SteamControllerLink& link, int generation, uint8_t state, uint8_t percent) = 0;
         virtual void linkAttributes(SteamControllerLink& link, int generation, const SteamControllerAttributes& attributes) = 0;
+        // The service thread calls this even with no connected links. It may retry bounded
+        // input/neutral states without waiting for another HID report or an SDL event.
+        virtual uint64_t serviceInput(uint64_t) { return UINT64_MAX; }
     };
 
     enum Transport { TransportUsb, TransportPuck, TransportBle };

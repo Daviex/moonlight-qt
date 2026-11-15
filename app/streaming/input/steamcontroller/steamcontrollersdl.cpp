@@ -162,6 +162,16 @@ void SteamControllerRunner::serviceLoop()
 
 void SteamControllerRunner::readLoop(std::shared_ptr<SteamControllerLink> link)
 {
+    // HID collection should not fall behind the decoder under load. This
+    // thread blocks in hid_read_timeout when idle; never request TIME_CRITICAL.
+    if (SDL_SetThreadPriority(SDL_THREAD_PRIORITY_HIGH) < 0) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Steam Controller: reader HIGH priority unavailable: %s; keeping current scheduling",
+                    SDL_GetError());
+    }
+    else {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Steam Controller: reader HIGH priority accepted");
+    }
     uint8_t report[SteamController::FEATURE_REPORT_SIZE + 1];
     int consecutiveErrors = 0;
     while (!link->closing() && !link->stopped()) {

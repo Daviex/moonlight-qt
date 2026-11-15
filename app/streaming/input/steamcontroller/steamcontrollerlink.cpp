@@ -886,6 +886,7 @@ uint64_t SteamControllerManager::service(uint64_t nowMs)
         next = m_RescanDueMs;
         snapshot = m_Links;
     }
+    next = std::min(next, m_Listener->serviceInput(nowMs));
     for (const auto& link : snapshot) {
         next = std::min(next, link->service(nowMs));
     }

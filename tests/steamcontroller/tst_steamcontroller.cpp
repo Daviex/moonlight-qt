@@ -26,10 +26,17 @@ static std::vector<HostTouch> g_HostTouches;
 struct HostMotion { uint8_t number, type; float x, y, z; };
 static std::vector<HostMotion> g_HostMotionLog;
 static int g_HostMotions;
+static int g_RejectStateSends;    // -1 rejects all; positive rejects that many queue admissions
+static int g_StateSendAttempts;
 extern "C" {
 int LiSendControllerArrivalEvent(uint8_t, uint16_t, uint8_t, uint32_t, uint16_t) { return 0; }
 int LiSendMultiControllerEvent(uint8_t number, uint16_t mask, int flags, unsigned char lt, unsigned char rt, short lsX, short lsY, short rsX, short rsY)
 {
+    g_StateSendAttempts++;
+    if (g_RejectStateSends != 0) {
+        if (g_RejectStateSends > 0) g_RejectStateSends--;
+        return 1;
+    }
     g_HostStates.push_back({number, mask, flags, lt, rt, lsX, lsY, rsX, rsY});
     return 0;
 }
@@ -1517,6 +1524,241 @@ static void testSamePathCollections()
     manager4.stop(0);
 }
 
+// The complete production decoder -> link -> registry -> common-c boundary. Rejections model
+// queue admission failure, not packet loss; the manager's virtual-clock service retries even
+// without a changed report or an SDL event. Existing tests retain the always-success boundary.
+struct InputRetryFixture {
+    FakeTransport io;
+    SteamControllerHost host;
+    SteamControllerManager manager;
+    std::shared_ptr<SteamControllerLink> link;
+    int wakes = 0;
+
+    InputRetryFixture() : host([] { return g_Now; }), manager(io, SteamControllerConfig{}, 500, &host) {
+        g_Now += 1000;
+        g_RejectStateSends = 0;
+        SteamControllerHost::setActiveGamepadMask(1);
+        io.add("retry/puck", PRODUCT_PUCK, 2, 0xFF00);
+        run(manager);
+        link = slot(manager, 2);
+        report(0);
+        host.announce(0, link, link->generation());
+        report(0);
+        link->wake = [this] { wakes++; };
+        g_HostStates.clear();
+        g_StateSendAttempts = 0;
+        g_Log.clear();
+    }
+    ~InputRetryFixture() {
+        g_RejectStateSends = 0;
+        host.shutdown();
+        manager.stop(g_Now);
+    }
+    void report(uint32_t buttons, short axis = 0, int trigger = 0) {
+        std::vector<uint8_t> r(46, 0);
+        r[0] = 0x45; r[1] = 3;
+        for (int i = 0; i < 4; i++) r[2 + i] = (uint8_t)(buttons >> (8 * i));
+        put16(r, 6, trigger);
+        put16(r, 10, axis);
+        input(*link, r);
+    }
+};
+
+static void testInputAdmissionRetry()
+{
+    const uint32_t press = 1u << SteamControllerCore::BTN_A;
+    {
+        InputRetryFixture f;
+        f.report(press);
+        f.report(press);
+        f.report(0);
+        check(g_HostStates.size() == 2 && (g_HostStates[0].flags & A_FLAG) && g_HostStates[1].flags == 0
+              && g_StateSendAttempts == 2 && f.wakes == 0,
+              "healthy input sends press/release immediately without retry wake or duplicate held state");
+    }
+    {
+        InputRetryFixture f;
+        g_RejectStateSends = 1;
+        f.report(press);
+        f.report(press);                 // decoder deduplicates, but the rejected press is owned by the bridge
+        f.report(0);                     // the whole tap is over before the retry deadline
+        run(f.manager);
+        check(g_HostStates.empty() && g_StateSendAttempts == 1 && f.wakes > 0,
+              "rejected tap retains both edges without spinning before the 1 ms retry deadline");
+        g_Now++;
+        run(f.manager);                  // no more HID input and no SDL event
+        check(g_HostStates.size() == 2 && (g_HostStates[0].flags & A_FLAG) && g_HostStates[1].flags == 0,
+              "manager retry delivers a rejected press then release even without another HID report");
+        g_Now++;
+        run(f.manager);
+        check(g_HostStates.size() == 2, "successful retry never repeats an accepted tap");
+    }
+    {
+        InputRetryFixture f;
+        g_RejectStateSends = -1;
+        f.report(press, 1000);
+        for (short x = 2000; x < 30000; x += 1000) f.report(press, x);
+        f.report(0, 30000);
+        f.report(press, 31000);
+        f.report(0, 32000);
+        g_RejectStateSends = 0;
+        g_Now++;
+        run(f.manager);
+        check(g_HostStates.size() == 4 && g_HostStates[0].lsX > 28000 && g_HostStates[1].flags == 0
+              && (g_HostStates[2].flags & A_FLAG) && g_HostStates[3].flags == 0,
+              "pending analog travel coalesces while consecutive press/release edges retain their order");
+    }
+    {
+        InputRetryFixture f;
+        g_RejectStateSends = -1;
+        f.report(0, 0, 16000);
+        f.report(0, 0, 32767);
+        f.report(0, 0, 16000);
+        f.report(0, 0, 0);
+        g_RejectStateSends = 0;
+        g_Now++;
+        run(f.manager);
+        check(g_HostStates.size() == 4 && g_HostStates[0].lt > 0 && g_HostStates[0].lt < 0xF0
+              && g_HostStates[1].lt >= 0xF0 && g_HostStates[2].lt < 0xF0 && g_HostStates[3].lt == 0,
+              "retry preserves trigger rest and full-pull transitions");
+    }
+    {
+        InputRetryFixture f;
+        g_RejectStateSends = -1;
+        f.report(press);
+        SteamControllerHost::notifyWindowFocus(false, false);
+        f.report(0);
+        g_RejectStateSends = 0;
+        g_Now++;
+        run(f.manager);
+        check(g_HostStates.size() == 1 && g_HostStates[0].flags == 0,
+              "focus loss cancels a rejected press and retries only its failed neutral while suppressed");
+        SteamControllerHost::notifyWindowFocus(true, false);
+        check(g_HostStates.size() == 2 && g_HostStates[1].flags == 0,
+              "focus regain resumes current state without replaying pre-focus button edges");
+    }
+    {
+        InputRetryFixture f;
+        g_RejectStateSends = -1;
+        f.report(press);
+        input(*f.link, std::vector<uint8_t>{0x79, 1});
+        g_RejectStateSends = 0;
+        g_Now++;
+        run(f.manager);
+        check(g_HostStates.size() == 1 && g_HostStates[0].flags == 0,
+              "physical disconnect immediately invalidates pending edges and retries only neutral before SDL retirement");
+    }
+    {
+        InputRetryFixture f;
+        g_RejectStateSends = -1;
+        f.report(press);
+        f.host.retire(f.link, 0, 0);
+        // The retry path must also run when there is no active HID link.
+        f.io.infos.clear();
+        f.manager.requestRescan();
+        g_RejectStateSends = 0;
+        g_Now++;
+        run(f.manager);
+        check(f.manager.links().empty() && g_HostStates.size() == 1 && g_HostStates[0].flags == 0 && g_HostStates[0].mask == 0,
+              "retired controller's failed final release is retried even with no remaining HID links");
+    }
+    {
+        InputRetryFixture f;
+        g_RejectStateSends = -1;
+        f.report(press);
+        input(*f.link, std::vector<uint8_t>{0x79, 1});
+        f.report(0);                     // reconnect, old announcement already invalid
+        f.host.announce(0, f.link, f.link->generation());
+        g_RejectStateSends = 0;
+        f.report(press);
+        g_Now++;
+        run(f.manager);
+        check(g_HostStates.size() == 1 && (g_HostStates[0].flags & A_FLAG),
+              "replacement generation cancels the old failed neutral and cannot replay old input");
+    }
+    {
+        InputRetryFixture f;
+        g_RejectStateSends = -1;
+        f.report(press);
+        f.report(0);
+        g_Now += 100;
+        g_RejectStateSends = 0;
+        run(f.manager);
+        check(g_HostStates.size() == 1 && g_HostStates[0].flags == 0 && logCount("input history expired") == 1,
+              "expired tap history is diagnosed and resynced to released state, never replayed late");
+    }
+    {
+        InputRetryFixture f;
+        f.report(press);                 // the receiver already knows this button is held
+        g_HostStates.clear();
+        g_RejectStateSends = -1;
+        f.report(press, 1000);
+        g_Now += 100;
+        g_RejectStateSends = 0;
+        run(f.manager);
+        check(g_HostStates.size() == 1 && (g_HostStates[0].flags & A_FLAG),
+              "stale-state resync never synthesizes a neutral/press cycle for a held button");
+    }
+    {
+        InputRetryFixture f;
+        g_RejectStateSends = -1;
+        for (int i = 0; i < 1000; i++) f.report((i % 2) == 0 ? press : 0);
+        g_RejectStateSends = 0;
+        g_Now++;
+        run(f.manager);
+        check(g_HostStates.size() == 1 && g_HostStates[0].flags == 0 && logCount("input history overflowed") == 1,
+              "overflow is bounded and diagnosed once; degraded recovery sends only the latest physical state");
+        f.report(press);
+        f.report(0);
+        check(g_HostStates.size() == 3 && (g_HostStates[1].flags & A_FLAG) && g_HostStates[2].flags == 0,
+              "ordered immediate edge delivery resumes after overflow recovery");
+    }
+    {
+        InputRetryFixture f;
+        g_RejectStateSends = -1;
+        f.report(press);
+        f.host.shutdown();
+        g_RejectStateSends = 0;
+        g_Now++;
+        run(f.manager);
+        check(g_HostStates.empty(), "session shutdown invalidates all retry state before workers stop");
+        SteamControllerHost next([] { return g_Now; });
+        next.serviceInput(g_Now);
+        check(g_HostStates.empty(), "a new session cannot inherit pending input or releases");
+    }
+    {
+        InputRetryFixture f;
+        g_RejectStateSends = -1;
+        f.report(press);
+        f.report(0);
+        g_Now += 100;
+        bool schedule = true;
+        for (uint64_t delay : {2, 4, 8, 16, 16}) {
+            uint64_t next = f.host.serviceInput(g_Now);
+            int attempts = g_StateSendAttempts;
+            schedule &= next == g_Now + delay;
+            f.host.serviceInput(next - 1);
+            schedule &= g_StateSendAttempts == attempts;
+            g_Now = next;
+        }
+        check(schedule, "prolonged resync rejection backs off 2/4/8/16 ms without attempts before each deadline");
+        for (short x = 1000; x < 10000; x += 1000) f.report(press, x);
+        g_RejectStateSends = 0;
+        g_Now += 16;
+        run(f.manager);
+        check(g_HostStates.size() == 1 && (g_HostStates[0].flags & A_FLAG) && g_HostStates[0].lsX > 8000,
+              "degraded resync retains only fresh latest state throughout its backoff");
+        g_RejectStateSends = 1;
+        f.report(0);
+        check(f.host.serviceInput(g_Now) == g_Now + 1,
+              "successful recovery resets the next transient rejection to 1 ms retry");
+        g_Now++;
+        run(f.manager);
+        check(g_HostStates.size() == 2 && g_HostStates[1].flags == 0,
+              "release after recovery is retried on the short deadline");
+    }
+}
+
 int main()
 {
     setvbuf(stdout, nullptr, _IONBF, 0);
@@ -1536,6 +1778,7 @@ int main()
         testBleHapticKnobs();
         testReconnectOutputSchedule();
         testSamePathCollections();
+        testInputAdmissionRetry();
     }
     catch (const std::exception& ex) {
         printf("FAIL exception: %s\n", ex.what());
