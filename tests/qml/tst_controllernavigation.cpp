@@ -166,6 +166,7 @@ private slots:
         QTRY_COMPARE(QGuiApplication::focusWindow(), &window);
     }
     void init() {
+        ConsoleHostModel::hostCount = 2;
         window.show(); window.requestActivate();
         QTRY_COMPARE(QGuiApplication::focusWindow(), &window);
         navigation->notifyWindowFocus(false);
@@ -863,6 +864,8 @@ private slots:
         engine.load(QUrl("qrc:/gui/main.qml"));
         QVERIFY2(!engine.rootObjects().isEmpty(),"Production shell failed to instantiate");
         auto* root=qobject_cast<QQuickWindow*>(engine.rootObjects().first()); QVERIFY(root);
+        root->requestActivate();
+        QTRY_COMPARE(QGuiApplication::focusWindow(), root);
         QTest::qWait(100);
         auto* addTile=root->findChild<QQuickItem*>("addPcTile"); QVERIFY(addTile);
         addTile->forceActiveFocus();
@@ -1254,9 +1257,9 @@ private slots:
         engine.load(QUrl("qrc:/gui/main.qml"));
         QVERIFY(!engine.rootObjects().isEmpty());
         auto* root=qobject_cast<QQuickWindow*>(engine.rootObjects().first()); QVERIFY(root);
+        root->requestActivate(); QTRY_COMPARE(QGuiApplication::focusWindow(), root);
         auto* add=root->findChild<QQuickItem*>("addPcTile"); QVERIFY(add);
         QTRY_VERIFY(add->hasActiveFocus());
-        root->requestActivate(); QTRY_COMPARE(QGuiApplication::focusWindow(), root);
         navigation->notifyWindowFocus(true);
         button(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_DPAD_LEFT);
         button(SDL_CONTROLLERBUTTONUP, SDL_CONTROLLER_BUTTON_DPAD_LEFT);
