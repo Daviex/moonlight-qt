@@ -11,6 +11,7 @@
 #include <QQuickItem>
 #include <QDir>
 #include <QKeyEvent>
+#include <QLocale>
 #include <QTemporaryDir>
 #include <QWindow>
 #include <QtTest>
@@ -1131,7 +1132,10 @@ private slots:
         QTest::keyClick(root,Qt::Key_Backspace); QTest::keyClick(root,Qt::Key_Return);
         QVERIFY(edit->property("visible").toBool());
         QCOMPARE(prefs->property("vrrBufferPerMille").toInt(),bufferBefore);
-        QTest::keyClick(root,Qt::Key_1); QTest::keyClick(root,Qt::Key_Period);
+        QTest::keyClick(root,Qt::Key_1);
+        const QString separator(number->property("locale").value<QLocale>().decimalPoint());
+        QKeyEvent decimalKey(QEvent::KeyPress, Qt::Key_unknown, Qt::NoModifier, separator);
+        QGuiApplication::sendEvent(root, &decimalKey);
         QTest::keyClick(root,Qt::Key_5); QTest::keyClick(root,Qt::Key_0);
         QCOMPARE(prefs->property("vrrBufferPerMille").toInt(),bufferBefore);
         QTest::keyClick(root,Qt::Key_Return);
