@@ -866,7 +866,8 @@ private slots:
         auto* root=qobject_cast<QQuickWindow*>(engine.rootObjects().first()); QVERIFY(root);
         root->requestActivate();
         QTRY_COMPARE(QGuiApplication::focusWindow(), root);
-        QTest::qWait(100);
+        QQmlExpression pageReady(qmlContext(root), root, "!stackView.busy");
+        QTRY_VERIFY(pageReady.evaluate().toBool());
         auto* addTile=root->findChild<QQuickItem*>("addPcTile"); QVERIFY(addTile);
         addTile->forceActiveFocus();
         QTest::keyClick(root,Qt::Key_Left);
@@ -877,22 +878,27 @@ private slots:
         QTRY_VERIFY(root->findChild<QQuickItem*>("gameShelf"));
         auto* shelf=root->findChild<QQuickItem*>("gameShelf");
         QTRY_VERIFY(shelf->isVisible());
+        QTRY_VERIFY(pageReady.evaluate().toBool());
         QKeyEvent settingsPress(QEvent::KeyPress,Qt::Key_Hangup,Qt::NoModifier);
         QCoreApplication::sendEvent(root,&settingsPress);
         QKeyEvent settingsRelease(QEvent::KeyRelease,Qt::Key_Hangup,Qt::NoModifier);
         QCoreApplication::sendEvent(root,&settingsRelease);
-        auto* categories=root->findChild<QQuickItem*>("settingsCategories");
+        QPointer<QQuickItem> categories=root->findChild<QQuickItem*>("settingsCategories");
         QTRY_VERIFY(categories && categories->isVisible());
-        QTest::qWait(60);
+        // The shell deliberately ignores Back during a StackView transition.
+        // Visibility alone can become true before the page is ready for input.
+        QTRY_VERIFY(pageReady.evaluate().toBool());
         if (!capture.isEmpty()) QVERIFY(root->grabWindow().save(capture+"/settings-main.png"));
         QTest::keyClick(root,Qt::Key_Escape);
+        QTRY_VERIFY(pageReady.evaluate().toBool());
+        QTRY_VERIFY(!categories || !categories->isVisible());
         QTRY_VERIFY(shelf->isVisible());
+        QTRY_VERIFY(shelf->hasActiveFocus());
         QTest::keyClick(root,Qt::Key_Menu);
         auto* play=root->findChild<QQuickItem*>("gamePlayButton");
         QTRY_VERIFY(play && play->hasActiveFocus());
         QTest::keyClick(root,Qt::Key_Menu);
         QTRY_VERIFY(shelf->hasActiveFocus());
-        QVERIFY(!categories->isVisible());
         QTest::keyClick(root,Qt::Key_Menu);
         QTRY_VERIFY(play->hasActiveFocus());
         for (int i=0;i<10;++i) QTest::keyClick(root,Qt::Key_Down);
