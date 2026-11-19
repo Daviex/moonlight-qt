@@ -307,7 +307,10 @@ void Pacer::handleVsync(int timeUntilNextVsyncMillis)
 
     if (m_PacingQueue.isEmpty()) {
         // Wait for a frame to arrive or our V-sync timeout to expire
-        if (!m_PacingQueueNotEmpty.wait(&m_FrameQueueLock, SDL_max(timeUntilNextVsyncMillis, TIMER_SLACK_MS) - TIMER_SLACK_MS)) {
+        unsigned long waitTimeMs = timeUntilNextVsyncMillis > 0
+            ? SDL_max(timeUntilNextVsyncMillis - TIMER_SLACK_MS, 1)
+            : 0;
+        if (!m_PacingQueueNotEmpty.wait(&m_FrameQueueLock, waitTimeMs)) {
             // Wait timed out - unlock and bail
             m_FrameQueueLock.unlock();
             return;
@@ -581,7 +584,12 @@ void Pacer::dropFrameForEnqueue(QQueue<AVFrame*>& queue)
     SDL_assert(queue.size() <= MAX_QUEUED_FRAMES);
     if (queue.size() == MAX_QUEUED_FRAMES) {
         AVFrame* frame = queue.dequeue();
+
+        // Drop the lock while we call av_frame_free()
+        m_FrameQueueLock.unlock();
+        m_VideoStats->pacerDroppedFrames++;
         av_frame_free(&frame);
+        m_FrameQueueLock.lock();
     }
 }
 

@@ -343,6 +343,7 @@ PlVkRenderer::~PlVkRenderer()
         m_MetalTextureFactory.reset();
 #endif
         m_OverlayCompletion.reset();
+        av_buffer_unref(&m_HwDeviceCtx);
         pl_vulkan_destroy(&m_Vulkan);
 
         // This surface was created by SDL, so there's no libplacebo API to destroy it
@@ -350,7 +351,6 @@ PlVkRenderer::~PlVkRenderer()
             fn_vkDestroySurfaceKHR(m_PlVkInstance->instance, m_VkSurface, nullptr);
         }
 
-        av_buffer_unref(&m_HwDeviceCtx);
         pl_vk_inst_destroy(&m_PlVkInstance);
     }
 
@@ -858,7 +858,9 @@ bool PlVkRenderer::initialize(PDECODER_PARAMETERS params)
 #endif
 
         // Populate the device queues for decoding this video format
-        populateQueues(params->videoFormat);
+        if (!populateQueues(params->videoFormat)) {
+            return false;
+        }
 
         int err = av_hwdevice_ctx_init(m_HwDeviceCtx);
         if (err < 0) {
@@ -1213,13 +1215,14 @@ bool PlVkRenderer::populateQueues(int videoFormat)
 #if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(59, 34, 100)
     Q_UNUSED(videoFormat);
 
-    for (uint32_t i = 0; i < queueFamilyCount; i++) {
+    uint32_t maxQf = SDL_min(queueFamilyCount, (uint32_t)SDL_arraysize(vkDeviceContext->qf));
+    for (uint32_t i = 0; i < maxQf; i++) {
         vkDeviceContext->qf[i].idx = i;
         vkDeviceContext->qf[i].num = queueFamilies[i].queueFamilyProperties.queueCount;
         vkDeviceContext->qf[i].flags = (VkQueueFlagBits)queueFamilies[i].queueFamilyProperties.queueFlags;
         vkDeviceContext->qf[i].video_caps = (VkVideoCodecOperationFlagBitsKHR)queueFamilyVideoProps[i].videoCodecOperations;
     }
-    vkDeviceContext->nb_qf = queueFamilyCount;
+    vkDeviceContext->nb_qf = maxQf;
 #else
     vkDeviceContext->queue_family_index = m_Vulkan->queue_graphics.index;
     vkDeviceContext->nb_graphics_queues = m_Vulkan->queue_graphics.count;
@@ -2704,7 +2707,18 @@ void PlVkRenderer::renderFrame(AVFrame *frame)
     if (m_GpuTrace && m_VrrPreparingFrame) m_GpuTrace->record({"surface_import",
         m_GpuTracePts, m_GpuTraceOutputUs, mapStartUs, LiGetMicroseconds(), 0, mapped});
     if (!mapped) {
-        // This function logs internally
+        // A deferred VRR render has no swapchain frame to submit. When one is
+        // pending, close it even if mapping failed to keep swapchain state valid.
+        if (m_HasPendingSwapchainFrame) {
+            m_HasPendingSwapchainFrame = false;
+            if (!pl_swapchain_submit_frame(m_Swapchain)) {
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                             "pl_swapchain_submit_frame() failed");
+                SDL_Event event;
+                event.type = SDL_RENDER_DEVICE_RESET;
+                SDL_PushEvent(&event);
+            }
+        }
         return;
     }
 

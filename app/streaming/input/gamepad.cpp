@@ -994,6 +994,7 @@ void SdlInputHandler::rumble(unsigned short controllerNumber, unsigned short low
     if (m_GamepadState[controllerNumber].hapticMethod == GAMEPAD_HAPTIC_METHOD_LEFTRIGHT) {
         if (m_GamepadState[controllerNumber].hapticEffectId >= 0) {
             SDL_HapticDestroyEffect(haptic, m_GamepadState[controllerNumber].hapticEffectId);
+            m_GamepadState[controllerNumber].hapticEffectId = -1;
         }
     } else if (m_GamepadState[controllerNumber].hapticMethod == GAMEPAD_HAPTIC_METHOD_SIMPLERUMBLE) {
         SDL_HapticRumbleStop(haptic);
@@ -1232,7 +1233,7 @@ int SdlInputHandler::getAttachedGamepadMask()
             SDL_JoystickGetGUIDString(SDL_JoystickGetDeviceGUID(i),
                                       guidStr, sizeof(guidStr));
 
-            if (!m_IgnoreDeviceGuids.contains(guidStr, Qt::CaseInsensitive))
+            if (!m_IgnoreDeviceGuids.contains(guidStr, Qt::CaseInsensitive) && count < MAX_GAMEPADS)
             {
                 mask |= (1 << count++);
             }
