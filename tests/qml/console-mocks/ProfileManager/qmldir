@@ -1,0 +1,2 @@
+module ProfileManager
+singleton ProfileManager 1.0 ProfileManager.qml

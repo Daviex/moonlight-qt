@@ -31,9 +31,9 @@ See [historical streaming notes](docs/streaming-history.md)
 and [master VRR history](docs/master-vrr-history-20261029.md) for past revisions;
 they are not evidence of current behavior.
 
-## Upstream renderer lifecycle integration (2026-11-14)
+## Upstream renderer lifecycle integration (2026-11-19)
 
-This fork combines Moonlight upstream `29f121a7` with Nonary `f586143c`
+This fork combines Moonlight upstream `28629dc1` with Nonary `89e93e10`
 and the isolated client-profile/per-game settings layer. The decoder validates
 its FFmpeg context before starting Pacer; PyroWave retains its independent
 codec initialization. Pacer prepares the renderer once before either pacing
@@ -65,10 +65,25 @@ its Granite integration acquires queues with `vkGetDeviceQueue`, which cannot
 retrieve an internally synchronized queue. The AppImage uses the corresponding
 upstream libplacebo release instead of the former synchronization patch.
 
-The shared streaming core includes upstream `94c65fd3` and Nonary `064a4af9`;
+The shared streaming core includes upstream `94c65fd3` and Nonary `6f05ee89`;
 its wrapper and affected protocol tests enable C11 atomics, including MSVC's
 experimental atomics switch. The prior PyroWave/reference-frame-invalidation
 guard and its regression coverage are retained.
+
+The November 19 integration also preserves the Steam Controller admission-retry
+path described in section 12. Official fixes bound the initial gamepad mask,
+release FFmpeg's Vulkan context before its underlying device, cap queue-family
+exports to FFmpeg's array, and close a pending swapchain frame after a mapping
+failure. Deferred VRR rendering only submits such a frame when one actually
+exists. Nonary's per-launch PyroWave offer and conventional HDR codec fallback
+are retained; automatic fallback bitrate adjustment still respects manually
+selected per-game and profile bitrates.
+
+The classic profile-aware UI remains the default. `MOONLIGHT_CONSOLE_UI=1`
+selects Nonary's console UI before the QML engine starts; the inactive resource
+collection is unregistered so both layouts use the same `qrc:/gui` URLs without
+mixed component definitions. Recent-play history is recorded after a successful
+connection and only while the session's originating profile remains active.
 
 ## 1. Fundamental model
 
@@ -253,6 +268,9 @@ colorspace/range, encryption, codec capabilities, and other connection choices.
 `x-nv-video[0].clientRefreshRateX100`. RTSP negotiation determines the actual
 codec/profile using host SDP and server codec flags, with AV1/HEVC/H.264 paths.
 Renderer setup receives that negotiated format before video streaming starts.
+For Amaterasu, the launch-scoped DESCRIBE must offer a compatible PyroWave
+bitstream even when the host advertises PyroWave in `/serverinfo`. A missing
+or incompatible offer leaves the standard codec negotiation available.
 
 Packet size is aligned down to a 16-byte multiple for FEC. Connection setup
 also applies route-dependent packet-size limits. These are transport decisions,

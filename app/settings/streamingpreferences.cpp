@@ -321,6 +321,13 @@ void StreamingPreferences::reload()
         for (const QString& key : storedSettings.childKeys()) {
             settings.insert(key, storedSettings.value(key));
         }
+        // Console preferences are nested; do not load host records or per-game
+        // settings into this profile-wide streaming snapshot.
+        for (const QString& key : {QStringLiteral("ui/lastHostUuid"),
+                                   QStringLiteral("ui/reducedMotion"),
+                                   QStringLiteral("ui/controllerFullscreen")}) {
+            if (storedSettings.contains(key)) settings.insert(key, storedSettings.value(key));
+        }
     }
 
     int defaultVer = settings.value(SER_DEFAULTVER, 0).toInt();
@@ -464,6 +471,9 @@ void StreamingPreferences::reload()
                                                static_cast<int>(settings.value(SER_STARTWINDOWED, true).toBool() ? UIDisplayMode::UI_WINDOWED
                                                                                                                  : UIDisplayMode::UI_MAXIMIZED)).toInt());
     setUiScale(settings.value(SER_UISCALE, 100).toInt());
+    uiLastHostUuid = settings.value("ui/lastHostUuid").toString();
+    uiReducedMotion = settings.value("ui/reducedMotion", false).toBool();
+    uiControllerFullscreen = settings.value("ui/controllerFullscreen", true).toBool();
     language = static_cast<Language>(settings.value(SER_LANGUAGE,
                                                     static_cast<int>(Language::LANG_AUTO)).toInt());
 
@@ -482,6 +492,9 @@ void StreamingPreferences::reload()
             windowMode = WindowMode::WM_FULLSCREEN_DESKTOP;
         }
     }
+
+    emit uiPreferencesChanged();
+    emit uiControllerFullscreenChanged();
 
     // Fixup VCC value to the new settings format with codec and HDR separate
     if (videoCodecConfig == VCC_FORCE_HEVC_HDR_DEPRECATED) {
@@ -688,6 +701,9 @@ void StreamingPreferences::save()
     settings.setValue(SER_WINDOWMODE, static_cast<int>(windowMode));
     settings.setValue(SER_UIDISPLAYMODE, static_cast<int>(uiDisplayMode));
     settings.setValue(SER_UISCALE, m_UiScale);
+    settings.setValue("ui/lastHostUuid", uiLastHostUuid);
+    settings.setValue("ui/reducedMotion", uiReducedMotion);
+    settings.setValue("ui/controllerFullscreen", uiControllerFullscreen);
     settings.setValue(SER_LANGUAGE, static_cast<int>(language));
     settings.setValue(SER_DEFAULTVER, CURRENT_DEFAULT_VER);
     settings.setValue(SER_SWAPMOUSEBUTTONS, swapMouseButtons);
@@ -891,4 +907,55 @@ void StreamingPreferences::setVrrToleranceUs(int value)
     if (value == vrrToleranceUs()) return;
     m_VrrTimingOptions.toleranceUs = value;
     emit vrrTimingChanged();
+}
+
+void StreamingPreferences::rememberUiSelection(const QString& hostUuid, int appId)
+{
+    if (m_Transient || !ProfileManager::hasActiveProfile() || hostUuid.isEmpty()) return;
+    QSettings settings;
+    ProfileManager::beginProfileSettings(settings);
+    uiLastHostUuid = hostUuid;
+    settings.setValue("ui/lastHostUuid", hostUuid);
+    if (appId > 0) settings.setValue("ui/selectedApps/" + hostUuid, appId);
+    emit uiPreferencesChanged();
+}
+
+int StreamingPreferences::selectedUiApp(const QString& hostUuid) const
+{
+    if (m_Transient || !ProfileManager::hasActiveProfile() || hostUuid.isEmpty()) return 0;
+    QSettings settings;
+    ProfileManager::beginProfileSettings(settings);
+    return settings.value("ui/selectedApps/" + hostUuid, 0).toInt();
+}
+
+QVariantList StreamingPreferences::recentUiApps(const QString& hostUuid) const
+{
+    if (m_Transient || !ProfileManager::hasActiveProfile() || hostUuid.isEmpty()) return {};
+    // INI settings can deserialize integer list entries as strings. Return a
+    // canonical list so history identity and deduplication survive a restart.
+    QVariantList history;
+    QSettings settings;
+    ProfileManager::beginProfileSettings(settings);
+    const auto stored = settings.value("ui/recentApps/" + hostUuid).toList();
+    for (const auto& value : stored) {
+        bool ok = false;
+        const int id = value.toInt(&ok);
+        if (ok && id > 0 && !history.contains(id)) history.append(id);
+        if (history.size() == 20) break;
+    }
+    return history;
+}
+
+void StreamingPreferences::recordUiPlay(const QString& hostUuid, int appId)
+{
+    if (m_Transient || !ProfileManager::hasActiveProfile() || hostUuid.isEmpty() || appId <= 0) return;
+    auto history = recentUiApps(hostUuid);
+    history.removeAll(appId);
+    history.prepend(appId);
+    // Keep successful-session order even if the system clock moves backwards.
+    while (history.size() > 20) history.removeLast();
+    QSettings settings;
+    ProfileManager::beginProfileSettings(settings);
+    settings.setValue("ui/recentApps/" + hostUuid, history);
+    emit recentUiAppsChanged(hostUuid);
 }

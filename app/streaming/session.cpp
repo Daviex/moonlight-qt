@@ -1030,9 +1030,10 @@ bool Session::initialize(QQuickWindow* qtWindow)
         break;
     case StreamingPreferences::VCC_FORCE_PYROWAVE:
         // PyroWave is only ever used on request, since it needs a wired link with
-        // hundreds of Mbps to spare. H.264 remains the fallback for other hosts.
-        // The 4:4:4 and 10-bit profiles are masked below like the other codecs'.
-        m_SupportedVideoFormats.removeByMask(~VIDEO_FORMAT_MASK_H264);
+        // hundreds of Mbps to spare. Retain a conventional HDR path when
+        // available, plus H.264 for SDR. Apply the user's HDR and chroma below.
+        m_SupportedVideoFormats.removeByMask(~(VIDEO_FORMAT_MASK_H264 |
+            ((VIDEO_FORMAT_MASK_H265 | VIDEO_FORMAT_MASK_AV1) & VIDEO_FORMAT_MASK_10BIT)));
         m_SupportedVideoFormats.prepend(VIDEO_FORMAT_PYROWAVE);
         m_SupportedVideoFormats.prepend(VIDEO_FORMAT_PYROWAVE_444);
         m_SupportedVideoFormats.prepend(VIDEO_FORMAT_PYROWAVE_HDR10);
@@ -1179,7 +1180,7 @@ bool Session::validateLaunch(SDL_Window* testWindow)
 
     if (m_SupportedVideoFormats & VIDEO_FORMAT_MASK_PYROWAVE) {
         if (!(m_Computer->serverCodecModeSupport & SCM_PYROWAVE)) {
-            emitLaunchWarning(tr("Your host PC doesn't support PyroWave. Using H.264 instead."));
+            emitLaunchWarning(tr("Your host PC doesn't support PyroWave. Using a standard video codec instead."));
             m_SupportedVideoFormats.removeByMask(VIDEO_FORMAT_MASK_PYROWAVE);
         }
         else if (getDecoderAvailability(testWindow,
@@ -1188,7 +1189,7 @@ bool Session::validateLaunch(SDL_Window* testWindow)
                                         m_StreamConfig.width,
                                         m_StreamConfig.height,
                                         m_StreamConfig.fps) == DecoderAvailability::None) {
-            emitLaunchWarning(tr("This PC's GPU driver can't decode PyroWave. Using H.264 instead."));
+            emitLaunchWarning(tr("This PC's GPU driver can't decode PyroWave. Using a standard video codec instead."));
             m_SupportedVideoFormats.removeByMask(VIDEO_FORMAT_MASK_PYROWAVE);
         }
         else {
@@ -1956,8 +1957,8 @@ bool Session::startConnectionAsync()
                                                                          false);
     }
 
-    // Likewise, an automatic PyroWave default bitrate is far too high for the H.264
-    // fallback used when the host or this PC can't do PyroWave.
+    // Use the conventional automatic bitrate when capability checks have
+    // already ruled out PyroWave, preserving manually selected bitrates.
     if (m_Preferences->autoAdjustBitrate &&
         m_Preferences->videoCodecConfig == StreamingPreferences::VCC_FORCE_PYROWAVE &&
         !(m_StreamConfig.supportedVideoFormats & VIDEO_FORMAT_MASK_PYROWAVE) &&

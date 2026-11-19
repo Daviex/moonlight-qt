@@ -11,12 +11,268 @@ import SdlGamepadKeyNavigation 1.0
 import SystemProperties 1.0
 import PyroWaveCalibrator 1.0
 import NetworkBuffers 1.0
+import "ConsoleStyle.js" as Style
+import QtQuick.Controls.Material 2.2
 
-Flickable {
+FocusScope {
+    id: settingsShell
+    objectName: qsTr("Settings")
+    property var preferences: StreamingPreferences
+    property bool gameMode: false
+    property bool manageLifecycle: true
+    property int category: 0
+    readonly property real uiScale: Style.windowScale(Window.window)
+    readonly property bool categoryMenuFocused: categoryList.activeFocus
+    readonly property string primaryVerb: categoryMenuFocused ? qsTr("Open") : activeRow && activeRow.disabledSettingProxy === true ? qsTr("Help") : activeRow && activeRow.settingsAction === true ? qsTr("Select") : qsTr("Change")
+    readonly property bool optionsAvailable: !categoryMenuFocused && !!activeRow && !!activeRow.settingsHelp
+    property var activeRow: null
+    property var rememberedRows: ({})
+    property var categoryRows: []
+    Material.theme: Material.Dark
+    Material.accent: Style.accent
+    Material.background: Style.surface
+    Material.foreground: Style.text
+    signal languageChanged()
+    focus: true
+    function focusContent() {
+        var items = settingsFocusItems()
+        var remembered = rememberedRows[category]
+        if (items.length) focusRow(items.indexOf(remembered) >= 0 ? remembered : items[0])
+    }
+    function prepareRows(item) {
+        // Configure every row, including hidden and disabled rows, before
+        // filtering navigation. Late-appearing settings must have the same UI.
+        if (item.disabledSettingProxy === true) return
+        if (item.settingsEntry === true) {
+            if (item.settingsNavigation !== settingsShell) {
+                item.settingsNavigation = settingsShell
+                item.disabledSettingsProxy = unavailableRow.createObject(settingsPage.contentItem, { target: item })
+                if (!item.editor) item.width = Qt.binding(function() { return item.parent.width })
+            }
+            return
+        }
+        for (var i = 0; i < item.children.length; ++i) prepareRows(item.children[i])
+    }
+    // Rows own focus and are visited in declaration order. Editors and modal
+    // content are excluded, so layout and reparenting cannot reverse navigation.
+    function settingsFocusItems() {
+        prepareRows(settingsPage.contentItem)
+        settingsColumn1.forceLayout()
+        settingsColumn2.forceLayout()
+        var items = []
+        function collect(item) {
+            if (item.disabledSettingProxy === true || !item.visible) return
+            if (item.settingsEntry === true) {
+                if (item.editor && !item.editor.visible) return
+                if (!item.enabled || item.editor && !item.editor.enabled) {
+                    item.disabledSettingsProxy.syncGeometry()
+                    items.push(item.disabledSettingsProxy)
+                } else items.push(item)
+                return
+            }
+            if (!item.enabled) return
+            for (var i = 0; i < item.children.length; ++i) collect(item.children[i])
+        }
+        collect(settingsPage.contentItem)
+        // All proxies are direct siblings of the Columns. Keep even those
+        // excluded from navigation aligned so they cannot intercept stale areas.
+        var siblings = settingsPage.contentItem.children
+        for (var i = 0; i < siblings.length; ++i) {
+            if (siblings[i].disabledSettingProxy === true && siblings[i].visible) siblings[i].syncGeometry()
+        }
+        categoryRows = items
+        return items
+    }
+    // A proxy is outside the settings Columns, so resynchronize it after
+    // wrapping, conditional rows, and viewport changes settle.
+    function reflowRows() { if (visible) settingsFocusItems() }
+    function reflowAndReveal() {
+        reflowRows()
+        if (activeRow && (activeRow.activeFocus || activeRow.rowFocused === true)) ensureRowVisible(activeRow)
+    }
+    function rowFocused(row) {
+        activeRow = row
+        rememberedRows[category] = row
+        ensureRowVisible(row)
+    }
+    function ensureRowVisible(row) {
+        if (!row || !row.visible) return
+        var pos = row.mapToItem(settingsPage.contentItem, 0, 0)
+        var margin = Style.px(8, settingsShell.Window.window)
+        var next = settingsPage.contentY
+        if (categoryRows.length && categoryRows[0] === row) next = 0
+        else if (pos.y < next + margin) next = pos.y - margin
+        else if (pos.y + row.height > next + settingsPage.height - margin) next = pos.y + row.height - settingsPage.height + margin
+        settingsPage.contentY = Math.max(0, Math.min(next, Math.max(0, settingsPage.contentHeight - settingsPage.height)))
+    }
+    function focusRow(row) { row.forceActiveFocus(); rowFocused(row) }
+    function focusCategories() { categoryList.forceActiveFocus(); SdlGamepadKeyNavigation.setUiNavMode(false) }
+    function primaryAction() { if (categoryMenuFocused) focusContent(); else if (activeRow) activateRow(activeRow) }
+    function backAction() { focusCategories() }
+    function activateRow(row) {
+        if (!row) return
+        var items = settingsFocusItems()
+        var index = items.indexOf(row)
+        // Availability can change while a popup or asynchronous action owns
+        // focus. Recover to its live row instead of invoking a stale editor.
+        if (index < 0) {
+            var live = row.disabledSettingProxy === true ? row.target : row.disabledSettingsProxy
+            if (live && items.indexOf(live) >= 0) focusRow(live)
+            else if (items.length) focusRow(items[0])
+            else focusCategories()
+            return
+        }
+        rowFocused(row)
+        if (row.disabledSettingProxy === true) { optionsAction(); return }
+        row.activateSetting()
+        // Actions such as Use Default can remove their own row. Keep focus
+        // within the list when that happens instead of falling into the shell.
+        Qt.callLater(function() {
+            if (!settingsShell.visible || row.visible && row.enabled && (!row.editor || row.editor.enabled)) return
+            if (typeof window !== "undefined" && typeof window.popupHasFocus === "function" && window.popupHasFocus()) return
+            var items = settingsFocusItems()
+            if (items.length) focusRow(items[Math.max(0, Math.min(index, items.length - 1))])
+            else focusCategories()
+        })
+    }
+    function openValueEditor(row, control, range) { valueEditor.openFor(row, control, range) }
+    function optionsAction() { if (optionsAvailable) helpDialog.open() }
+    function handleRowKey(row, event) {
+        switch (event.key) {
+        case Qt.Key_Up: case Qt.Key_Backtab: return navigateSettings(-1)
+        case Qt.Key_Down: return navigateSettings(1)
+        case Qt.Key_Tab: return navigateSettings(event.modifiers & Qt.ShiftModifier ? -1 : 1)
+        case Qt.Key_Left: case Qt.Key_Escape: case Qt.Key_Back: focusCategories(); return true
+        case Qt.Key_Right: return true
+        case Qt.Key_Return: case Qt.Key_Enter: case Qt.Key_Space: activateRow(row); return true
+        case Qt.Key_Menu: optionsAction(); return true
+        }
+        return false
+    }
+    function navigateSettings(delta) {
+        var items = settingsFocusItems()
+        var current = Window.activeFocusItem
+        while (current && items.indexOf(current) < 0) current = current.parent
+        var index = items.indexOf(current)
+        if (index < 0) {
+            // A busy/hidden action may have relinquished focus since the last
+            // frame. Recover inside the list; popup keys are contained by editors.
+            var live = activeRow && (activeRow.disabledSettingProxy === true ? activeRow.target : activeRow.disabledSettingsProxy)
+            var remembered = Math.max(items.indexOf(activeRow), items.indexOf(live))
+            if (items.length) focusRow(items[Math.max(0, remembered)])
+            else focusCategories()
+            return true
+        }
+        focusRow(items[Math.max(0, Math.min(items.length - 1, index + delta))])
+        return true
+    }
+    function activate() { focusCategories() }
+    function deactivate() {
+        SdlGamepadKeyNavigation.setUiNavMode(false)
+        if (!gameMode) preferences.save()
+    }
+    StackView.onActivated: if (manageLifecycle) activate()
+    StackView.onDeactivating: if (manageLifecycle) deactivate()
+    onCategoryChanged: { settingsPage.contentY = 0; categoryList.currentIndex = category; activeRow = null; Qt.callLater(settingsFocusItems) }
+    Component.onCompleted: Qt.callLater(settingsFocusItems)
+    // A sibling focus target keeps disabled controls inert while making their
+    // explanation reachable. It sits outside Columns so it adds no layout gap.
+    Component {
+        id: unavailableRow
+        Item {
+            property Item target
+            readonly property bool disabledSettingProxy: true
+            readonly property bool settingsEntry: true
+            readonly property string settingsLabel: target ? target.settingsLabel : ""
+            readonly property string settingsHelp: qsTr("Unavailable with the current settings or device.") +
+                (target && target.settingsHelp ? "\n" + target.settingsHelp : "")
+            visible: !!target && target.visible && (!target.editor || target.editor.visible) && (!target.enabled || !!target.editor && !target.editor.enabled)
+            activeFocusOnTab: visible
+            onVisibleChanged: if (visible && target) Qt.callLater(syncGeometry)
+            z: 2
+            function syncGeometry() {
+                if (!target) return
+                var point = target.mapToItem(parent, 0, 0)
+                x = point.x; y = point.y; width = target.width; height = target.height
+            }
+            onActiveFocusChanged: if (activeFocus) { syncGeometry(); settingsShell.rowFocused(this) }
+            Keys.onPressed: function(event) { event.accepted = settingsShell.handleRowKey(this, event) }
+            ConsoleFocus { focused: parent.activeFocus; radius: Style.px(6, settingsShell.Window.window) }
+            MouseArea { anchors.fill: parent; onClicked: { parent.forceActiveFocus(); settingsShell.optionsAction() } }
+        }
+    }
+    ConsoleValueEditor { id: valueEditor }
+    NavigableMessageDialog {
+        id: helpDialog
+        objectName: "settingsHelpDialog"
+        title: settingsShell.activeRow ? settingsShell.activeRow.settingsLabel : ""
+        text: settingsShell.activeRow ? settingsShell.activeRow.settingsHelp : ""
+        standardButtons: Dialog.Close
+        width: Math.min(Style.px(720, settingsShell.Window.window), settingsShell.width - Style.px(48, settingsShell.Window.window))
+        onClosed: Qt.callLater(function() { if (settingsShell.activeRow) settingsShell.activeRow.forceActiveFocus() })
+    }
+    ConsoleBackdrop { anchors.fill: parent }
+    ListView {
+        id: categoryList
+        objectName: "settingsCategories"
+        anchors.left: parent.left; anchors.leftMargin: Style.px(64, settingsShell.Window.window)
+        anchors.top: parent.top; anchors.topMargin: Style.px(24, settingsShell.Window.window)
+        anchors.bottom: parent.bottom; anchors.bottomMargin: 16
+        width: Style.px(260, settingsShell.Window.window)
+        spacing: Style.px(4, settingsShell.Window.window); clip: true; focus: true
+        model: [qsTr("Video"), qsTr("Audio"), qsTr("Input & Controllers"), qsTr("Host"), qsTr("Interface"), qsTr("Diagnostics"), qsTr("Advanced"), qsTr("About")]
+        currentIndex: settingsShell.category
+        delegate: ConsoleListRow {
+            width: categoryList.width; height: Style.px(48, settingsShell.Window.window)
+            text: modelData; selected: settingsShell.category === index; textOnly: true; rail: true; textAlignment: Text.AlignLeft
+            Keys.onTabPressed: function(event) { categoryList.moveCategory(event.modifiers & Qt.ShiftModifier ? -1 : 1) }
+            Keys.onBacktabPressed: categoryList.moveCategory(-1)
+            Keys.onUpPressed: categoryList.moveCategory(-1)
+            Keys.onDownPressed: categoryList.moveCategory(1)
+            Keys.onRightPressed: settingsShell.focusContent()
+            Keys.onReturnPressed: settingsShell.focusContent()
+            Keys.onEnterPressed: settingsShell.focusContent()
+            Keys.onSpacePressed: settingsShell.focusContent()
+            onClicked: { settingsShell.category = index; categoryList.currentIndex = index; settingsShell.focusCategories() }
+        }
+        function moveCategory(delta) {
+            settingsShell.category = Math.max(0, Math.min(count - 1, settingsShell.category + delta))
+            currentIndex = settingsShell.category
+            positionViewAtIndex(currentIndex, ListView.Contain)
+        }
+        Keys.onUpPressed: moveCategory(-1)
+        Keys.onDownPressed: moveCategory(1)
+        Keys.onBacktabPressed: moveCategory(-1)
+        Keys.onTabPressed: function(event) { moveCategory(event.modifiers & Qt.ShiftModifier ? -1 : 1) }
+        Keys.onRightPressed: settingsShell.focusContent()
+        Keys.onReturnPressed: settingsShell.focusContent()
+        Keys.onEnterPressed: settingsShell.focusContent()
+        Keys.onSpacePressed: settingsShell.focusContent()
+    }
+    Flickable {
     id: settingsPage
+    onWidthChanged: Qt.callLater(settingsShell.reflowAndReveal)
+    onHeightChanged: Qt.callLater(settingsShell.reflowAndReveal)
+    onContentHeightChanged: Qt.callLater(settingsShell.reflowRows)
+    anchors.left: categoryList.right; anchors.leftMargin: Style.px(40, settingsShell.Window.window)
+    width: Math.min(Style.px(760, settingsShell.Window.window), settingsShell.width - x - Style.px(64, settingsShell.Window.window))
+    anchors.top: parent.top; anchors.topMargin: Style.px(24, settingsShell.Window.window)
+    anchors.bottom: helpPanel.top
+    clip: true
+    Keys.onTabPressed: function(event) { event.accepted = settingsShell.navigateSettings(event.modifiers & Qt.ShiftModifier ? -1 : 1) }
+    Keys.onBacktabPressed: function(event) { event.accepted = settingsShell.navigateSettings(-1) }
+    Keys.onUpPressed: function(event) { event.accepted = settingsShell.navigateSettings(-1) }
+    Keys.onDownPressed: function(event) { event.accepted = settingsShell.navigateSettings(1) }
+    Keys.onLeftPressed: settingsShell.focusCategories()
+    Keys.onMenuPressed: settingsShell.optionsAction()
+    Keys.onEscapePressed: function(event) {
+        if (typeof window !== "undefined" && typeof window.popupHasFocus === "function" && window.popupHasFocus()) { event.accepted = false; return }
+        categoryList.forceActiveFocus()
+    }
+    Keys.onBackPressed: categoryList.forceActiveFocus()
     ComputerModel {
         id: calibrationHosts
-        Component.onCompleted: if (!settingsPage.gameMode) initialize(ComputerManager)
+        Component.onCompleted: if (!settingsShell.gameMode) initialize(ComputerManager)
     }
     CalibrationHostSelection {
         id: calibrationSelection
@@ -30,18 +286,15 @@ Flickable {
             }
         }
     }
-    objectName: qsTr("Settings")
-    property var preferences: StreamingPreferences
-    property bool gameMode: false
-    property bool manageLifecycle: true
-    readonly property bool singleColumn: width < 1100
+    objectName: "settingsContent"
 
     signal languageChanged()
+    onLanguageChanged: settingsShell.languageChanged()
 
-    boundsBehavior: Flickable.OvershootBounds
+    boundsBehavior: Flickable.StopAtBounds
 
-    contentWidth: width
-    contentHeight: singleColumn ? settingsColumn1.height + settingsColumn2.height : Math.max(settingsColumn1.height, settingsColumn2.height)
+    contentWidth: settingsColumn1.width > settingsColumn2.width ? settingsColumn1.width : settingsColumn2.width
+    contentHeight: (settingsShell.category === 7 ? aboutColumn.height : settingsColumn1.height + settingsColumn2.height) + Style.px(24, settingsShell.Window.window)
 
     ScrollBar.vertical: ScrollBar {
         anchors {
@@ -61,66 +314,13 @@ Flickable {
         return false
     }
 
-    NumberAnimation on contentY {
-        id: autoScrollAnimation
-        duration: 100
-    }
-
-    Window.onActiveFocusItemChanged: ensureFocusedControlVisible()
-
-    // A live scale change can resize this viewport and switch the columns
-    // without changing keyboard focus. Recheck after the layout has settled.
-    onWidthChanged: Qt.callLater(ensureFocusedControlVisible)
-    onHeightChanged: Qt.callLater(ensureFocusedControlVisible)
-    onContentHeightChanged: Qt.callLater(ensureFocusedControlVisible)
-
-    function ensureFocusedControlVisible() {
+    Window.onActiveFocusItemChanged: {
         var item = Window.activeFocusItem
-        if (item) {
-            // Ignore non-child elements like the toolbar buttons
-            if (!isChildOfFlickable(item)) {
-                return
-            }
-
-            // Map the focus item's position into our content item's coordinate space
-            var pos = item.mapToItem(contentItem, 0, 0)
-
-            // Ensure some extra space is visible around the element we're scrolling to
-            var scrollMargin = height > 100 ? 50 : 0
-
-            if (pos.y - scrollMargin < contentY) {
-                autoScrollAnimation.from = contentY
-                autoScrollAnimation.to = Math.max(pos.y - scrollMargin, 0)
-                autoScrollAnimation.restart()
-            }
-            else if (pos.y + item.height + scrollMargin > contentY + height) {
-                autoScrollAnimation.from = contentY
-                autoScrollAnimation.to = Math.min(pos.y + item.height + scrollMargin - height, contentHeight - height)
-                autoScrollAnimation.restart()
-            }
+        if (item && isChildOfFlickable(item)) {
+            while (item && item.settingsEntry !== true) item = item.parent
+            if (item) settingsShell.rowFocused(item)
         }
     }
-
-    function activate() {
-        // This enables Tab and BackTab based navigation rather than arrow keys.
-        // It is required to shift focus between controls on the settings page.
-        SdlGamepadKeyNavigation.setUiNavMode(true)
-
-        // Highlight the first item if a gamepad is connected
-        if (SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
-            resolutionComboBox.forceActiveFocus(Qt.TabFocusReason)
-        }
-    }
-
-    function deactivate() {
-        SdlGamepadKeyNavigation.setUiNavMode(false)
-
-        // Save the prefs so the Session can observe the changes
-        if (!gameMode) preferences.save()
-    }
-
-    StackView.onActivated: if (manageLifecycle) activate()
-    StackView.onDeactivating: if (manageLifecycle) deactivate()
 
     Component.onDestruction: {
         // Also save preferences on destruction, since we won't get a
@@ -129,43 +329,34 @@ Flickable {
     }
 
     Column {
-        padding: 10
+        padding: Style.px(0, settingsShell.Window.window)
         id: settingsColumn1
-        width: settingsPage.singleColumn ? settingsPage.width : settingsPage.width / 2
-        spacing: 15
+        width: settingsPage.width
+        spacing: Style.px(32, settingsShell.Window.window)
 
-        GroupBox {
+        ConsoleSettingsSection {
             id: basicSettingsGroupBox
+            visible: settingsShell.category === 0
             width: (parent.width - (parent.leftPadding + parent.rightPadding))
-            padding: 12
-            title: "<font color=\"skyblue\">" + qsTr("Basic Settings") + "</font>"
-            font.pointSize: 12
+            padding: Style.px(0, settingsShell.Window.window)
+            title: qsTr("Video")
+            font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
 
             Column {
                 anchors.fill: parent
-                spacing: 5
+                spacing: 0
 
-                Label {
+
+
+                Column {
                     width: parent.width
-                    id: resFPStitle
-                    text: qsTr("Resolution and FPS")
-                    font.pointSize: 12
-                    wrapMode: Text.Wrap
-                }
-
-                Label {
-                    width: parent.width
-                    id: resFPSdesc
-                    text: qsTr("Setting values too high for your PC or network connection may cause lag, stuttering, or errors.")
-                    font.pointSize: 9
-                    wrapMode: Text.Wrap
-                }
-
-                Row {
-                    spacing: 5
-                    width: parent.width
-
-                    AutoResizingComboBox {
+                    spacing: 0
+                    ConsoleSettingRow {
+                        width: parent.width
+                        objectName: "resolutionRow"
+                        description: qsTr("Setting values too high for your PC or network connection may cause lag, stuttering, or errors.")
+                        labelItem: ConsoleText { text: qsTr("Resolution") }
+                        editor: AutoResizingComboBox {
                         property int lastIndexValue
 
                         function addDetectedResolution(friendlyNamePrefix, rect) {
@@ -275,7 +466,7 @@ Flickable {
                         }
 
                         id: resolutionComboBox
-                        maximumWidth: parent.width / 2
+                        maximumWidth: parent.width
                         textRole: "text"
                         model: ListModel {
                             id: resolutionListModel
@@ -318,7 +509,6 @@ Flickable {
 
                                 if (preferences.autoAdjustBitrate) {
                                     preferences.bitrateKbps = slider.defaultBitrate();
-                                    slider.value = preferences.bitrateKbps
                                 }
                             }
 
@@ -403,20 +593,21 @@ Flickable {
                             }
 
                             ColumnLayout {
-                                Label {
+                                ConsoleText {
+                    role: "secondary"
                                     text: qsTr("Custom resolutions are not officially supported by GeForce Experience, so it will not set your host display resolution. You will need to set it manually while in game.") + "\n\n" +
                                           qsTr("Resolutions that are not supported by your client or host PC may cause streaming errors.") + "\n"
                                     wrapMode: Label.WordWrap
-                                    Layout.maximumWidth: 300
+                                    Layout.maximumWidth: Style.px(300, settingsShell.Window.window)
                                 }
 
-                                Label {
+                                ConsoleText {
                                     text: qsTr("Enter a custom resolution:")
                                     font.bold: true
                                 }
 
                                 RowLayout {
-                                    TextField {
+                                    ConsoleTextField {
                                         id: widthField
                                         maximumLength: 5
                                         inputMethodHints: Qt.ImhDigitsOnly
@@ -432,20 +623,22 @@ Flickable {
                                         }
 
                                         Keys.onReturnPressed: {
-                                            customResolutionDialog.accept()
+                                            if (controllerEditing) openKeyboard()
+                                            else customResolutionDialog.accept()
                                         }
 
                                         Keys.onEnterPressed: {
-                                            customResolutionDialog.accept()
+                                            if (controllerEditing) openKeyboard()
+                                            else customResolutionDialog.accept()
                                         }
                                     }
 
-                                    Label {
+                                    ConsoleText {
                                         text: "x"
                                         font.bold: true
                                     }
 
-                                    TextField {
+                                    ConsoleTextField {
                                         id: heightField
                                         maximumLength: 5
                                         inputMethodHints: Qt.ImhDigitsOnly
@@ -460,19 +653,25 @@ Flickable {
                                         }
 
                                         Keys.onReturnPressed: {
-                                            customResolutionDialog.accept()
+                                            if (controllerEditing) openKeyboard()
+                                            else customResolutionDialog.accept()
                                         }
 
                                         Keys.onEnterPressed: {
-                                            customResolutionDialog.accept()
+                                            if (controllerEditing) openKeyboard()
+                                            else customResolutionDialog.accept()
                                         }
                                     }
                                 }
                             }
                         }
                     }
-
-                    AutoResizingComboBox {
+                    }
+                    ConsoleSettingRow {
+                        width: parent.width
+                        objectName: "frameRateRow"
+                        labelItem: ConsoleText { text: qsTr("Frame rate") }
+                        editor: AutoResizingComboBox {
                         property int lastIndexValue
 
                         function updateBitrateForSelection() {
@@ -482,7 +681,6 @@ Flickable {
 
                             if (fpsChanged && preferences.autoAdjustBitrate) {
                                 preferences.bitrateKbps = slider.defaultBitrate();
-                                slider.value = preferences.bitrateKbps
                             }
 
                             lastIndexValue = currentIndex
@@ -550,13 +748,13 @@ Flickable {
                             }
 
                             ColumnLayout {
-                                Label {
+                                ConsoleText {
                                     text: qsTr("Enter a custom frame rate:")
                                     font.bold: true
                                 }
 
                                 RowLayout {
-                                    TextField {
+                                    ConsoleTextField {
                                         id: fpsField
                                         maximumLength: 4
                                         inputMethodHints: Qt.ImhDigitsOnly
@@ -576,11 +774,13 @@ Flickable {
                                         }
 
                                         Keys.onReturnPressed: {
-                                            customFpsDialog.accept()
+                                            if (controllerEditing) openKeyboard()
+                                            else customFpsDialog.accept()
                                         }
 
                                         Keys.onEnterPressed: {
-                                            customFpsDialog.accept()
+                                            if (controllerEditing) openKeyboard()
+                                            else customFpsDialog.accept()
                                         }
                                     }
                                 }
@@ -669,9 +869,7 @@ Flickable {
                         }
 
                         id: fpsComboBox
-
-                        objectName: "fpsComboBox"
-                        maximumWidth: parent.width / 2
+                        maximumWidth: parent.width
                         textRole: "text"
                         // ::onActivated must be used, as it only listens for when the index is changed by a human
                         onActivated : {
@@ -683,17 +881,18 @@ Flickable {
                             }
                         }
                     }
+                    }
                 }
 
-                Label {
+                ConsoleSettingRow {
+                    width: parent.width
+                    labelItem: ConsoleText {
                     width: parent.width
                     id: resVCCTitle
                     text: qsTr("Video codec")
-                    font.pointSize: 12
                     wrapMode: Text.Wrap
                 }
-
-                AutoResizingComboBox {
+                    editor: AutoResizingComboBox {
                     // ignore setting the index at first, and actually set it when the component is loaded
                     Component.onCompleted: {
                         if (SystemProperties.hasPyroWave) {
@@ -751,11 +950,9 @@ Flickable {
                             // the other codecs', so switching in or out resets a default.
                             if (slider.pyroWave !== wasPyroWave && preferences.autoAdjustBitrate) {
                                 preferences.bitrateKbps = slider.defaultBitrate()
-                                slider.value = preferences.bitrateKbps
                             }
                             else if (preferences.bitrateKbps > slider.to) {
                                 preferences.bitrateKbps = slider.to
-                                slider.value = preferences.bitrateKbps
                             }
                         }
                     }
@@ -765,21 +962,21 @@ Flickable {
                     ToolTip.visible: hovered && slider.pyroWave
                     ToolTip.text: qsTr("PyroWave is a GPU wavelet codec. It needs a wired connection with hundreds of Mbps to spare and a host with PyroWave support; other hosts fall back to H.264. On Linux, GPU readback and upload may limit frame rate.")
                 }
+                }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: enableYUV444
                     width: parent.width
                     text: qsTr("Enable YUV 4:4:4")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
 
                     checked: preferences.enableYUV444
                     onToggled: {
-                        // This is called on init, so only reset to default bitrate when checked state changes.
+                        // Reset only after a user changes the chroma setting.
                         if (preferences.enableYUV444 != checked) {
                             preferences.enableYUV444 = checked
                             if (preferences.autoAdjustBitrate) {
                                 preferences.bitrateKbps = slider.defaultBitrate();
-                                slider.value = preferences.bitrateKbps
                             }
                         }
                     }
@@ -793,27 +990,12 @@ Flickable {
                                       qsTr("YUV 4:4:4 is not supported on this PC.")
                 }
 
-                Label {
+                ConsoleSettingRow {
                     width: parent.width
-                    id: bitrateTitle
-                    text: qsTr("Video bitrate:")
-                    font.pointSize: 12
-                    wrapMode: Text.Wrap
-                }
-
-                Label {
-                    width: parent.width
-                    id: bitrateDesc
-                    text: qsTr("Lower the bitrate on slower connections. Raise the bitrate to increase image quality.")
-                    font.pointSize: 9
-                    wrapMode: Text.Wrap
-                }
-
-                Row {
-                    width: parent.width
-                    spacing: 5
-
-                    Slider {
+                    objectName: "bitrateRow"
+                    labelItem: ConsoleText { text: qsTr("Video bitrate") }
+                    description: qsTr("Lower the bitrate on slower connections. Raise it to increase image quality. Changes apply to the next stream.")
+                    editor: ConsoleSlider {
                         id: slider
                         objectName: "videoBitrateSlider"
 
@@ -831,35 +1013,31 @@ Flickable {
                         to: pyroWave ? 3000000 : (preferences.unlockBitrate ? 500000 : 150000)
 
                         snapMode: "SnapOnRelease"
-                        width: Math.min(bitrateDesc.implicitWidth, parent.width - (resetBitrateButton.visible ? resetBitrateButton.width + parent.spacing : 0))
 
-                        onValueChanged: {
-                            bitrateTitle.text = qsTr("Video bitrate: %1 Mbps").arg(value / 1000.0)
-                        }
+
 
                         onMoved: {
                             preferences.bitrateKbps = value
                             preferences.autoAdjustBitrate = false
                         }
-
-                        Component.onCompleted: {
-                            // Refresh the text after translations change
-                            languageChanged.connect(valueChanged)
+                        onSettingsCommitted: function(newValue) {
+                            preferences.bitrateKbps = newValue
+                            preferences.autoAdjustBitrate = false
                         }
-                    }
 
-                    Button {
+                    }
+                }
+                ConsoleListRow {
                         id: resetBitrateButton
+                        objectName: "resetBitrateRow"
                         text: qsTr("Use Default (%1 Mbps)").arg(slider.defaultBitrate() / 1000.0)
                         visible: !preferences.autoAdjustBitrate || preferences.bitrateKbps !== slider.defaultBitrate()
                         onClicked: {
                             var defaultBitrate = slider.defaultBitrate()
                             preferences.bitrateKbps = defaultBitrate
                             preferences.autoAdjustBitrate = true
-                            slider.value = defaultBitrate
                         }
                     }
-                }
 
                 PyroWavePacketSpeedSettings {
                     width: parent.width
@@ -870,12 +1048,12 @@ Flickable {
 
                 Column {
                     width: parent.width
-                    spacing: 5
+                    spacing: Style.px(12, settingsShell.Window.window)
                     visible: !gameMode && slider.pyroWave && (Qt.platform.os === "linux" || Qt.platform.os === "windows")
 
                     Component.onCompleted: if (!gameMode) NetworkBuffers.refresh()
 
-                    Label {
+                    ConsoleText {
                         width: parent.width
                         wrapMode: Text.Wrap
                         visible: NetworkBuffers.needsFix
@@ -883,11 +1061,12 @@ Flickable {
                         text: NetworkBuffers.problemText
                     }
 
-                    Row {
-                        spacing: 8
+                    Column {
+                        width: parent.width
+                        spacing: 0
                         visible: NetworkBuffers.needsFix
 
-                        Button {
+                        ConsoleListRow {
                             text: qsTr("Fix it")
                             visible: NetworkBuffers.canApply
                             enabled: !NetworkBuffers.busy
@@ -899,21 +1078,20 @@ Flickable {
                             ToolTip.text: NetworkBuffers.fixDescription
                         }
 
-                        Button {
+                        ConsoleListRow {
                             text: qsTr("Copy command")
                             onClicked: NetworkBuffers.copyCommand()
                         }
                     }
 
-                    Label {
+                    ConsoleText {
                         width: parent.width
                         wrapMode: Text.Wrap
                         visible: NetworkBuffers.needsFix && !NetworkBuffers.canApply
-                        font.pointSize: 9
                         text: NetworkBuffers.manualHint + "\n" + NetworkBuffers.manualCommand
                     }
 
-                    Label {
+                    ConsoleText {
                         width: parent.width
                         wrapMode: Text.Wrap
                         visible: NetworkBuffers.message !== ""
@@ -960,9 +1138,9 @@ Flickable {
                     standardButtons: Dialog.NoButton
                     focus: true
                     background: Rectangle {
-                        color: "#303030"
-                        radius: 12
-                        border.color: "#606060"
+                        color: Style.raised
+                        radius: Style.px(12, settingsShell.Window.window)
+                        border.color: Style.outline
                     }
                     onAboutToShow: {
                         PyroWaveCalibrator.reset()
@@ -1146,7 +1324,6 @@ Flickable {
                         // The tested frame pace; 0 lets the host use its default.
                         preferences.pyroWavePaceMbps = PyroWaveCalibrator.paceMbps
                         preferences.autoAdjustBitrate = false
-                        slider.value = preferences.bitrateKbps
 
                         var found = false
                         for (var i = 0; i < resolutionListModel.count; i++) {
@@ -1174,9 +1351,9 @@ Flickable {
                     }
 
                     footer: Pane {
-                        padding: 12
+                        padding: Style.px(0, settingsShell.Window.window)
                         contentItem: RowLayout {
-                            spacing: 8
+                            spacing: Style.px(8, settingsShell.Window.window)
                             CalibrationButton {
                                 id: calibrationRunButton
                                 objectName: "pyrowaveCalibrationRun"
@@ -1184,7 +1361,7 @@ Flickable {
                                       calibrationDialog.step === 0 ? qsTr("Test bandwidth") : qsTr("Test decoder again")
                                 enabled: PyroWaveCalibrator.running ? !calibrationDialog.stopRequested :
                                          calibrationDialog.step === 0 ? calibrationSelection.currentIndex >= 0 : calibrationDialog.canContinue
-                                implicitHeight: 44
+                                implicitHeight: Style.px(44, settingsShell.Window.window)
                                 highlighted: calibrationDialog.step === 0 && !calibrationDialog.canContinue
                                 onClicked: {
                                     if (PyroWaveCalibrator.running) {
@@ -1221,7 +1398,7 @@ Flickable {
                                 visible: calibrationDialog.step === 1
                                 text: qsTr("About results")
                                 checkable: true
-                                implicitHeight: 44
+                                implicitHeight: Style.px(44, settingsShell.Window.window)
                                 KeyNavigation.left: calibrationRunButton
                                 KeyNavigation.right: calibrationCloseButton.enabled ? calibrationCloseButton : calibrationRunButton
                                 KeyNavigation.backtab: calibrationRunButton
@@ -1234,7 +1411,7 @@ Flickable {
                                 objectName: "pyrowaveCalibrationBack"
                                 text: calibrationDialog.step === 0 ? qsTr("Cancel") : qsTr("Back")
                                 enabled: calibrationDialog.step === 0 || !PyroWaveCalibrator.running
-                                implicitHeight: 44
+                                implicitHeight: Style.px(44, settingsShell.Window.window)
                                 onClicked: {
                                     if (calibrationDialog.step === 0) calibrationDialog.close()
                                     else { calibrationDialog.step = 0; calibrationDialog.focusTarget() }
@@ -1250,7 +1427,7 @@ Flickable {
                                 text: qsTr("Next →")
                                 visible: calibrationDialog.step === 0
                                 enabled: calibrationDialog.canContinue
-                                implicitHeight: 44
+                                implicitHeight: Style.px(44, settingsShell.Window.window)
                                 highlighted: true
                                 onClicked: calibrationDialog.nextStep()
                                 KeyNavigation.backtab: calibrationRunButton
@@ -1270,10 +1447,10 @@ Flickable {
                             ColumnLayout {
                                 width: calibrationConnectionScroll.availableWidth
                                 height: Math.max(implicitHeight, calibrationConnectionScroll.availableHeight)
-                                spacing: 12
+                                spacing: Style.px(12, settingsShell.Window.window)
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    Label { text: qsTr("Host") }
+                                    ConsoleText { text: qsTr("Host") }
                                     AutoResizingComboBox {
                                         id: calibrationHost
                                         objectName: "pyrowaveCalibrationHost"
@@ -1297,18 +1474,17 @@ Flickable {
                                             else calibrationDialog.focusTarget()
                                         }
                                     }
-                                    Label { text: qsTr("%1 FPS").arg(calibrationDialog.testFps) }
+                                    ConsoleText { text: qsTr("%1 FPS").arg(calibrationDialog.testFps) }
                                 }
-                                Label {
+                                ConsoleText {
                                     Layout.fillWidth: true
-                                    font.pointSize: 16
                                     font.bold: true
                                     text: qsTr("Choose your quality target")
                                     wrapMode: Text.Wrap
                                 }
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    spacing: 8
+                                    spacing: Style.px(8, settingsShell.Window.window)
                                     Repeater {
                                         id: calibrationTargets
                                         model: calibrationDialog.targets
@@ -1316,8 +1492,8 @@ Flickable {
                                             id: targetCard
                                             objectName: "pyrowaveCalibrationTarget" + index
                                             Layout.fillWidth: true
-                                            Layout.preferredWidth: 1
-                                            Layout.preferredHeight: 82
+                                            Layout.preferredWidth: Style.px(1, settingsShell.Window.window)
+                                            Layout.preferredHeight: Style.px(82, settingsShell.Window.window)
                                             text: modelData.text
                                             checked: calibrationDialog.targetIndex === index
                                             enabled: !PyroWaveCalibrator.running
@@ -1325,20 +1501,18 @@ Flickable {
                                             Accessible.name: modelData.text
                                             Accessible.description: modelData.description
                                             contentItem: Column {
-                                                spacing: 6
-                                                Label {
+                                                spacing: Style.px(6, settingsShell.Window.window)
+                                                ConsoleText {
                                                     width: parent.width
                                                     text: (targetCard.checked ? "\u2713 " : "") + targetCard.text
                                                     font.bold: targetCard.checked
-                                                    font.pointSize: 11
                                                     horizontalAlignment: Text.AlignHCenter
                                                     elide: Text.ElideRight
                                                     color: "#ffffff"
                                                 }
-                                                Label {
+                                                ConsoleText {
                                                     width: parent.width
                                                     text: modelData.summary
-                                                    font.pointSize: 9
                                                     horizontalAlignment: Text.AlignHCenter
                                                     wrapMode: Text.Wrap
                                                     color: "#c7c7c7"
@@ -1361,13 +1535,13 @@ Flickable {
                                         }
                                     }
                                 }
-                                Label {
+                                ConsoleText {
                                     Layout.fillWidth: true
-                                    Layout.minimumHeight: 32
+                                    Layout.minimumHeight: Style.px(32, settingsShell.Window.window)
                                     wrapMode: Text.Wrap
                                     text: calibrationDialog.targets[calibrationDialog.targetIndex].description
                                 }
-                                Label {
+                                ConsoleText {
                                     Layout.fillWidth: true
                                     text: qsTr("Test your connection first, then continue to test this device's decoder.")
                                     wrapMode: Text.Wrap
@@ -1376,20 +1550,20 @@ Flickable {
                                 Item { Layout.fillHeight: true }
                                 Pane {
                                     Layout.fillWidth: true
-                                    padding: 12
+                                    padding: Style.px(0, settingsShell.Window.window)
                                     readonly property string grade: calibrationDialog.canContinue ? PyroWaveCalibrator.bandwidthQuality : ""
                                     readonly property bool warning: grade === "reduced"
                                     background: Rectangle {
                                         color: parent.grade === "low" ? "#452b2b" : calibrationDialog.canContinue ? (parent.warning ? "#413824" : "#283b2e") : "#252525"
-                                        radius: 8
+                                        radius: Style.px(8, settingsShell.Window.window)
                                         border.color: parent.grade === "low" ? "#b45c5c" : calibrationDialog.canContinue ? (parent.warning ? "#aa8542" : "#568260") : "#505050"
                                     }
                                     contentItem: RowLayout {
-                                        spacing: 12
+                                        spacing: Style.px(12, settingsShell.Window.window)
                                         // Keep the text width stable when the spinner appears.
                                         Item {
-                                            Layout.preferredWidth: 28
-                                            Layout.preferredHeight: 28
+                                            Layout.preferredWidth: Style.px(28, settingsShell.Window.window)
+                                            Layout.preferredHeight: Style.px(28, settingsShell.Window.window)
                                             BusyIndicator {
                                                 anchors.fill: parent
                                                 running: PyroWaveCalibrator.running
@@ -1398,8 +1572,8 @@ Flickable {
                                         }
                                         ColumnLayout {
                                             Layout.fillWidth: true
-                                            spacing: 4
-                                            Label {
+                                            spacing: Style.px(4, settingsShell.Window.window)
+                                            ConsoleText {
                                                 id: calibrationStatusText
                                                 objectName: "pyrowaveCalibrationStatus"
                                                 Layout.fillWidth: true
@@ -1411,7 +1585,7 @@ Flickable {
                                                       !calibrationDialog.hasStarted ? qsTr("Ready to test your connection.") :
                                                       !calibrationDialog.resultsMatch ? qsTr("Selection changed. Test bandwidth again to continue.") : PyroWaveCalibrator.message
                                             }
-                                            Label {
+                                            ConsoleText {
                                                 Layout.fillWidth: true
                                                 Layout.minimumHeight: fontMetrics.height * 2
                                                 opacity: calibrationDialog.canContinue ? 1 : 0
@@ -1426,9 +1600,8 @@ Flickable {
                                         }
                                     }
                                 }
-                                Label {
+                                ConsoleText {
                                     Layout.fillWidth: true
-                                    font.pointSize: 9
                                     color: "#bdbdbd"
                                     wrapMode: Text.Wrap
                                     text: qsTr("↑↓ Navigate  ·  ←→ Choose target  ·  %1 Select  ·  %2 Back")
@@ -1438,14 +1611,13 @@ Flickable {
                             }
                         }
                         ColumnLayout {
-                            spacing: 8
-                            Label {
+                            spacing: Style.px(8, settingsShell.Window.window)
+                            ConsoleText {
                                 Layout.fillWidth: true
-                                font.pointSize: 14
                                 font.bold: true
                                 text: calibrationDialog.targets[calibrationDialog.targetIndex].text + " · " + qsTr("%1 FPS").arg(calibrationDialog.testFps)
                             }
-                            Label {
+                            ConsoleText {
                                 objectName: "pyrowaveDecoderStatus"
                                 Layout.fillWidth: true
                                 wrapMode: Text.Wrap
@@ -1461,10 +1633,10 @@ Flickable {
                             Row {
                                 id: calibrationHeaders
                                 Layout.fillWidth: true
-                                spacing: 6
-                                Label { width: 72; text: qsTr("Resolution") }
-                                Label { width: (calibrationHeaders.width - 84) / 2; text: "4:4:4"; horizontalAlignment: Text.AlignHCenter }
-                                Label { width: (calibrationHeaders.width - 84) / 2; text: "4:2:0"; horizontalAlignment: Text.AlignHCenter }
+                                spacing: Style.px(6, settingsShell.Window.window)
+                                ConsoleText { width: Style.px(72, settingsShell.Window.window); text: qsTr("Resolution") }
+                                ConsoleText { width: (calibrationHeaders.width - 84) / 2; text: "4:4:4"; horizontalAlignment: Text.AlignHCenter }
+                                ConsoleText { width: (calibrationHeaders.width - 84) / 2; text: "4:2:0"; horizontalAlignment: Text.AlignHCenter }
                             }
                             Flickable {
                                 id: calibrationResults
@@ -1492,18 +1664,17 @@ Flickable {
                                 Column {
                                     id: calibrationTable
                                     width: parent.width
-                                    spacing: 6
-                                    Label {
+                                    spacing: Style.px(6, settingsShell.Window.window)
+                                    ConsoleText {
                                         width: parent.width
                                         visible: calibrationDetails.checked
                                         wrapMode: Text.Wrap
-                                        font.pointSize: 9
                                         text: PyroWaveCalibrator.linkSummary + " " +
                                               qsTr("Rates include FEC and packet overhead. Quality is relative to the developer's recommended image bitrate. Every selected target is tested afresh.")
                                     }
                                     Flow {
                                         width: parent.width
-                                        spacing: 12
+                                        spacing: Style.px(12, settingsShell.Window.window)
                                         Repeater {
                                             model: [
                                                 { tier: "any", text: qsTr("Any display") },
@@ -1512,13 +1683,13 @@ Flickable {
                                                 { tier: "slow", text: qsTr("Can't keep up") }
                                             ]
                                             delegate: Row {
-                                                spacing: 5
+                                                spacing: Style.px(12, settingsShell.Window.window)
                                                 Rectangle {
-                                                    width: 8; height: 8; radius: 4
+                                                    width: Style.px(8, settingsShell.Window.window); height: Style.px(8, settingsShell.Window.window); radius: Style.px(4, settingsShell.Window.window)
                                                     anchors.verticalCenter: parent.verticalCenter
                                                     color: calibrationDialog.tierColors[modelData.tier]
                                                 }
-                                                Label { text: modelData.text; font.pointSize: 9 }
+                                                ConsoleText { text: modelData.text; font.pixelSize: Style.typeSize("body", settingsShell.Window.window) }
                                             }
                                         }
                                     }
@@ -1530,27 +1701,26 @@ Flickable {
                                             { tier: "slow", text: qsTr("Can't keep up: at %1 FPS, more than 1 frame in 100 takes longer than a frame to decode and draw. Expect stutter; it can still be selected.").arg(calibrationDialog.testFps) }
                                         ] : []
                                         delegate: Row {
-                                            spacing: 6
+                                            spacing: Style.px(6, settingsShell.Window.window)
                                             Rectangle {
-                                                width: 10
-                                                height: 10
-                                                radius: 5
+                                                width: Style.px(10, settingsShell.Window.window)
+                                                height: Style.px(10, settingsShell.Window.window)
+                                                radius: Style.px(5, settingsShell.Window.window)
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 color: calibrationDialog.tierColors[modelData.tier]
                                             }
-                                            Label {
+                                            ConsoleText {
                                                 width: calibrationTable.width - 16
                                                 wrapMode: Text.Wrap
-                                                font.pointSize: 9
                                                 text: modelData.text
                                             }
                                         }
                                     }
 
-                                    Label {
+                                    ConsoleText {
+                    role: "secondary"
                                         width: parent.width
                                         wrapMode: Text.Wrap
-                                        font.pointSize: 9
                                         visible: calibrationDetails.checked
                                         text: qsTr("Reduced or low quality means the image bitrate is below the developer's recommendation. This can follow your chosen target, network limits, or device limits.")
                                     }
@@ -1563,13 +1733,13 @@ Flickable {
                                         delegate: Row {
                                             id: calibrationRow
                                             width: calibrationTable.width
-                                            spacing: 6
+                                            spacing: Style.px(6, settingsShell.Window.window)
                                             readonly property int rowIndex: index
                                             readonly property var rowData: modelData
                                             property alias columns: calibrationChroma
 
-                                            Label {
-                                                width: 72
+                                            ConsoleText {
+                                                width: Style.px(72, settingsShell.Window.window)
                                                 text: calibrationRow.rowData.name
                                                 anchors.verticalCenter: parent.verticalCenter
                                             }
@@ -1583,7 +1753,7 @@ Flickable {
                                                     readonly property var modes: modelData
                                                     property alias formats: calibrationFormats
                                                     width: (calibrationTable.width - 84) / 2
-                                                    spacing: 2
+                                                    spacing: Style.px(2, settingsShell.Window.window)
 
                                                     Repeater {
                                                         id: calibrationFormats
@@ -1592,10 +1762,10 @@ Flickable {
                                                             id: optionButton
                                                             objectName: "pyrowaveCalibrationOption" + (calibrationRow.rowIndex * 4 + modelData)
                                                             width: parent.width
-                                                            height: 44
-                                                            padding: 6
-                                                            topPadding: 4
-                                                            bottomPadding: 4
+                                                            height: Style.px(44, settingsShell.Window.window)
+                                                            padding: Style.px(6, settingsShell.Window.window)
+                                                            topPadding: Style.px(4, settingsShell.Window.window)
+                                                            bottomPadding: Style.px(4, settingsShell.Window.window)
                                                             topInset: 0
                                                             bottomInset: 0
                                                             leftInset: 0
@@ -1629,32 +1799,30 @@ Flickable {
                                                             }
 
                                                             contentItem: Column {
-                                                                spacing: 2
+                                                                spacing: Style.px(2, settingsShell.Window.window)
                                                                 opacity: !optionButton.enabled ? 0.6 : optionButton.activeFocus || optionButton.hovered ? 1.0 : optionButton.option && !optionButton.option.keepsUp ? 0.7 : 1.0
 
-                                                                Label {
+                                                                ConsoleText {
                                                                     width: parent.width
                                                                     horizontalAlignment: Text.AlignHCenter
                                                                     elide: Text.ElideRight
-                                                                    font.pointSize: 10
                                                                     text: calibrationDialog.headline(optionButton.option, optionButton.hdr)
                                                                 }
 
                                                                 Row {
                                                                     anchors.horizontalCenter: parent.horizontalCenter
-                                                                    spacing: 6
+                                                                    spacing: Style.px(6, settingsShell.Window.window)
 
                                                                     Rectangle {
-                                                                        width: 10
-                                                                        height: 10
-                                                                        radius: 5
+                                                                        width: Style.px(10, settingsShell.Window.window)
+                                                                        height: Style.px(10, settingsShell.Window.window)
+                                                                        radius: Style.px(5, settingsShell.Window.window)
                                                                         anchors.verticalCenter: parent.verticalCenter
                                                                         visible: !!optionButton.option
                                                                         color: calibrationDialog.tierColor(optionButton.option)
                                                                     }
 
-                                                                    Label {
-                                                                        font.pointSize: 9
+                                                                    ConsoleText {
                                                                         width: Math.min(implicitWidth, optionButton.width - 30)
                                                                         elide: Text.ElideRight
                                                                         text: calibrationDialog.tierText(optionButton.option)
@@ -1679,16 +1847,17 @@ Flickable {
                     }
                 }
 
-                Label {
+                ConsoleSettingRow {
+                    visible: SystemProperties.hasDesktopEnvironment
+                    width: parent.width
+                    labelItem: ConsoleText {
                     width: parent.width
                     id: windowModeTitle
                     text: qsTr("Display mode")
-                    font.pointSize: 12
                     wrapMode: Text.Wrap
                     visible: SystemProperties.hasDesktopEnvironment
                 }
-
-                AutoResizingComboBox {
+                    editor: AutoResizingComboBox {
                     function createModel() {
                         var model = Qt.createQmlObject('import QtQuick 2.0; ListModel {}', parent, '')
 
@@ -1724,8 +1893,8 @@ Flickable {
 
                     // This is used on initialization and upon retranslation
                     function reinitialize() {
-                        if (!visible) {
-                            // Do nothing if the control won't even be visible
+                        if (!SystemProperties.hasDesktopEnvironment) {
+                            // Category visibility must not suppress saved-value initialization.
                             return
                         }
 
@@ -1773,17 +1942,19 @@ Flickable {
                                     :
                                       qsTr("Fullscreen generally provides the best performance, but borderless windowed may work better with features like macOS Spaces, Alt+Tab, screenshot tools, on-screen overlays, etc.")
                 }
+                }
 
-                Row {
-                    spacing: 5
+                Column {
+                    spacing: 0
                     width: parent.width
 
-                    CheckBox {
+                    ConsoleCheckBox {
+                        width: parent.width
                         id: vsyncCheck
                         objectName: "vsyncCheck"
                         hoverEnabled: true
                         text: qsTr("V-Sync")
-                        font.pointSize:  12
+                        font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                         checked: preferences.enableVsync
                         onToggled: {
                             preferences.enableVsync = checked
@@ -1795,11 +1966,13 @@ Flickable {
                         ToolTip.text: qsTr("Disabling V-Sync allows sub-frame rendering latency, but it can display visible tearing")
                     }
 
-                    CheckBox {
+                    ConsoleCheckBox {
+                        width: parent.width
                         id: framePacingCheck
+                        objectName: "framePacingRow"
                         hoverEnabled: true
                         text: qsTr("Frame pacing")
-                        font.pointSize:  12
+                        font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                         enabled: preferences.enableVsync
                         checked: preferences.enableVsync && preferences.framePacing
                         onToggled: {
@@ -1811,12 +1984,13 @@ Flickable {
                         ToolTip.text: qsTr("Frame pacing reduces micro-stutter by delaying frames that come in too early")
                     }
 
-                    CheckBox {
+                    ConsoleCheckBox {
+                        width: parent.width
                         hoverEnabled: true
                         id: vrrCheck
                         objectName: "vrrCheck"
                         text: qsTr("VRR")
-                        font.pointSize: 12
+                        font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                         enabled: preferences.enableVsync
                         checked: preferences.enableVrr
                         onToggled: {
@@ -1848,12 +2022,12 @@ Flickable {
                     onToleranceEdited: function(value) { preferences.vrrToleranceUs = value }
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     hoverEnabled: true
                     id: reduceJudderCheck
                     objectName: "reduceJudderCheck"
                     text: qsTr("Reduce judder")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     visible: preferences.enableVrr
                     enabled: preferences.enableVsync && preferences.enableVrr
                     checked: preferences.smoothVrrFrameTiming
@@ -1866,15 +2040,15 @@ Flickable {
                                   qsTr("Reconnect the stream after changing this setting.")
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     hoverEnabled: true
                     text: qsTr("Absorb microstutter (adds latency)")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     visible: preferences.enableVrr
                     enabled: preferences.enableVsync && preferences.enableVrr &&
                              preferences.smoothVrrFrameTiming
                     checked: preferences.absorbVrrMicrostutter
-                    onCheckedChanged: preferences.absorbVrrMicrostutter = checked
+                    onToggled: preferences.absorbVrrMicrostutter = checked
 
                     ToolTip.delay: 1000
                     ToolTip.timeout: 10000
@@ -1883,13 +2057,13 @@ Flickable {
                                   qsTr("Reconnect the stream after changing this setting.")
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     hoverEnabled: true
                     text: qsTr("High-performance GPU power while streaming")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     visible: Qt.platform.os === "linux"
                     checked: preferences.highPerformanceGpuPower
-                    onCheckedChanged: preferences.highPerformanceGpuPower = checked
+                    onToggled: preferences.highPerformanceGpuPower = checked
 
                     ToolTip.delay: 1000
                     ToolTip.timeout: 10000
@@ -1898,11 +2072,11 @@ Flickable {
                                   qsTr("Takes effect at the start of the next stream.")
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: enableHdr
                     width: parent.width
                     text: qsTr("Enable HDR")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
 
                     enabled: SystemProperties.supportsHdr
                     checked: enabled && preferences.enableHdr
@@ -1912,7 +2086,6 @@ Flickable {
                             // PyroWave's default bitrate depends on HDR
                             if (slider.pyroWave && preferences.autoAdjustBitrate) {
                                 preferences.bitrateKbps = slider.defaultBitrate();
-                                slider.value = preferences.bitrateKbps
                             }
                         }
                     }
@@ -1930,56 +2103,67 @@ Flickable {
             }
         }
 
-        GroupBox {
+        ConsoleSettingsSection {
             width: parent.width - (parent.leftPadding + parent.rightPadding)
-            padding: 12
-            visible: !gameMode
-            title: "<font color=\"skyblue\">" + qsTr("VRR diagnostics") + "</font>"
-            font.pointSize: 12
+            padding: Style.px(0, settingsShell.Window.window)
+            visible: !gameMode && settingsShell.category === 5
+            title: qsTr("VRR diagnostics")
+            font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
 
             Column {
                 anchors.fill: parent
-                spacing: 8
+                spacing: Style.px(8, settingsShell.Window.window)
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: traceVrrFramesCheckBox
                     objectName: "traceVrrFramesCheck"
                     text: qsTr("Trace VRR frames for debugging")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.traceVrrFrames
                     onToggled: preferences.traceVrrFrames = checked
                 }
 
-                Label {
+                ConsoleText {
+                    leftPadding: Style.px(16, settingsShell.Window.window)
+                    rightPadding: Style.px(16, settingsShell.Window.window)
+                    role: "secondary"
                     width: parent.width
                     wrapMode: Text.Wrap
                     text: qsTr("Saves frame traces and session logs to the vrr-diagnostics folder on your Desktop, with a separate folder for each stream. Does not change your VRR timing settings.")
                 }
 
-                Label {
+                ConsoleText {
+                    leftPadding: Style.px(16, settingsShell.Window.window)
+                    rightPadding: Style.px(16, settingsShell.Window.window)
+                    role: "secondary"
                     width: parent.width
                     wrapMode: Text.Wrap
                     text: qsTr("Enable VRR and reconnect the stream to start recording. Tracing can use substantial disk space and add diagnostic overhead. Uncheck this after debugging.")
                 }
 
-                Button {
+                ConsoleListRow {
                     text: preferences.exportingDiagnostics ? qsTr("Exporting...") : qsTr("Export latest recording (ZIP)")
                     enabled: !preferences.exportingDiagnostics
                     onClicked: preferences.exportLatestDiagnostics()
                 }
 
-                Button {
+                ConsoleListRow {
                     text: qsTr("Open diagnostics folder")
                     onClicked: preferences.openDiagnosticsFolder()
                 }
 
-                Label {
+                ConsoleText {
+                    leftPadding: Style.px(16, settingsShell.Window.window)
+                    rightPadding: Style.px(16, settingsShell.Window.window)
+                    role: "secondary"
                     width: parent.width
                     wrapMode: Text.Wrap
                     text: qsTr("Disconnect before exporting. Logs contain hardware and connection details; review them before sharing. Nothing is uploaded automatically.")
                 }
 
-                Label {
+                ConsoleText {
+                    leftPadding: Style.px(16, settingsShell.Window.window)
+                    rightPadding: Style.px(16, settingsShell.Window.window)
                     width: parent.width
                     wrapMode: Text.WrapAnywhere
                     textFormat: Text.PlainText
@@ -1989,27 +2173,28 @@ Flickable {
             }
         }
 
-        GroupBox {
+        ConsoleSettingsSection {
 
             id: audioSettingsGroupBox
+            visible: settingsShell.category === 1
             width: (parent.width - (parent.leftPadding + parent.rightPadding))
-            padding: 12
-            title: "<font color=\"skyblue\">" + qsTr("Audio Settings") + "</font>"
-            font.pointSize: 12
+            padding: Style.px(0, settingsShell.Window.window)
+            title: qsTr("Audio")
+            font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
 
             Column {
                 anchors.fill: parent
-                spacing: 5
+                spacing: 0
 
-                Label {
+                ConsoleSettingRow {
+                    width: parent.width
+                    labelItem: ConsoleText {
                     width: parent.width
                     id: resAudioTitle
                     text: qsTr("Audio configuration")
-                    font.pointSize: 12
                     wrapMode: Text.Wrap
                 }
-
-                AutoResizingComboBox {
+                    editor: AutoResizingComboBox {
                     // ignore setting the index at first, and actually set it when the component is loaded
                     Component.onCompleted: {
                         var saved_audio = preferences.audioConfig
@@ -2046,13 +2231,14 @@ Flickable {
                         preferences.audioConfig = audioListModel.get(currentIndex).val
                     }
                 }
+                }
 
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: audioPcCheck
                     width: parent.width
                     text: qsTr("Mute host PC speakers while streaming")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: !preferences.playAudioOnHost
                     onToggled: {
                         preferences.playAudioOnHost = !checked
@@ -2064,11 +2250,11 @@ Flickable {
                     ToolTip.text: qsTr("You must restart any game currently in progress for this setting to take effect")
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: muteOnFocusLossCheck
                     width: parent.width
                     text: qsTr("Mute audio stream when Moonlight is not the active window")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     visible: SystemProperties.hasDesktopEnvironment
                     checked: preferences.muteOnFocusLoss
                     onToggled: {
@@ -2083,33 +2269,34 @@ Flickable {
             }
         }
 
-        GroupBox {
+        ConsoleSettingsSection {
             id: hostSettingsGroupBox
+            visible: settingsShell.category === 3
             width: (parent.width - (parent.leftPadding + parent.rightPadding))
-            padding: 12
-            title: "<font color=\"skyblue\">" + qsTr("Host Settings") + "</font>"
-            font.pointSize: 12
+            padding: Style.px(0, settingsShell.Window.window)
+            title: qsTr("Host")
+            font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
 
             Column {
                 anchors.fill: parent
-                spacing: 5
+                spacing: 0
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: optimizeGameSettingsCheck
                     width: parent.width
                     text: qsTr("Optimize game settings for streaming")
-                    font.pointSize:  12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.gameOptimizations
                     onToggled: {
                         preferences.gameOptimizations = checked
                     }
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: quitAppAfter
                     width: parent.width
                     text: qsTr("Quit app on host PC after ending stream")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.quitAppAfter
                     onToggled: {
                         preferences.quitAppAfter = checked
@@ -2123,27 +2310,38 @@ Flickable {
             }
         }
 
-        GroupBox {
+        ConsoleSettingsSection {
             id: uiSettingsGroupBox
+            visible: settingsShell.category === 4
             width: (parent.width - (parent.leftPadding + parent.rightPadding))
-            padding: 12
-            title: "<font color=\"skyblue\">" + qsTr("UI Settings") + "</font>"
-            font.pointSize: 12
+            padding: Style.px(0, settingsShell.Window.window)
+            title: qsTr("Interface")
+            font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
 
             Column {
                 anchors.fill: parent
-                spacing: 5
+                spacing: 0
 
-                Label {
+                ConsoleCheckBox {
+                    width: parent.width
+                    text: qsTr("Reduce interface motion")
+                    visible: !gameMode
+                    checked: preferences.uiReducedMotion
+                    objectName: "reduceMotionRow"
+                    onToggled: preferences.uiReducedMotion = checked
+                }
+
+                ConsoleSettingRow {
+                    width: parent.width
+                    visible: !gameMode
+                    labelItem: ConsoleText {
                     width: parent.width
                     id: languageTitle
                     visible: !gameMode
                     text: qsTr("Language")
-                    font.pointSize: 12
                     wrapMode: Text.Wrap
                 }
-
-                AutoResizingComboBox {
+                    editor: AutoResizingComboBox {
                     // ignore setting the index at first, and actually set it when the component is loaded
                     Component.onCompleted: {
                         var saved_language = preferences.language
@@ -2315,21 +2513,23 @@ Flickable {
                         }
                     }
                 }
+                }
 
-                Label {
+                ConsoleSettingRow {
+                    visible: !gameMode && SystemProperties.hasDesktopEnvironment
+                    width: parent.width
+                    labelItem: ConsoleText {
                     width: parent.width
                     id: uiDisplayModeTitle
                     text: qsTr("GUI display mode")
-                    font.pointSize: 12
                     wrapMode: Text.Wrap
                     visible: !gameMode && SystemProperties.hasDesktopEnvironment
                 }
-
-                AutoResizingComboBox {
+                    editor: AutoResizingComboBox {
                     // ignore setting the index at first, and actually set it when the component is loaded
                     Component.onCompleted: {
-                        if (!visible) {
-                            // Do nothing if the control won't even be visible
+                        if (!SystemProperties.hasDesktopEnvironment) {
+                            // Category visibility must not suppress saved-value initialization.
                             return
                         }
 
@@ -2347,9 +2547,8 @@ Flickable {
                     }
 
                     id: uiDisplayModeComboBox
-
-                    objectName: "uiDisplayModeComboBox"
-                    visible: !gameMode && SystemProperties.hasDesktopEnvironment
+                    objectName: "uiDisplayModeChoice"
+                    visible: SystemProperties.hasDesktopEnvironment
                     textRole: "text"
                     model: ListModel {
                         id: uiDisplayModeListModel
@@ -2372,15 +2571,14 @@ Flickable {
                     }
                 }
 
-                Label {
-                    width: parent.width
-                    visible: !gameMode
-                    text: qsTr("Interface scale")
-                    font.pointSize: 12
-                    wrapMode: Text.Wrap
                 }
 
-                AutoResizingComboBox {
+                ConsoleSettingRow {
+                    width: parent.width
+                    visible: !gameMode
+                    objectName: "uiScaleRow"
+                    labelItem: ConsoleText { text: qsTr("Interface scale") }
+                    editor: AutoResizingComboBox {
                     id: uiScaleComboBox
                     objectName: "uiScaleComboBox"
                     visible: !gameMode
@@ -2402,46 +2600,57 @@ Flickable {
                         preferences.save()
                     }
                 }
+                }
 
-                CheckBox {
+                ConsoleCheckBox {
+                    objectName: "controllerFullscreenCheck"
+                    visible: !gameMode && SystemProperties.hasDesktopEnvironment
+                    width: parent.width
+                    text: qsTr("Fullscreen with a controller")
+                    checked: preferences.uiControllerFullscreen
+                    onToggled: preferences.uiControllerFullscreen = checked
+                    ToolTip.text: qsTr("Enter fullscreen when a controller is connected, and stay there until you choose Exit fullscreen or press F11. Mouse and keyboard use do not change the window mode.")
+                }
+
+                ConsoleCheckBox {
                     id: connectionWarningsCheck
                     width: parent.width
                     text: qsTr("Show connection quality warnings")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.connectionWarnings
                     onToggled: {
                         preferences.connectionWarnings = checked
                     }
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: hideVrrBufferWarningsCheck
                     width: parent.width
                     text: qsTr("Hide VRR buffer limit warnings")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.hideVrrBufferWarnings
-                    onCheckedChanged: {
+                    onToggled: {
                         preferences.hideVrrBufferWarnings = checked
                     }
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: configurationWarningsCheck
                     width: parent.width
                     text: qsTr("Show configuration warnings")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.configurationWarnings
                     onToggled: {
                         preferences.configurationWarnings = checked
                     }
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     visible: !gameMode && SystemProperties.hasDiscordIntegration
                     id: discordPresenceCheck
                     width: parent.width
                     text: qsTr("Discord Rich Presence integration")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.richPresence
                     onToggled: {
                         preferences.richPresence = checked
@@ -2453,11 +2662,11 @@ Flickable {
                     ToolTip.text: qsTr("Updates your Discord status to display the name of the game you're streaming.")
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: keepAwakeCheck
                     width: parent.width
                     text: qsTr("Keep the display awake while streaming")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.keepAwake
                     onToggled: {
                         preferences.keepAwake = checked
@@ -2473,31 +2682,31 @@ Flickable {
     }
 
     Column {
-        padding: 10
-        rightPadding: 20
-        x: settingsPage.singleColumn ? 0 : settingsColumn1.width
-        y: settingsPage.singleColumn ? settingsColumn1.height : 0
+        padding: Style.px(0, settingsShell.Window.window)
+        rightPadding: Style.px(0, settingsShell.Window.window)
+        y: settingsColumn1.height
         id: settingsColumn2
-        width: settingsPage.singleColumn ? settingsPage.width : settingsPage.width / 2
-        spacing: 15
+        width: settingsPage.width
+        spacing: Style.px(32, settingsShell.Window.window)
 
-        GroupBox {
+        ConsoleSettingsSection {
             id: inputSettingsGroupBox
+            visible: settingsShell.category === 2
             width: (parent.width - (parent.leftPadding + parent.rightPadding))
-            padding: 12
-            title: "<font color=\"skyblue\">" + qsTr("Input Settings") + "</font>"
-            font.pointSize: 12
+            padding: Style.px(0, settingsShell.Window.window)
+            title: qsTr("Mouse & keyboard")
+            font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
 
             Column {
                 anchors.fill: parent
-                spacing: 5
+                spacing: 0
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: absoluteMouseCheck
                     hoverEnabled: true
                     width: parent.width
                     text: qsTr("Optimize mouse for remote desktop instead of games")
-                    font.pointSize:  12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.absoluteMouseMode
                     onToggled: {
                         preferences.absoluteMouseMode = checked
@@ -2511,88 +2720,37 @@ Flickable {
                                   qsTr("NOTE: Due to a bug in GeForce Experience, this option may not work properly if your host PC has multiple monitors.")
                 }
 
-                Row {
-                    spacing: 5
+                ConsoleSettingRow {
                     width: parent.width
-
-                    CheckBox {
-                        id: captureSysKeysCheck
-                        objectName: "captureSysKeysCheck"
-                        hoverEnabled: true
-                        text: qsTr("Capture system keyboard shortcuts")
-                        font.pointSize: 12
+                    objectName: "captureSystemKeysRow"
+                    labelItem: ConsoleText { text: qsTr("Capture system keyboard shortcuts") }
+                    description: qsTr("Capture shortcuts such as Alt+Tab while streaming. Ctrl+Alt+Del is handled by Windows and cannot be captured.")
+                    editor: AutoResizingComboBox {
+                        id: captureKeysMode
+                        objectName: "captureSysKeysModeComboBox"
                         enabled: SystemProperties.hasDesktopEnvironment
-                        checked: preferences.captureSysKeysMode !== StreamingPreferences.CSK_OFF || !SystemProperties.hasDesktopEnvironment
-                        onToggled: captureSysKeysModeComboBox.updatePref()
-                        width: Math.min(implicitWidth, parent.width - captureSysKeysModeComboBox.width - parent.spacing)
-
-                        ToolTip.delay: 1000
-                        ToolTip.timeout: 10000
-                        ToolTip.visible: hovered
-                        ToolTip.text: qsTr("This enables the capture of system-wide keyboard shortcuts like Alt+Tab that would normally be handled by the client OS while streaming.") + "\n\n" +
-                                      qsTr("NOTE: Certain keyboard shortcuts like Ctrl+Alt+Del on Windows cannot be intercepted by any application, including Moonlight.")
-                    }
-
-                    AutoResizingComboBox {
-                        // ignore setting the index at first, and actually set it when the component is loaded
-                        Component.onCompleted: {
-                            if (!visible) {
-                                // Do nothing if the control won't even be visible
-                                return
-                            }
-
-                            var saved_syskeysmode = preferences.captureSysKeysMode
-                            currentIndex = 0
-                            for (var i = 0; i < captureSysKeysModeListModel.count; i++) {
-                                var el_syskeysmode = captureSysKeysModeListModel.get(i).val;
-                                if (saved_syskeysmode === el_syskeysmode) {
-                                    currentIndex = i
-                                    break
-                                }
-                            }
-
-                            recalculateWidth()
-                        }
-
-                        id: captureSysKeysModeComboBox
-                        maximumWidth: parent.width / 2
-                        enabled: captureSysKeysCheck.checked && captureSysKeysCheck.enabled
                         textRole: "text"
                         model: ListModel {
-                            id: captureSysKeysModeListModel
-                            ListElement {
-                                text: qsTr("in fullscreen")
-                                val: StreamingPreferences.CSK_FULLSCREEN
-                            }
-                            ListElement {
-                                text: qsTr("always")
-                                val: StreamingPreferences.CSK_ALWAYS
-                            }
+                            ListElement { text: qsTr("Off"); val: StreamingPreferences.CSK_OFF }
+                            ListElement { text: qsTr("In fullscreen"); val: StreamingPreferences.CSK_FULLSCREEN }
+                            ListElement { text: qsTr("Always"); val: StreamingPreferences.CSK_ALWAYS }
                         }
-
-                        function updatePref() {
-                            if (!enabled) {
-                                preferences.captureSysKeysMode = StreamingPreferences.CSK_OFF
+                        Component.onCompleted: {
+                            for (var i = 0; i < count; ++i) {
+                                if (model.get(i).val === preferences.captureSysKeysMode) { currentIndex = i; break }
                             }
-                            else {
-                                preferences.captureSysKeysMode = captureSysKeysModeListModel.get(currentIndex).val
-                            }
+                            recalculateWidth()
                         }
-
-                        // ::onActivated must be used, as it only listens for when the index is changed by a human
-                        onActivated: {
-                            updatePref()
-                        }
-
+                        onActivated: preferences.captureSysKeysMode = model.get(currentIndex).val
                     }
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: absoluteTouchCheck
                     hoverEnabled: true
                     width: parent.width
                     text: qsTr("Use touchscreen as a virtual trackpad")
-                    font.pointSize:  12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: !preferences.absoluteTouchMode
                     onToggled: {
                         preferences.absoluteTouchMode = !checked
@@ -2604,24 +2762,24 @@ Flickable {
                     ToolTip.text: qsTr("When checked, the touchscreen acts like a trackpad. When unchecked, the touchscreen will directly control the mouse pointer.")
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: swapMouseButtonsCheck
                     hoverEnabled: true
                     width: parent.width
                     text: qsTr("Swap left and right mouse buttons")
-                    font.pointSize:  12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.swapMouseButtons
                     onToggled: {
                         preferences.swapMouseButtons = checked
                     }
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: reverseScrollButtonsCheck
                     hoverEnabled: true
                     width: parent.width
                     text: qsTr("Reverse mouse scrolling direction")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.reverseScrollDirection
                     onToggled: {
                         preferences.reverseScrollDirection = checked
@@ -2630,22 +2788,23 @@ Flickable {
             }
         }
 
-        GroupBox {
+        ConsoleSettingsSection {
             id: gamepadSettingsGroupBox
+            visible: settingsShell.category === 2
             width: (parent.width - (parent.leftPadding + parent.rightPadding))
-            padding: 12
-            title: "<font color=\"skyblue\">" + qsTr("Gamepad Settings") + "</font>"
-            font.pointSize: 12
+            padding: Style.px(0, settingsShell.Window.window)
+            title: qsTr("Controllers")
+            font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
 
             Column {
                 anchors.fill: parent
-                spacing: 5
+                spacing: 0
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: swapFaceButtonsCheck
                     width: parent.width
                     text: qsTr("Swap A/B and X/Y gamepad buttons")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.swapFaceButtons
                     onToggled: {
                         preferences.swapFaceButtons = checked
@@ -2657,11 +2816,11 @@ Flickable {
                     ToolTip.text: qsTr("This switches gamepads into a Nintendo-style button layout")
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: singleControllerCheck
                     width: parent.width
                     text: qsTr("Force gamepad #1 always connected")
-                    font.pointSize:  12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: !preferences.multiController
                     onToggled: {
                         preferences.multiController = !checked
@@ -2674,23 +2833,23 @@ Flickable {
                                   qsTr("Only enable this option when streaming a game that doesn't support gamepads being connected after startup.")
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: gamepadMouseCheck
                     hoverEnabled: true
                     width: parent.width
                     text: qsTr("Enable mouse control with gamepads by holding the 'Start' button")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.gamepadMouse
                     onToggled: {
                         preferences.gamepadMouse = checked
                     }
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: backgroundGamepadCheck
                     width: parent.width
                     text: qsTr("Process gamepad input when Moonlight is in the background")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     visible: SystemProperties.hasDesktopEnvironment
                     checked: preferences.backgroundGamepad
                     onToggled: {
@@ -2703,14 +2862,14 @@ Flickable {
                     ToolTip.text: qsTr("Allows Moonlight to capture gamepad inputs even if it's not the current window in focus")
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: steamControllerCheck
                     hoverEnabled: true
                     width: parent.width
                     text: qsTr("Drive a USB or puck-connected Steam Controller (2026) directly")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.steamControllerDriver
-                    onCheckedChanged: {
+                    onToggled: {
                         preferences.steamControllerDriver = checked
                     }
 
@@ -2722,15 +2881,15 @@ Flickable {
                                   qsTr("NEVER start a controller firmware update from Steam while streaming. The update would target the virtual controller on the host, not the real controller; it cannot succeed and may leave Steam confused. Update firmware with the controller connected directly to a PC running Steam.")
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: steamControllerMotionCheck
                     hoverEnabled: true
                     width: parent.width
                     enabled: steamControllerCheck.checked
                     text: qsTr("Steam Controller: gyro and accelerometer")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.steamControllerMotion
-                    onCheckedChanged: {
+                    onToggled: {
                         preferences.steamControllerMotion = checked
                     }
 
@@ -2740,15 +2899,15 @@ Flickable {
                     ToolTip.text: qsTr("Asks the firmware for the raw IMU and advertises motion to the host; the host decides when it wants the reports.")
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: steamControllerSplitPadsCheck
                     hoverEnabled: true
                     width: parent.width
                     enabled: steamControllerCheck.checked
                     text: qsTr("Steam Controller: trackpads as DualShock touchpad halves")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.steamControllerSplitPads
-                    onCheckedChanged: {
+                    onToggled: {
                         preferences.steamControllerSplitPads = checked
                     }
 
@@ -2759,15 +2918,15 @@ Flickable {
                                   qsTr("Turn it off only for a host that understands two touchpads.")
                 }
 
-                Label {
+                ConsoleSettingRow {
+                    width: parent.width
+                    labelItem: ConsoleText {
                     width: parent.width
                     text: qsTr("Steam Controller: grip buttons")
-                    font.pointSize: 12
                     wrapMode: Text.Wrap
                     enabled: steamControllerCheck.checked
                 }
-
-                AutoResizingComboBox {
+                    editor: AutoResizingComboBox {
                     id: steamControllerGripsComboBox
                     enabled: steamControllerCheck.checked
                     textRole: "text"
@@ -2807,16 +2966,17 @@ Flickable {
                         preferences.steamControllerGrips = steamControllerGripsListModel.get(currentIndex).val
                     }
                 }
+                }
 
-                Label {
+                ConsoleSettingRow {
+                    width: parent.width
+                    labelItem: ConsoleText {
                     width: parent.width
                     text: qsTr("Steam Controller: hold host rumble for")
-                    font.pointSize: 12
                     wrapMode: Text.Wrap
                     enabled: steamControllerCheck.checked
                 }
-
-                AutoResizingComboBox {
+                    editor: AutoResizingComboBox {
                     id: steamControllerRumbleHoldComboBox
                     enabled: steamControllerCheck.checked
                     textRole: "text"
@@ -2866,16 +3026,17 @@ Flickable {
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("A rumble from the host is refreshed on the controller every 40 ms until this time passes, then the motors stop; choose Unlimited only when the host reliably sends a stop.")
                 }
+                }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: steamControllerStickStretchCheck
                     hoverEnabled: true
                     width: parent.width
                     enabled: steamControllerCheck.checked
                     text: qsTr("Steam Controller: stretch the sticks to the rim")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.steamControllerStickStretch
-                    onCheckedChanged: {
+                    onToggled: {
                         preferences.steamControllerStickStretch = checked
                     }
 
@@ -2885,15 +3046,15 @@ Flickable {
                     ToolTip.text: qsTr("Divides each stick axis by the largest deflection seen this session and clamps to the unit circle. Off by default: Steam's own calibration expects the controller's native range.")
                 }
 
-                Label {
+                ConsoleSettingRow {
+                    width: parent.width
+                    labelItem: ConsoleText {
                     width: parent.width
                     text: qsTr("Steam Controller over Bluetooth LE: pad click boost")
-                    font.pointSize: 12
                     wrapMode: Text.Wrap
                     enabled: steamControllerCheck.checked
                 }
-
-                AutoResizingComboBox {
+                    editor: AutoResizingComboBox {
                     id: steamControllerHapticBoostComboBox
                     enabled: steamControllerCheck.checked
                     textRole: "text"
@@ -2939,16 +3100,17 @@ Flickable {
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Bluetooth LE only: added to the gain of Steam's trackpad tick and click commands, clamped to the firmware's +6 dB ceiling. USB and puck links are not affected.")
                 }
+                }
 
-                Label {
+                ConsoleSettingRow {
+                    width: parent.width
+                    labelItem: ConsoleText {
                     width: parent.width
                     text: qsTr("Steam Controller over Bluetooth LE: pad slide pulse length")
-                    font.pointSize: 12
                     wrapMode: Text.Wrap
                     enabled: steamControllerCheck.checked
                 }
-
-                AutoResizingComboBox {
+                    editor: AutoResizingComboBox {
                     id: steamControllerHapticPulseScaleComboBox
                     enabled: steamControllerCheck.checked
                     textRole: "text"
@@ -2994,16 +3156,17 @@ Flickable {
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Bluetooth LE only: Steam's slide texture is 400 us pulses with no gain field, so this lengthens their on-time instead. Stops are untouched.")
                 }
+                }
 
-                Label {
+                ConsoleSettingRow {
+                    width: parent.width
+                    labelItem: ConsoleText {
                     width: parent.width
                     text: qsTr("Steam Controller over Bluetooth LE: haptic master gain")
-                    font.pointSize: 12
                     wrapMode: Text.Wrap
                     enabled: steamControllerCheck.checked
                 }
-
-                AutoResizingComboBox {
+                    editor: AutoResizingComboBox {
                     id: steamControllerHapticMasterGainComboBox
                     enabled: steamControllerCheck.checked
                     textRole: "text"
@@ -3045,29 +3208,31 @@ Flickable {
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Bluetooth LE only: written as the firmware's haptic master gain setting (76) with the link's own settings and cleared at stream end. Steam never writes it; if the firmware honours it, everything gets stronger and the two knobs above are unnecessary.")
                 }
+                }
             }
         }
 
-        GroupBox {
+        ConsoleSettingsSection {
             id: advancedSettingsGroupBox
+            visible: settingsShell.category === 6
             width: (parent.width - (parent.leftPadding + parent.rightPadding))
-            padding: 12
-            title: "<font color=\"skyblue\">" + qsTr("Advanced Settings") + "</font>"
-            font.pointSize: 12
+            padding: Style.px(0, settingsShell.Window.window)
+            title: qsTr("Advanced")
+            font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
 
             Column {
                 anchors.fill: parent
-                spacing: 5
+                spacing: 0
 
-                Label {
+                ConsoleSettingRow {
+                    width: parent.width
+                    labelItem: ConsoleText {
                     width: parent.width
                     id: resVDSTitle
                     text: qsTr("Video decoder")
-                    font.pointSize: 12
                     wrapMode: Text.Wrap
                 }
-
-                AutoResizingComboBox {
+                    editor: AutoResizingComboBox {
                     // ignore setting the index at first, and actually set it when the component is loaded
                     Component.onCompleted: {
                         var saved_vds = preferences.videoDecoderSelection
@@ -3106,17 +3271,19 @@ Flickable {
                         }
                     }
                 }
+                }
 
-                Label {
+                ConsoleSettingRow {
+                    visible: SystemProperties.isDarwin
+                    width: parent.width
+                    labelItem: ConsoleText {
                     width: parent.width
                     id: rendererTitle
                     text: qsTr("Renderer")
-                    font.pointSize: 12
                     wrapMode: Text.Wrap
                     visible: SystemProperties.isDarwin
                 }
-
-                AutoResizingComboBox {
+                    editor: AutoResizingComboBox {
                     // ignore setting the index at first, and actually set it when the component is loaded
                     Component.onCompleted: {
                         var saved_rs = preferences.rendererSelection
@@ -3162,18 +3329,18 @@ Flickable {
                         preferences.rendererSelection = rendererListModel.get(currentIndex).val
                     }
                 }
+                }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: unlockBitrate
                     width: parent.width
                     text: qsTr("Unlock bitrate limit (Experimental)")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
 
                     checked: preferences.unlockBitrate
                     onToggled: {
                         preferences.unlockBitrate = checked
                         preferences.bitrateKbps = Math.min(preferences.bitrateKbps, slider.to)
-                        slider.value = preferences.bitrateKbps
                     }
 
                     ToolTip.delay: 1000
@@ -3182,24 +3349,24 @@ Flickable {
                     ToolTip.text: qsTr("This unlocks extremely high video bitrates for use with Sunshine hosts. It should only be used when streaming over an Ethernet LAN connection.")
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     width: parent.width
                     visible: !gameMode
                     text: qsTr("Notify me about prerelease and nightly updates")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: AutoUpdateChecker.notifyPrereleases
                     onClicked: AutoUpdateChecker.notifyPrereleases = checked
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Enabled by default. Turn off to receive only stable update notifications. Updates are never installed automatically.")
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: enableMdns
                     objectName: "enableMdns"
                     visible: !gameMode
                     width: parent.width
                     text: qsTr("Automatically find PCs on the local network (Recommended)")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.enableMdns
                     onToggled: {
                         // This is called on init, so only do the work if we've
@@ -3216,23 +3383,23 @@ Flickable {
                     }
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: detectNetworkBlocking
                     visible: !gameMode
                     width: parent.width
                     text: qsTr("Automatically detect blocked connections (Recommended)")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.detectNetworkBlocking
                     onToggled: {
                         preferences.detectNetworkBlocking = checked
                     }
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: showPerformanceOverlay
                     width: parent.width
                     text: qsTr("Show performance stats while streaming")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.showPerformanceOverlay
                     onToggled: {
                         preferences.showPerformanceOverlay = checked
@@ -3246,13 +3413,13 @@ Flickable {
                                   qsTr("The performance overlay is not supported on Steam Link or Raspberry Pi.")
                 }
 
-                CheckBox {
+                ConsoleCheckBox {
                     id: showFrametimeGraph
                     width: parent.width
                     text: qsTr("Show frametime graph while streaming")
-                    font.pointSize: 12
+                    font.pixelSize: Style.typeSize("body", settingsShell.Window.window)
                     checked: preferences.showFrametimeGraph
-                    onCheckedChanged: {
+                    onToggled: {
                         preferences.showFrametimeGraph = checked
                     }
 
@@ -3263,6 +3430,55 @@ Flickable {
                                   qsTr("You can toggle it at any time while streaming using Ctrl+Alt+Shift+F or Select+L1+R1+Y (Triangle).")
                 }
             }
+        }
+    Column {
+        id: aboutColumn
+        visible: settingsShell.category === 7
+        width: settingsPage.width; spacing: Style.px(16, settingsShell.Window.window)
+        ConsoleText { role: "heading"; text: qsTr("About Moonlight") }
+        ConsoleText { role: "secondary"; text: qsTr("Version %1").arg(SystemProperties.versionString) }
+        ConsoleListRow { text: qsTr("Setup guide"); onClicked: Qt.openUrlExternally("https://github.com/moonlight-stream/moonlight-docs/wiki/Setup-Guide"); visible: SystemProperties.hasBrowser }
+        ConsoleListRow { text: qsTr("Community"); onClicked: Qt.openUrlExternally("https://moonlight-stream.org/discord"); visible: SystemProperties.hasBrowser }
+        ConsoleListRow {
+            text: typeof updateButton !== "undefined" && updateButton.available ? qsTr("Download update %1").arg(updateButton.updateVersion) : qsTr("Check for updates")
+            onClicked: { if (typeof updateButton !== "undefined" && updateButton.available) Qt.openUrlExternally(updateButton.browserUrl); else AutoUpdateChecker.start() }
+            visible: SystemProperties.hasBrowser
+        }
+        ConsoleListRow {
+            text: qsTr("Dismiss update")
+            visible: typeof updateButton !== "undefined" && updateButton.available
+            onClicked: { AutoUpdateChecker.dismissUpdate(updateButton.updateVersion); updateButton.available = false }
+        }
+        ConsoleListRow { text: qsTr("Quit Moonlight"); onClicked: { if (typeof window !== "undefined" && typeof window.requestQuit === "function") window.requestQuit() } }
+    }
+    }
+}
+    Rectangle {
+        id: helpPanel
+        x: settingsPage.x; width: settingsPage.width
+        height: Style.px(112, settingsShell.Window.window)
+        anchors.bottom: parent.bottom
+        color: Style.background
+        Rectangle { width: parent.width; height: 1; color: Style.outline }
+        Flickable {
+            id: helpViewport
+            anchors.fill: parent; anchors.margins: Style.px(16, settingsShell.Window.window)
+            clip: true; contentHeight: helpText.implicitHeight; boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            ConsoleText {
+                id: helpText; width: parent.width - Style.px(16, settingsShell.Window.window); role: "secondary"; wrapMode: Text.Wrap
+                text: settingsShell.categoryMenuFocused ? qsTr("Choose a category. Press Right or Confirm to open its settings.") :
+                      settingsShell.activeRow && settingsShell.activeRow.settingsHelp ? settingsShell.activeRow.settingsHelp : settingsShell.activeRow && settingsShell.activeRow.settingsAction === true ? qsTr("Confirm to select this action. Press Left to return to categories.") : qsTr("Confirm to change this setting. Press Left to return to categories.")
+            }
+        }
+        Rectangle {
+            anchors.right: parent.right; anchors.bottom: parent.bottom
+            width: overflowLabel.implicitWidth + Style.px(16, settingsShell.Window.window)
+            height: overflowLabel.implicitHeight + Style.px(8, settingsShell.Window.window)
+            color: Style.control; radius: Style.px(4, settingsShell.Window.window)
+            visible: settingsShell.optionsAvailable && helpText.implicitHeight > helpViewport.height
+            ConsoleText { id: overflowLabel; anchors.centerIn: parent; role: "caption"; text: qsTr("More help…") }
+            MouseArea { anchors.fill: parent; onClicked: settingsShell.optionsAction() }
         }
     }
 }

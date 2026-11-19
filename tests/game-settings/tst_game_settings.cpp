@@ -115,6 +115,68 @@ private slots:
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     }
 
+    void consoleUiPreferencesStayInActiveProfile() {
+        base()->uiReducedMotion = true;
+        base()->uiControllerFullscreen = false;
+        base()->setUiScale(125);
+        base()->rememberUiSelection("host-a", 7);
+        base()->recordUiPlay("host-a", 7);
+        base()->recordUiPlay("host-a", 9);
+        base()->recordUiPlay("host-a", 7);
+        base()->save();
+        QCOMPARE(base()->recentUiApps("host-a"), (QVariantList{7, 9}));
+        QCOMPARE(base()->selectedUiApp("host-a"), 7);
+        QVERIFY(!QSettings().contains("ui/lastHostUuid"));
+        QVERIFY(!QSettings().contains("ui/recentApps/host-a"));
+
+        activeProfile = "second";
+        QSignalSpy uiChanged(base(), &StreamingPreferences::uiPreferencesChanged);
+        QSignalSpy fullscreenChanged(base(), &StreamingPreferences::uiControllerFullscreenChanged);
+        base()->reload();
+        QVERIFY(!uiChanged.isEmpty());
+        QVERIFY(!fullscreenChanged.isEmpty());
+        QVERIFY(base()->uiLastHostUuid.isEmpty());
+        QVERIFY(!base()->uiReducedMotion);
+        QVERIFY(base()->uiControllerFullscreen);
+        QCOMPARE(base()->uiScale(), 100);
+        QCOMPARE(base()->selectedUiApp("host-a"), 0);
+        QVERIFY(base()->recentUiApps("host-a").isEmpty());
+        base()->rememberUiSelection("host-a", 20);
+        base()->recordUiPlay("host-a", 20);
+        base()->save();
+
+        activeProfile = "default";
+        base()->reload();
+        QCOMPARE(base()->uiLastHostUuid, QString("host-a"));
+        QVERIFY(base()->uiReducedMotion);
+        QVERIFY(!base()->uiControllerFullscreen);
+        QCOMPARE(base()->uiScale(), 125);
+        QCOMPARE(base()->selectedUiApp("host-a"), 7);
+        QCOMPARE(base()->recentUiApps("host-a"), (QVariantList{7, 9}));
+    }
+
+    void consoleHistoryIgnoresTransientAndInactiveContexts() {
+        base()->rememberUiSelection("host-a", 7);
+        base()->recordUiPlay("host-a", 7);
+        auto transient = base()->createTransientCopy();
+        transient->rememberUiSelection("host-b", 20);
+        transient->recordUiPlay("host-a", 20);
+        QCOMPARE(base()->uiLastHostUuid, QString("host-a"));
+        QCOMPARE(base()->selectedUiApp("host-b"), 0);
+        QCOMPARE(base()->recentUiApps("host-a"), (QVariantList{7}));
+        QVERIFY(transient->recentUiApps("host-a").isEmpty());
+        QCOMPARE(transient->selectedUiApp("host-a"), 0);
+
+        const auto keys = QSettings().allKeys();
+        activeProfile.clear();
+        base()->rememberUiSelection("host-b", 30);
+        base()->recordUiPlay("host-a", 30);
+        QVERIFY(base()->recentUiApps("host-a").isEmpty());
+        QCOMPARE(base()->selectedUiApp("host-a"), 0);
+        QCOMPARE(QSettings().allKeys(), keys);
+        QVERIFY(!QSettings().contains("ui/lastHostUuid"));
+    }
+
     void noOverridesPreserveExactProfile() {
         base()->bitrateKbps = 43210;
         base()->packetSize = 1200;

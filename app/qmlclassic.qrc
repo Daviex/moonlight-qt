@@ -1,0 +1,31 @@
+<RCC>
+    <qresource prefix="/">
+        <file alias="gui/main.qml">gui/classic/main.qml</file>
+        <file>gui/ProfileSelectionView.qml</file>
+        <file alias="gui/PcView.qml">gui/classic/PcView.qml</file>
+        <file alias="gui/AppView.qml">gui/classic/AppView.qml</file>
+        <file alias="gui/SettingsView.qml">gui/classic/SettingsView.qml</file>
+        <file>gui/GameSettingsView.qml</file>
+        <file alias="gui/CalibrationButton.qml">gui/classic/CalibrationButton.qml</file>
+        <file>gui/CalibrationHostSelection.qml</file>
+        <file alias="gui/VrrTimingSettings.qml">gui/classic/VrrTimingSettings.qml</file>
+        <file alias="gui/PyroWavePacketSpeedSettings.qml">gui/classic/PyroWavePacketSpeedSettings.qml</file>
+        <file alias="gui/StreamSegue.qml">gui/classic/StreamSegue.qml</file>
+        <file>gui/GamepadMapper.qml</file>
+        <file alias="gui/QuitSegue.qml">gui/classic/QuitSegue.qml</file>
+        <file>gui/NavigableToolButton.qml</file>
+        <file>gui/NavigableItemDelegate.qml</file>
+        <file alias="gui/NavigableMenuItem.qml">gui/classic/NavigableMenuItem.qml</file>
+        <file>gui/CliQuitStreamSegue.qml</file>
+        <file>gui/CliStartStreamSegue.qml</file>
+        <file alias="gui/AutoResizingComboBox.qml">gui/classic/AutoResizingComboBox.qml</file>
+        <file alias="gui/NavigableMenu.qml">gui/classic/NavigableMenu.qml</file>
+        <file>gui/ErrorMessageDialog.qml</file>
+        <file alias="gui/NavigableMessageDialog.qml">gui/classic/NavigableMessageDialog.qml</file>
+        <file alias="gui/NavigableDialog.qml">gui/classic/NavigableDialog.qml</file>
+        <file>gui/PopupFocus.js</file>
+        <file>gui/PopupFade.qml</file>
+        <file>gui/CenteredGridView.qml</file>
+        <file>gui/CliPair.qml</file>
+    </qresource>
+</RCC>

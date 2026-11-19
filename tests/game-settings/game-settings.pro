@@ -10,4 +10,4 @@ SOURCES += tst_game_settings.cpp \
     ../../app/diagnostics/diagnosticcapture.cpp \
     ../../app/diagnostics/diagnosticzip.cpp
 HEADERS += ../../app/settings/streamingpreferences.h ../../app/settings/gamestreamingsettings.h
-RESOURCES += ../../app/qml.qrc ../gui-resources.qrc ../navigation/mocks.qrc
+RESOURCES += ../../app/qmlclassic.qrc ../gui-resources.qrc ../navigation/mocks.qrc

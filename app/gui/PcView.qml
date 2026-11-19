@@ -1,6 +1,7 @@
 import QtQuick 2.9
-import QtQuick.Controls 2.2
+import QtQuick.Controls 2.5
 import QtQuick.Layouts 1.3
+import QtQuick.Window 2.2
 
 import ComputerModel 1.0
 
@@ -8,98 +9,154 @@ import ComputerManager 1.0
 import StreamingPreferences 1.0
 import SystemProperties 1.0
 import SdlGamepadKeyNavigation 1.0
+import "ConsoleStyle.js" as Style
 
 CenteredGridView {
     property ComputerModel computerModel : createModel()
-    property bool focusFirstHostOnLoad: false
-    property bool firstHostFocusApplied: false
-    property bool initialSelectionReset: false
-    property bool defaultHostAutoOpenPending: true
-    property bool defaultHostSelected: false
-    property bool activated: false
 
+    property bool startupRestorePending: true
+    readonly property string rememberedStatus: selectedHost.uuid === StreamingPreferences.uiLastHostUuid && !selectedHost.online ?
+        qsTr("%1 is unavailable. Use Options to wake it, or choose another PC.").arg(selectedHost.name) : ""
+    function openHost(row, allApps, automatic) {
+        var host = computerModel.get(row)
+        if (!host.online || !host.paired || !host.serverSupported) return false
+        startupRestorePending = false
+        StreamingPreferences.rememberUiSelection(host.uuid, 0)
+        var component = Qt.createComponent("AppView.qml")
+        stackView.push(component.createObject(stackView, {
+            "computerIndex": row, "hostUuid": host.uuid, "objectName": host.name,
+            "showHiddenGames": allApps, "showGames": automatic
+        }))
+        return true
+    }
+    readonly property string startupHostUuid: ComputerManager.defaultHostUuid || StreamingPreferences.uiLastHostUuid
+    function openRememberedHost() {
+        var row = computerModel.indexOfUuid(startupHostUuid)
+        if (row < 0) return false
+        currentIndex = row
+        return openHost(row, false, true)
+    }
+    function tryStartupRestore() {
+        if (!startupRestorePending || StackView.status !== StackView.Active) return
+        if (typeof window !== "undefined" && window.popupHasFocus()) return
+        var row = computerModel.indexOfUuid(startupHostUuid)
+        if (row >= 0 && !computerModel.get(row).statusUnknown) {
+            openRememberedHost()
+            startupRestorePending = false
+        }
+    }
+    Connections {
+        target: pcGrid.computerModel
+        function onDataChanged() { pcGrid.refreshHost(); Qt.callLater(pcGrid.tryStartupRestore) }
+        function onRowsInserted() { Qt.callLater(pcGrid.refreshAfterModelChange) }
+        function onRowsRemoved() { Qt.callLater(pcGrid.refreshAfterModelChange) }
+        function onModelReset() { Qt.callLater(pcGrid.refreshAfterModelChange) }
+        function onLayoutChanged() { Qt.callLater(pcGrid.refreshAfterModelChange) }
+    }
+    Timer { interval: 200; running: true; onTriggered: pcGrid.tryStartupRestore() }
+    ConsoleBackdrop { parent: pcGrid; anchors.fill: parent; z: -1 }
+    readonly property real uiScale: Style.windowScale(Window.window)
+    property var selectedHost: ({})
+    readonly property bool optionsAvailable: count > 0 && !addingPc
+    readonly property bool addingPc: footerItem && footerItem.button.activeFocus
+    readonly property string primaryVerb: count === 0 || addingPc ? qsTr("Add PC") : !selectedHost.online ? qsTr("Wake") : !selectedHost.paired ? qsTr("Pair") : qsTr("Open")
+    function focusContent() {
+        if (count === 0 && footerItem) footerItem.button.forceActiveFocus()
+        else if (currentItem) currentItem.forceActiveFocus()
+    }
+    onCountChanged: Qt.callLater(function() {
+        // Discovery continues while another page or the navigation rail owns focus.
+        if (pcGrid.StackView.status !== StackView.Active || !pcGrid.visible || !pcGrid.activeFocus) return
+        if (typeof window !== "undefined" && window.popupHasFocus()) return
+        pcGrid.focusContent()
+    })
+    function primaryAction() {
+        if (count === 0 || addingPc) addPcDialog.open()
+        else if (currentItem) currentItem.activateHost()
+    }
+    function optionsAction() { if (currentItem) currentItem.pcContextMenu.open() }
+    function refreshHost() { selectedHost = computerModel.get(currentIndex) }
+    function refreshAfterModelChange() {
+        // A reset or reorder can replace the host at an unchanged row number.
+        refreshHost()
+        tryStartupRestore()
+    }
+    onCurrentIndexChanged: refreshHost()
+    Column {
+        parent: pcGrid
+        x: Style.px(64, pcGrid.Window.window)
+        y: pcGrid.cardY + Style.px(176 + 24, pcGrid.Window.window)
+        width: parent.width - 2 * x; spacing: Style.px(12, pcGrid.Window.window)
+        ConsoleText { width: parent.width; role: "display"; text: pcGrid.count === 0 || pcGrid.addingPc ? qsTr("Add a PC") : pcGrid.selectedHost.name || qsTr("PCs"); elide: Text.ElideRight }
+        ConsoleText {
+            width: parent.width; role: "secondary"; wrapMode: Text.Wrap
+            text: pcGrid.count === 0 ? qsTr("PCs on your network will appear here. You can also enter an address.") : pcGrid.addingPc ? qsTr("Enter the address of your gaming PC.") : pcGrid.rememberedStatus || (pcGrid.selectedHost.online ? qsTr("Ready to connect") : qsTr("Wake your PC, or choose another host."))
+        }
+    }
+    readonly property real cardY: Math.max(Style.px(24, Window.window), Math.min(Style.px(178, Window.window), height - Style.px(300, Window.window)))
+    footer: Item {
+        width: pcGrid.cellWidth; height: pcGrid.height
+        property alias button: addPcTile
+        ConsoleButton {
+            id: addPcTile; focus: false; objectName: "addPcTile"
+            width: Style.px(296, pcGrid.Window.window); height: Style.px(176, pcGrid.Window.window)
+            y: pcGrid.cardY; text: qsTr("+ Add PC"); textOnly: true
+            background: Rectangle {
+                color: addPcTile.focusVisible || addPcTile.hovered ? Style.control : Style.surface
+                radius: Style.px(6, pcGrid.Window.window); border.width: 1; border.color: Style.outline
+                ConsoleFocus { focused: addPcTile.activeFocus; radius: parent.radius }
+            }
+            Keys.onMenuPressed: { }
+            onClicked: addPcDialog.open()
+            Keys.onLeftPressed: pcGrid.focusContent()
+            Keys.onUpPressed: { if (typeof window !== "undefined") window.focusNavigation() }
+        }
+    }
+    Rectangle {
+        parent: pcGrid; anchors.fill: parent; color: Style.background; z: 10
+        visible: pcGrid.startupRestorePending && startupHostUuid.length > 0 && pcGrid.computerModel.indexOfUuid(startupHostUuid) >= 0
+        ConsoleText { anchors.centerIn: parent; role: "title"; text: qsTr("Connecting to your PC…") }
+    }
+    Keys.onPressed: startupRestorePending = false
     id: pcGrid
     focus: true
     activeFocusOnTab: true
-    topMargin: 20
-    bottomMargin: 5
-    cellWidth: 310; cellHeight: 330;
+    topMargin: 0; bottomMargin: 0
+    minMargin: Style.px(64, Window.window)
+    horizontalMargin: minMargin
+    flow: GridView.FlowTopToBottom
+    cellWidth: Style.px(320, Window.window); cellHeight: height
+    boundsBehavior: Flickable.StopAtBounds
     objectName: qsTr("Computers")
 
     Component.onCompleted: {
         // Don't show any highlighted item until interacting with them.
         // We do this here instead of onActivated to avoid losing the user's
         // selection when backing out of a different page of the app.
-        currentIndex = -1
-        initialSelectionReset = true
-        focusFirstHostIfNeeded()
-    }
-
-    Timer {
-        id: selectedHostFocusTimer
-        interval: 0
-        repeat: false
-        onTriggered: {
-            if (!pcGrid.activated || stackView.currentItem !== pcGrid) {
-                return
-            }
-            if (pcGrid.currentIndex >= 0 && pcGrid.currentItem) {
-                pcGrid.currentItem.forceActiveFocus(Qt.TabFocusReason)
-            }
-            else {
-                pcGrid.forceActiveFocus(Qt.TabFocusReason)
-            }
-        }
-    }
-
-    Timer {
-        id: defaultHostOpenTimer
-        interval: 0
-        repeat: false
-        onTriggered: pcGrid.evaluateDefaultHost()
+        currentIndex = 0
     }
 
     // Note: Any initialization done here that is critical for streaming must
     // also be done in CliStartStreamSegue.qml, since this code does not run
     // for command-line initiated streams.
     StackView.onActivated: {
-        activated = true
-
+        Qt.callLater(function() {
+            if (pcGrid.StackView.status !== StackView.Active || !pcGrid.visible) return
+            if (typeof window !== "undefined" && window.popupHasFocus()) return
+            pcGrid.focusContent()
+        })
         // Setup signals on CM
         ComputerManager.computerAddCompleted.connect(addComplete)
-        computerModel.dataChanged.connect(tryOpenDefaultHost)
-        computerModel.modelReset.connect(tryOpenDefaultHost)
 
-        focusFirstHostIfNeeded()
-        if (firstHostFocusApplied && currentIndex >= 0) {
-            focusSelectedHostSoon()
-        }
-
-        tryOpenDefaultHost()
-    }
-
-    onCountChanged: {
-        focusFirstHostIfNeeded()
-        tryOpenDefaultHost()
-    }
-
-    onCurrentItemChanged: {
-        if (activated && firstHostFocusApplied) {
-            focusSelectedHostSoon()
-        }
-        if (activated && defaultHostAutoOpenPending) {
-            defaultHostOpenTimer.restart()
+        // Highlight the first item if a gamepad is connected
+        if (currentIndex === -1 && SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
+            currentIndex = 0
         }
     }
 
     StackView.onDeactivating: {
-        activated = false
-        defaultHostAutoOpenPending = false
-        selectedHostFocusTimer.stop()
-        defaultHostOpenTimer.stop()
+        startupRestorePending = false
         ComputerManager.computerAddCompleted.disconnect(addComplete)
-        computerModel.dataChanged.disconnect(tryOpenDefaultHost)
-        computerModel.modelReset.disconnect(tryOpenDefaultHost)
     }
 
     function pairingComplete(error)
@@ -133,215 +190,40 @@ CenteredGridView {
 
     function createModel()
     {
-        var model = Qt.createQmlObject('import ComputerModel 1.0; ComputerModel {}', pcGrid, '')
+        var model = Qt.createQmlObject('import ComputerModel 1.0; ComputerModel {}', parent, '')
         model.initialize(ComputerManager)
         model.pairingCompleted.connect(pairingComplete)
         model.connectionTestCompleted.connect(testConnectionDialog.connectionTestComplete)
         return model
     }
 
-    function focusFirstHostIfNeeded()
-    {
-        if (!initialSelectionReset || firstHostFocusApplied ||
-                currentIndex !== -1 || count === 0) {
-            return
-        }
-
-        if (!focusFirstHostOnLoad &&
-                SdlGamepadKeyNavigation.getConnectedGamepads() === 0) {
-            return
-        }
-
-        currentIndex = 0
-        firstHostFocusApplied = true
-        if (activated) {
-            focusSelectedHostSoon()
-        }
-    }
-
-    function focusSelectedHostSoon()
-    {
-        selectedHostFocusTimer.restart()
-    }
-
-    function openComputer(computerIndex, computerName, showHiddenGames)
-    {
-        if (!activated || stackView.busy || stackView.currentItem !== pcGrid) {
-            return
-        }
-
-        var properties = {
-            "computerIndex": computerIndex,
-            "objectName": computerName
-        }
-        if (showHiddenGames === true) {
-            properties.showHiddenGames = true
-        }
-
-        stackView.push("qrc:/gui/AppView.qml", properties)
-    }
-
-    function tryOpenDefaultHost()
-    {
-        if (!activated || !defaultHostAutoOpenPending) {
-            return
-        }
-
-        if (ComputerManager.defaultHostUuid.length === 0) {
-            defaultHostAutoOpenPending = false
-            return
-        }
-
-        var defaultHostIndex = computerModel.indexOfComputer(ComputerManager.defaultHostUuid)
-        if (defaultHostIndex < 0) {
-            defaultHostAutoOpenPending = false
-            return
-        }
-
-        // Once selected, respect navigation performed while the first poll is pending.
-        if (defaultHostSelected && currentIndex !== defaultHostIndex) {
-            defaultHostAutoOpenPending = false
-            return
-        }
-
-        currentIndex = defaultHostIndex
-        defaultHostSelected = true
-        defaultHostOpenTimer.restart()
-    }
-
-    function evaluateDefaultHost()
-    {
-        if (!activated || stackView.busy || stackView.currentItem !== pcGrid ||
-                !defaultHostAutoOpenPending || !currentItem ||
-                currentItem.hostUuid !== ComputerManager.defaultHostUuid) {
-            return
-        }
-
-        if (currentItem.hostStatusUnknown) {
-            return
-        }
-
-        defaultHostAutoOpenPending = false
-        if (currentItem.hostOnline && currentItem.hostPaired && currentItem.hostServerSupported) {
-            openComputer(currentIndex, currentItem.hostName, false)
-        }
-        else {
-            focusSelectedHostSoon()
-        }
-    }
-
-    function toggleDefaultHost(hostUuid)
-    {
-        defaultHostAutoOpenPending = false
-        if (hostUuid === ComputerManager.defaultHostUuid) {
-            ComputerManager.clearDefaultHost()
-        }
-        else {
-            ComputerManager.setDefaultHost(hostUuid)
-        }
-        focusSelectedHostSoon()
-    }
-
-    Row {
-        anchors.centerIn: parent
-        spacing: 5
-        visible: pcGrid.count === 0
-
-        BusyIndicator {
-            id: searchSpinner
-            visible: StreamingPreferences.enableMdns
-            running: visible
-        }
-
-        Label {
-            height: searchSpinner.height
-            elide: Label.ElideRight
-            text: StreamingPreferences.enableMdns ? qsTr("Searching for compatible hosts on your local network...")
-                                                  : qsTr("Automatic PC discovery is disabled. Add your PC manually.")
-            font.pointSize: 20
-            verticalAlignment: Text.AlignVCenter
-            wrapMode: Text.Wrap
-        }
-    }
-
     model: computerModel
 
     delegate: NavigableItemDelegate {
-        width: 300; height: 320;
+        width: pcGrid.cellWidth; height: pcGrid.height
         grid: pcGrid
-
-        property alias pcContextMenu : pcContextMenuLoader.item
-        readonly property string hostUuid: model.uuid
-        readonly property string hostName: model.name
-        readonly property bool hostOnline: model.online
-        readonly property bool hostPaired: model.paired
-        readonly property bool hostStatusUnknown: model.statusUnknown
-        readonly property bool hostServerSupported: model.serverSupported
-
-        Image {
-            id: pcIcon
-            anchors.horizontalCenter: parent.horizontalCenter
-            source: "qrc:/res/desktop_windows-48px.svg"
-            sourceSize {
-                width: 200
-                height: 200
+        property alias pcContextMenu: pcContextMenuLoader.item
+        background: Item { }
+        Rectangle {
+            x: 0; y: pcGrid.cardY
+            width: Style.px(296, pcGrid.Window.window); height: Style.px(176, pcGrid.Window.window)
+            radius: Style.px(6, pcGrid.Window.window); color: Style.surface
+            Row {
+                x: Style.px(24, pcGrid.Window.window); y: Style.px(24, pcGrid.Window.window); spacing: Style.px(8, pcGrid.Window.window)
+                Rectangle { width: Style.px(8, pcGrid.Window.window); height: width; radius: width/2; color: model.online ? Style.ok : Style.caption; anchors.verticalCenter: parent.verticalCenter }
+                ConsoleText { role: "caption"; text: model.statusUnknown ? qsTr("Checking…") : !model.online ? qsTr("Offline") : !model.paired ? qsTr("Pairing required") : qsTr("Online") }
             }
-        }
-
-        Image {
-            // TODO: Tooltip
-            id: stateIcon
-            anchors.horizontalCenter: pcIcon.horizontalCenter
-            anchors.verticalCenter: pcIcon.verticalCenter
-            anchors.verticalCenterOffset: !model.online ? -18 : -16
-            visible: !model.statusUnknown && (!model.online || !model.paired)
-            source: !model.online ? "qrc:/res/warning_FILL1_wght300_GRAD200_opsz24.svg" : "qrc:/res/baseline-lock-24px.svg"
-            sourceSize {
-                width: !model.online ? 75 : 70
-                height: !model.online ? 75 : 70
+            ConsoleText {
+                anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+                anchors.margins: Style.px(24, pcGrid.Window.window)
+                role: "heading"; text: model.name; maximumLineCount: 2; wrapMode: Text.Wrap; elide: Text.ElideRight
             }
+            ConsoleFocus { focused: pcGrid.currentItem && pcGrid.currentItem.activeFocus && pcGrid.currentIndex === index; radius: parent.radius }
         }
-
-        BusyIndicator {
-            id: statusUnknownSpinner
-            anchors.horizontalCenter: pcIcon.horizontalCenter
-            anchors.verticalCenter: pcIcon.verticalCenter
-            anchors.verticalCenterOffset: -15
-            width: 75
-            height: 75
-            visible: model.statusUnknown
-            running: visible
+        Keys.onRightPressed: {
+            if (index === pcGrid.count - 1 && pcGrid.footerItem) pcGrid.footerItem.button.forceActiveFocus()
+            else pcGrid.moveCurrentIndexRight()
         }
-
-        Label {
-            id: pcNameText
-            text: model.name
-
-            width: parent.width
-            anchors.top: pcIcon.bottom
-            anchors.bottom: defaultHostLabel.visible ? defaultHostLabel.top : parent.bottom
-            font.pointSize: 30
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.Wrap
-            elide: Text.ElideRight
-        }
-
-        Label {
-            id: defaultHostLabel
-            text: qsTr("Default")
-            visible: model.uuid === ComputerManager.defaultHostUuid
-            width: parent.width
-            anchors.bottom: parent.bottom
-            horizontalAlignment: Text.AlignHCenter
-            font.pointSize: 12
-        }
-
-        // Display a tooltip with the full name if it's truncated
-        ToolTip.text: model.name
-        ToolTip.delay: 1000
-        ToolTip.timeout: 5000
-        ToolTip.visible: (hovered || highlighted) && pcNameText.truncated
-
         Loader {
             id: pcContextMenuLoader
             asynchronous: true
@@ -356,15 +238,17 @@ CenteredGridView {
                 NavigableMenuItem {
                     text: qsTr("View All Apps")
                     onTriggered: {
-                        pcGrid.defaultHostAutoOpenPending = false
-                        pcGrid.openComputer(index, model.name, true)
+                        pcGrid.openHost(index, true, true)
                     }
                     visible: model.online && model.paired
                 }
                 NavigableMenuItem {
-                    text: model.uuid === ComputerManager.defaultHostUuid ?
-                              qsTr("Remove Default PC") : qsTr("Set as Default PC")
-                    onTriggered: pcGrid.toggleDefaultHost(model.uuid)
+                    text: ComputerManager.defaultHostUuid === model.uuid ? qsTr("Clear default host") : qsTr("Set as default host")
+                    onTriggered: {
+                        pcGrid.startupRestorePending = false
+                        if (ComputerManager.defaultHostUuid === model.uuid) ComputerManager.clearDefaultHost()
+                        else ComputerManager.setDefaultHost(model.uuid)
+                    }
                 }
                 NavigableMenuItem {
                     text: qsTr("Wake PC")
@@ -405,8 +289,14 @@ CenteredGridView {
             }
         }
 
-        onClicked: {
-            pcGrid.defaultHostAutoOpenPending = false
+        onClicked: { pcGrid.currentIndex = index; pcGrid.forceActiveFocus() }
+        onDoubleClicked: activateHost()
+        Keys.onReturnPressed: activateHost()
+        Keys.onEnterPressed: activateHost()
+        Keys.onSpacePressed: activateHost()
+        function activateHost() {
+            pcGrid.startupRestorePending = false
+            pcGrid.currentIndex = index
             if (model.online) {
                 if (!model.serverSupported) {
                     errorDialog.text = qsTr("The version of GeForce Experience on %1 is not supported by this build of Moonlight. You must update Moonlight to stream from %1.").arg(model.name)
@@ -415,7 +305,7 @@ CenteredGridView {
                 }
                 else if (model.paired) {
                     // go to game view
-                    pcGrid.openComputer(index, model.name, false)
+                    pcGrid.openHost(index, false, false)
                 }
                 else {
                     var pin = computerModel.generatePinString()
@@ -429,12 +319,12 @@ CenteredGridView {
                 }
             } else if (!model.online) {
                 // Using open() here because it may be activated by keyboard
-                pcContextMenu.open()
+                if (model.wakeable) computerModel.wakeComputer(index)
+                else pcContextMenu.open()
             }
         }
 
         onPressAndHold: {
-            pcGrid.defaultHostAutoOpenPending = false
             // popup() ensures the menu appears under the mouse cursor
             if (pcContextMenu.popup) {
                 pcContextMenu.popup()
@@ -454,14 +344,12 @@ CenteredGridView {
         }
 
         Keys.onMenuPressed: {
-            pcGrid.defaultHostAutoOpenPending = false
             // We must use open() here so the menu is positioned on
             // the ItemDelegate and not where the mouse cursor is
             pcContextMenu.open()
         }
 
         Keys.onDeletePressed: {
-            pcGrid.defaultHostAutoOpenPending = false
             deletePcDialog.pcIndex = index
             deletePcDialog.pcName = model.name
             deletePcDialog.open()
@@ -476,25 +364,31 @@ CenteredGridView {
         helpUrl: "https://github.com/moonlight-stream/moonlight-docs/wiki/Setup-Guide"
     }
 
-    NavigableMessageDialog {
+    NavigableDialog {
         id: pairDialog
-        closePolicy: Popup.CloseOnEscape
-
-        // don't allow edits to the rest of the window while open
-        property string pin : "0000"
-        text:qsTr("Please enter %1 on your host PC. This dialog will close when pairing is completed.").arg(pin)+"\n\n"+
-             qsTr("If your host PC is running Sunshine, navigate to the Sunshine web UI to enter the PIN.")
+        objectName: "pairingDialog"
+        property string pin: "0000"
+        title: qsTr("Pair PC")
         standardButtons: Dialog.Cancel
-        onRejected: {
-            // FIXME: We should interrupt pairing here
+        closePolicy: Popup.CloseOnEscape
+        ColumnLayout {
+            width: Math.min(Style.px(496, pairDialog.hostWindow), (Overlay.overlay ? Overlay.overlay.width : 800) - 2 * pairDialog.padding)
+            spacing: Style.px(24, pairDialog.hostWindow)
+            ConsoleText { Layout.fillWidth: true; text: qsTr("Enter this PIN on your host PC."); wrapMode: Text.Wrap }
+            ConsoleText { text: pairDialog.pin; font.pixelSize: Style.typePx(56, pairDialog.hostWindow); font.weight: Font.DemiBold; font.letterSpacing: Style.px(8, pairDialog.hostWindow) }
+            ConsoleText { Layout.fillWidth: true; role: "secondary"; text: qsTr("For Sunshine, open the PIN page in its web interface."); wrapMode: Text.Wrap }
+            ConsoleText { role: "secondary"; text: qsTr("Waiting for host…") }
         }
     }
 
     NavigableMessageDialog {
         id: deletePcDialog
+        acceptText: qsTr("Remove PC")
+        rejectText: qsTr("Keep PC")
         // don't allow edits to the rest of the window while open
         property int pcIndex : -1
         property string pcName : ""
+        initialFocusButton: Dialog.No
         text: qsTr("Are you sure you want to remove '%1'?").arg(pcName)
         standardButtons: Dialog.Yes | Dialog.No
 
@@ -563,18 +457,20 @@ CenteredGridView {
                 font.bold: true
             }
 
-            TextField {
+            ConsoleTextField {
                 id: editText
                 placeholderText: renamePcDialog.originalName
                 Layout.fillWidth: true
                 focus: true
 
                 Keys.onReturnPressed: {
-                    renamePcDialog.accept()
+                    if (controllerEditing) openKeyboard()
+                    else renamePcDialog.accept()
                 }
 
                 Keys.onEnterPressed: {
-                    renamePcDialog.accept()
+                    if (controllerEditing) openKeyboard()
+                    else renamePcDialog.accept()
                 }
             }
         }

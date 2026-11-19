@@ -10,6 +10,7 @@
 #include <QNetworkProxyFactory>
 #include <QPalette>
 #include <QFont>
+#include <QFontDatabase>
 #include <QCursor>
 #include <QElapsedTimer>
 #include <QTemporaryFile>
@@ -51,6 +52,7 @@
 #include "diagnostics/diagnosticcapture.h"
 #include "gui/computermodel.h"
 #include "gui/appmodel.h"
+#include "gui/recentappsmodel.h"
 #include "backend/autoupdatechecker.h"
 #include "backend/computermanager.h"
 #include "backend/profilemanager.h"
@@ -444,6 +446,15 @@ void configureSignalHandlers()
 
 int main(int argc, char *argv[])
 {
+    // Both layouts are packaged, but only one resource tree may resolve
+    // qrc:/gui when the QML engine starts.
+    if (qEnvironmentVariableIntValue("MOONLIGHT_CONSOLE_UI") == 1) {
+        Q_CLEANUP_RESOURCE(qmlclassic);
+    }
+    else {
+        Q_CLEANUP_RESOURCE(qml);
+    }
+
     if (argc == 2 && strcmp(argv[1], "--lz4-license") == 0) {
         QFile file(QStringLiteral(":/licenses/LZ4.txt"));
         if (!file.open(QIODevice::ReadOnly)) return 1;
@@ -1027,6 +1038,11 @@ int main(int argc, char *argv[])
 #ifndef Q_OS_DARWIN
     // Set the window icon except on macOS where we want to keep the
     // modified macOS 11 style rounded corner icon.
+    QFontDatabase::addApplicationFont(":/fonts/Inter.ttf");
+    QFont uiFont;
+    uiFont.setFamilies({"Inter", "Segoe UI Variable Text", "Segoe UI", "Noto Sans"});
+    uiFont.setPixelSize(20);
+    app.setFont(uiFont);
     app.setWindowIcon(QIcon(":/res/moonlight.svg"));
 #endif
 
@@ -1040,6 +1056,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<AppModel>("AppModel", 1, 0, "AppModel");
     qmlRegisterUncreatableType<GameStreamingSettings>("GameStreamingSettings", 1, 0,
         "GameStreamingSettings", "Created by AppModel");
+    qmlRegisterType<RecentAppsModel>("AppModel", 1, 0, "RecentAppsModel");
     qmlRegisterUncreatableType<Session>("Session", 1, 0, "Session", "Session cannot be created from QML");
     qmlRegisterSingletonType<ProfileManager>("ProfileManager", 1, 0,
                                              "ProfileManager",

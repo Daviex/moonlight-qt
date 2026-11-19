@@ -1,5 +1,6 @@
 #include "appmodel.h"
 #include "backend/profilemanager.h"
+#include "settings/streamingpreferences.h"
 
 AppModel::AppModel(QObject *parent)
     : QAbstractListModel(parent)
@@ -12,6 +13,19 @@ bool AppModel::frameLimiterSupported() const { return m_FrameLimiterSupported; }
 bool AppModel::frameLimiterEnabled() const { return m_FrameLimiterEnabled; }
 bool AppModel::virtualDisplayFrameLimiterEnabled() const { return m_VirtualDisplayFrameLimiterEnabled; }
 double AppModel::frameLimiterFpsLimit() const { return m_FrameLimiterFpsLimit; }
+
+void AppModel::updateAppListState()
+{
+    if (!m_Computer) return;
+    QReadLocker lock(&m_Computer->lock);
+    const bool loading = !m_Computer->appListFetchCompleted && m_Computer->appList.isEmpty();
+    const bool unavailable = m_Computer->appListFetchFailed;
+    lock.unlock();
+    if (loading == m_AppListLoading && unavailable == m_AppListUnavailable) return;
+    m_AppListLoading = loading;
+    m_AppListUnavailable = unavailable;
+    emit appListStateChanged();
+}
 
 void AppModel::updateFrameLimiterCapabilities()
 {
@@ -52,6 +66,7 @@ void AppModel::initialize(ComputerManager* computerManager, int computerIndex, b
     m_ShowHiddenGames = showHiddenGames;
 
     updateAppList(m_Computer->appList);
+    updateAppListState();
     updateFrameLimiterCapabilities();
     updateSleepAction();
     const QString uuid = m_Computer->uuid;
@@ -87,7 +102,19 @@ Session* AppModel::createSessionForApp(int appIndex)
 
     auto preferences = GameStreamingSettings::resolve(*StreamingPreferences::get(),
         m_ComputerManager->profileId(), m_Computer->uuid, app.id);
-    return new Session(m_Computer, app, preferences.get());
+    auto* session = new Session(m_Computer, app, preferences.get());
+    auto* globalPreferences = StreamingPreferences::get();
+    const auto uuid = m_Computer->uuid;
+    const auto profileId = m_ComputerManager->profileId();
+    // Count a game only after connection succeeds, and never write a launch
+    // from a retiring profile into the next profile's recent history.
+    connect(session, &Session::connectionStarted, globalPreferences,
+            [globalPreferences, uuid, profileId, appId = app.id]() {
+        if (ProfileManager::get()->activeProfileId() == profileId) {
+            globalPreferences->recordUiPlay(uuid, appId);
+        }
+    });
+    return session;
 }
 
 int AppModel::indexOfApp(int appId) const
@@ -216,8 +243,13 @@ void AppModel::updateSleepAction()
 {
     if (!m_Computer) return;
     QReadLocker lock(&m_Computer->lock);
-    const bool visible = m_Computer->sleepActionSupportedAndAllowed;
+    const bool available = m_Computer->sleepActionSupportedAndAllowed;
     lock.unlock(); // Model notifications can re-enter UI/backend code.
+    if (available != m_HostSleepAvailable) {
+        m_HostSleepAvailable = available;
+        emit hostSleepAvailableChanged();
+    }
+    const bool visible = available && m_IncludeHostActions;
     if (visible == m_SleepActionVisible) return;
     const int row = m_VisibleApps.count();
     if (visible) beginInsertRows(QModelIndex(), row, row);
@@ -229,7 +261,7 @@ void AppModel::updateSleepAction()
 
 void AppModel::requestHostSleep()
 {
-    if (!m_Computer || !m_SleepActionVisible || !m_ComputerManager->requestHostSleep(m_Computer))
+    if (!m_Computer || !m_HostSleepAvailable || !m_ComputerManager->requestHostSleep(m_Computer))
         emit hostSleepCompleted(tr("Sleep is unavailable or a request is already pending."));
 }
 
@@ -389,6 +421,9 @@ void AppModel::invalidateComputer()
     m_Computer = nullptr;
     m_CurrentGameId = 0;
     m_SleepActionVisible = false;
+    m_HostSleepAvailable = false;
+    m_AppListLoading = false;
+    m_AppListUnavailable = false;
     m_VisibleApps.clear();
     m_AllApps.clear();
     m_FrameLimiterSupported = false;
@@ -397,6 +432,8 @@ void AppModel::invalidateComputer()
     m_FrameLimiterFpsLimit = 0;
     endResetModel();
     emit frameLimiterChanged();
+    emit hostSleepAvailableChanged();
+    emit appListStateChanged();
     emit computerLost();
 }
 
@@ -407,6 +444,7 @@ void AppModel::handleComputerStateChanged(NvComputer* computer)
         return;
     }
 
+    updateAppListState();
     updateFrameLimiterCapabilities();
     updateSleepAction();
 
@@ -472,4 +510,21 @@ void AppModel::handleBoxArtLoaded(NvComputer* computer, NvApp app, QUrl /* image
     else {
         qWarning() << "App not found for box art callback:" << app.name;
     }
+}
+
+void AppModel::setIncludeHostActions(bool include)
+{
+    if (m_IncludeHostActions == include) return;
+    m_IncludeHostActions = include;
+    if (m_Computer) updateSleepAction();
+}
+
+QVariantMap AppModel::get(int appIndex) const
+{
+    QVariantMap result;
+    if (appIndex < 0 || appIndex >= m_VisibleApps.size()) return result;
+    const auto roles = roleNames();
+    for (auto it = roles.cbegin(); it != roles.cend(); ++it)
+        result.insert(QString::fromUtf8(it.value()), data(index(appIndex), it.key()));
+    return result;
 }
