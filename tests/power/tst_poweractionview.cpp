@@ -99,6 +99,12 @@ public:
 signals:
     void recentUiAppsChanged(QString hostUuid);
 };
+class FakeSystemProperties : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(bool supportsQuickEffects READ supportsQuickEffects CONSTANT)
+public:
+    bool supportsQuickEffects() const { return false; }
+};
 class PowerViewTest : public QObject {
     Q_OBJECT
     void load(QQmlApplicationEngine& engine, FakeNavigation& stack, bool games) {
@@ -114,6 +120,7 @@ private slots:
         QGuiApplication::setFont(QFont("Inter"));
         qmlRegisterType<ViewModel>("AppModel",1,0,"AppModel");
         qmlRegisterType<RecentAppsModel>("AppModel",1,0,"RecentAppsModel");
+        qmlRegisterSingletonType<FakeSystemProperties>("SystemProperties",1,0,"SystemProperties",[](QQmlEngine*,QJSEngine*)->QObject* { return new FakeSystemProperties; });
         qmlRegisterSingletonType<FakePreferences>("StreamingPreferences",1,0,"StreamingPreferences",[](QQmlEngine*,QJSEngine*)->QObject* { return new FakePreferences; });
         qmlRegisterSingletonType<FakeNavigation>("ComputerManager",1,0,"ComputerManager",[](QQmlEngine*,QJSEngine*)->QObject* { return new FakeNavigation; });
         qmlRegisterSingletonType<FakeNavigation>("SdlGamepadKeyNavigation",1,0,"SdlGamepadKeyNavigation",[](QQmlEngine*,QJSEngine*)->QObject* { return new FakeNavigation; });

@@ -7,6 +7,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlIncubator>
+#include <QQmlExpression>
 #include <QQuickWindow>
 #include <QQuickItem>
 #include <QDir>
@@ -409,6 +410,31 @@ private slots:
         QCOMPARE(recent.get(0).value("appid").toInt(), 4);
         QCOMPARE(recent.get(1).value("appid").toInt(), 2);
         QSettings().remove(key);
+    }
+    void profileSelectionOpensConsolePagesWithoutQuickEffects() {
+        QQmlApplicationEngine engine;
+        engine.addImportPath(QStringLiteral(CONSOLE_MOCKS_PATH));
+        engine.rootContext()->setContextProperty("initialView", QString("qrc:/gui/ProfileSelectionView.qml"));
+        engine.rootContext()->setContextProperty("isGuiLaunch", true);
+        engine.load(QUrl("qrc:/gui/main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto* root = qobject_cast<QQuickWindow*>(engine.rootObjects().first()); QVERIFY(root);
+        root->requestActivate(); QTRY_COMPARE(QGuiApplication::focusWindow(), root);
+        auto* profile = root->findChild<QQuickItem*>("Profiles"); QVERIFY(profile);
+        QTRY_VERIFY(root->property("profilePageActive").toBool());
+        QQmlExpression ready(qmlContext(profile), profile, "StackView.status === StackView.Active");
+        QTRY_VERIFY(ready.evaluate().toBool());
+        QVERIFY(QMetaObject::invokeMethod(profile, "activateProfile", Q_ARG(QVariant, QVariant("default"))));
+        QTRY_VERIFY(!root->property("profilePageActive").toBool());
+        QTRY_VERIFY(root->findChild<QQuickItem*>("Computers"));
+        auto* computers = root->findChild<QQuickItem*>("Computers");
+        QTRY_VERIFY(computers->isVisible());
+        QQmlExpression computersReady(qmlContext(computers), computers, "StackView.status === StackView.Active");
+        QTRY_VERIFY(computersReady.evaluate().toBool());
+        QVERIFY(QMetaObject::invokeMethod(root, "openSettings", Q_ARG(QVariant, QVariant(0))));
+        QTRY_VERIFY(root->findChild<QQuickItem*>("settingsCategories"));
+        auto* categories = root->findChild<QQuickItem*>("settingsCategories");
+        QTRY_VERIFY(categories->isVisible());
     }
     void hostDiscoveryPreservesSettingsFocusAndStatusTracksSelection() {
         prefs->uiLastHostUuid = "host-two";

@@ -55,6 +55,7 @@ SystemProperties::SystemProperties()
     isRunningWayland = WMUtils::isRunningWayland();
     isRunningXWayland = isRunningWayland && QGuiApplication::platformName() == "xcb";
     usesMaterial3Theme = QLibraryInfo::version() >= QVersionNumber(6, 5, 0);
+    supportsQuickEffects = QLibraryInfo::version() >= QVersionNumber(6, 5, 0);
 
 #ifdef Q_OS_DARWIN
     isDarwin = true;

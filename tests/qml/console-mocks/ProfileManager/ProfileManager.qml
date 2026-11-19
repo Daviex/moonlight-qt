@@ -2,11 +2,11 @@ pragma Singleton
 import QtQuick 2.9
 
 QtObject {
-    property bool hasActiveProfile: true
+    property bool hasActiveProfile: false
     property string activeProfileId: "default"
     property string activeProfileName: "Test profile"
     property string defaultProfileId: "default"
-    property string autoLoginProfileId: ""
+    property string autoLoginProfileId: "default"
     property bool autoLoginEnabled: false
     property var profiles: [{ id: "default", name: "Test profile", iconId: "default" }]
     signal activeProfileAboutToChange()

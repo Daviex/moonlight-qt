@@ -26,6 +26,7 @@ public:
     Q_PROPERTY(bool hasDiscordIntegration MEMBER hasDiscordIntegration CONSTANT)
     Q_PROPERTY(bool hasPyroWave MEMBER hasPyroWave CONSTANT)
     Q_PROPERTY(bool usesMaterial3Theme MEMBER usesMaterial3Theme CONSTANT)
+    Q_PROPERTY(bool supportsQuickEffects MEMBER supportsQuickEffects CONSTANT)
     Q_PROPERTY(QString versionString MEMBER versionString CONSTANT)
 
     // Properties queried asynchronously (startAsyncLoad() must be called!)
@@ -69,6 +70,7 @@ private:
     bool hasPyroWave;
     QString versionString;
     bool usesMaterial3Theme;
+    bool supportsQuickEffects;
     bool isDarwin;
 
     // Properties only set if startAsyncLoad() is called

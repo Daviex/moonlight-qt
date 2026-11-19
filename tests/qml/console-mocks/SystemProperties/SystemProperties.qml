@@ -2,6 +2,7 @@ pragma Singleton
 import QtQuick 2.9
 QtObject {
     property bool usesMaterial3Theme: true
+    property bool supportsQuickEffects: false
     property bool isWow64: false
     property bool hasHardwareAcceleration: true
     property bool isRunningXWayland: false

@@ -84,6 +84,9 @@ selects Nonary's console UI before the QML engine starts; the inactive resource
 collection is unregistered so both layouts use the same `qrc:/gui` URLs without
 mixed component definitions. Recent-play history is recorded after a successful
 connection and only while the session's originating profile remains active.
+The optional console artwork blur is loaded from a separate component only on
+Qt 6.5 or newer with GPU rendering. Qt 6.2 AppImages retain the static backdrop;
+the absent QtQuick.Effects module cannot prevent loading the PC or settings pages.
 
 ## 1. Fundamental model
 
